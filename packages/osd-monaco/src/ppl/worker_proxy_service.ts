@@ -4,6 +4,7 @@
  */
 
 import { PPLValidationResult, PPLToken } from './ppl_language_analyzer';
+import type { LintResult } from './lint/diagnostic';
 import { getWorker } from '../monaco_environment';
 import { WorkerLabels } from '../worker_config';
 
@@ -71,6 +72,17 @@ export class PPLWorkerProxyService {
     }
 
     return this.sendMessage('validate', [content]);
+  }
+
+  /**
+   * Lint PPL content and get rule diagnostics
+   */
+  public async lint(content: string): Promise<LintResult> {
+    if (!this.worker) {
+      throw new Error('PPL Worker Proxy Service has not been setup!');
+    }
+
+    return this.sendMessage('lint', [content]);
   }
 
   /**

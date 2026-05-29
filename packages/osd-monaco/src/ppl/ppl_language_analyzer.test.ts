@@ -190,6 +190,73 @@ describe('PPLLanguageAnalyzer', () => {
       expect(validationResult.isValid).toBe(true);
     });
   });
+
+  describe('lint (M4)', () => {
+    it('returns no diagnostics for a clean query', () => {
+      const result = analyzer.lint('source=logs');
+
+      expect(result).toEqual({ diagnostics: [] });
+    });
+
+    it('emits one diagnostic for an offending source-prefixed query', () => {
+      const result = analyzer.lint('source=t | rex field=m "(?<a_b>x)"');
+
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.diagnostics[0].ruleId).toBe('rex-no-underscore');
+    });
+
+    it('still emits the rex diagnostic when an unrelated syntax error follows (no gate)', () => {
+      const result = analyzer.lint('source=t | rex field=m "(?<a_b>x)" | nonsense###');
+
+      expect(result.diagnostics.length).toBeGreaterThanOrEqual(1);
+      expect(result.diagnostics.some((d) => d.ruleId === 'rex-no-underscore')).toBe(true);
+    });
+
+    it('returns no diagnostics for an empty string', () => {
+      const result = analyzer.lint('');
+
+      expect(result.diagnostics).toEqual([]);
+    });
+
+    it('fires once for a pipe-first query and maps the column to the un-prefixed position', () => {
+      const query = '| rex field=m "(?<a_b>x)"';
+      const result = analyzer.lint(query);
+
+      expect(result.diagnostics).toHaveLength(1);
+
+      // The diagnostic's start column must point at the literal in the ORIGINAL
+      // (un-prefixed) content, not offset by the synthetic 'source=t ' prefix.
+      const literalIndex = query.indexOf('"'); // ANTLR 0-based column on line 1
+      expect(result.diagnostics[0].range.startLine).toBe(1);
+      expect(result.diagnostics[0].range.startColumn).toBe(literalIndex);
+    });
+  });
+
+  describe('lint pipe-first multi-line remap (M8)', () => {
+    it('shifts only line-1 columns; line-2 columns are unchanged', () => {
+      const query = '| where x>1\n| rex field=m "(?<a_b>x)"';
+      const result = analyzer.lint(query);
+
+      expect(result.diagnostics).toHaveLength(1);
+
+      const diagnostic = result.diagnostics[0];
+      // The offending literal is on line 2, so its columns must NOT be shifted by
+      // the pipe-first remap (the prefix added no newline).
+      expect(diagnostic.range.startLine).toBe(2);
+      const line2 = '| rex field=m "(?<a_b>x)"';
+      const literalIndex = line2.indexOf('"');
+      expect(diagnostic.range.startColumn).toBe(literalIndex);
+    });
+
+    it('leaves a non-pipe-first query byte-for-byte unaffected by the remap path', () => {
+      const query = 'source=t | rex field=m "(?<a_b>x)"';
+      const result = analyzer.lint(query);
+
+      expect(result.diagnostics).toHaveLength(1);
+      const literalIndex = query.indexOf('"');
+      expect(result.diagnostics[0].range.startColumn).toBe(literalIndex);
+    });
+  });
 });
 
 describe('getPPLLanguageAnalyzer singleton', () => {

@@ -21,5 +21,12 @@ export type {
   PPLValidationProviderRequest,
 } from './validation_provider';
 export type { PPLValidationResult } from './ppl_language_analyzer';
+export type {
+  Diagnostic,
+  DiagnosticRange,
+  LintSeverity,
+  LintRuleMetadata,
+  LintResult,
+} from './lint/diagnostic';
 
 export const PPLLang = { ID };

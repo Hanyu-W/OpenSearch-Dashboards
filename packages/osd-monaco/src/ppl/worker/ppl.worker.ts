@@ -10,6 +10,7 @@ import {
   PPLToken,
   PPLValidationResult,
 } from '../ppl_language_analyzer';
+import type { LintResult } from '../lint/diagnostic';
 
 // Simple worker implementation that doesn't depend on Monaco's internal modules
 class PPLWorkerImpl {
@@ -28,6 +29,13 @@ class PPLWorkerImpl {
     }
     return this.analyzer.validate(content);
   }
+
+  async lint(content: string): Promise<LintResult> {
+    if (!this.analyzer) {
+      this.analyzer = getPPLLanguageAnalyzer();
+    }
+    return this.analyzer.lint(content);
+  }
 }
 
 // Initialize worker
@@ -45,6 +53,9 @@ self.onmessage = async (e: MessageEvent) => {
         break;
       case 'validate':
         result = await worker.validate(args[0]);
+        break;
+      case 'lint':
+        result = await worker.lint(args[0]);
         break;
       default:
         throw new Error(`Unknown method: ${method}`);

@@ -10,9 +10,11 @@ import { getPPLLanguageAnalyzer, PPLValidationResult } from './ppl_language_anal
 import { getPPLDocumentationLink } from './ppl_documentation';
 import { pplRangeFormatProvider } from './formatter';
 import { resolvePPLValidationResult } from './validation_provider';
+import { diagnosticToMarker } from './lint/diagnostic_to_marker';
 
 const PPL_LANGUAGE_ID = ID;
 const OWNER = 'PPL_WORKER';
+const LINT_OWNER = 'PPL_LINT';
 
 // PPL worker proxy service for worker-based syntax highlighting
 const pplWorkerProxyService = new PPLWorkerProxyService();
@@ -176,8 +178,41 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
   }
 };
 
+/**
+ * Process lint highlighting for PPL models. Eager (no debounce); offloaded to
+ * the PPL worker. A staleness guard drops results if the model changed or was
+ * disposed during the async round-trip.
+ */
+const processLintHighlighting = async (model: monaco.editor.IModel) => {
+  if (model.getLanguageId() !== PPL_LANGUAGE_ID) {
+    monaco.editor.setModelMarkers(model, LINT_OWNER, []);
+    return;
+  }
+
+  try {
+    const content = model.getValue(); // snapshot for staleness guard
+    pplWorkerProxyService.setup();
+
+    const { diagnostics } = await pplWorkerProxyService.lint(content);
+
+    // Staleness guard (replaces debounce's flicker protection).
+    if (model.isDisposed() || model.getValue() !== content) {
+      return;
+    }
+
+    if (diagnostics.length > 0) {
+      monaco.editor.setModelMarkers(model, LINT_OWNER, diagnostics.map(diagnosticToMarker));
+    } else {
+      monaco.editor.setModelMarkers(model, LINT_OWNER, []);
+    }
+  } catch (error) {
+    // Silent — never break the editor on lint failure.
+  }
+};
+
 export const revalidatePPLModel = async (model: monaco.editor.IModel) => {
   await processSyntaxHighlighting(model);
+  await processLintHighlighting(model);
 };
 
 /**
@@ -202,6 +237,9 @@ const setupPPLSyntaxHighlighting = () => {
       model.onDidChangeContent(async () => {
         if (model.getLanguageId() === PPL_LANGUAGE_ID) {
           await processSyntaxHighlighting(model);
+          // Eager, not awaited ahead of syntax highlighting so lint never delays
+          // or suppresses syntax markers.
+          void processLintHighlighting(model);
         }
       })
     );
@@ -211,8 +249,10 @@ const setupPPLSyntaxHighlighting = () => {
       model.onDidChangeLanguage(async () => {
         if (model.getLanguageId() === PPL_LANGUAGE_ID) {
           await processSyntaxHighlighting(model);
+          void processLintHighlighting(model);
         } else {
           monaco.editor.setModelMarkers(model, OWNER, []);
+          monaco.editor.setModelMarkers(model, LINT_OWNER, []);
         }
       })
     );
@@ -220,6 +260,7 @@ const setupPPLSyntaxHighlighting = () => {
     // Process immediately if already PPL
     if (model.getLanguageId() === PPL_LANGUAGE_ID) {
       processSyntaxHighlighting(model);
+      void processLintHighlighting(model);
     }
   };
 
@@ -230,6 +271,7 @@ const setupPPLSyntaxHighlighting = () => {
   disposables.push(
     monaco.editor.onWillDisposeModel((model) => {
       monaco.editor.setModelMarkers(model, OWNER, []);
+      monaco.editor.setModelMarkers(model, LINT_OWNER, []);
     })
   );
 

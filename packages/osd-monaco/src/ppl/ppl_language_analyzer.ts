@@ -9,6 +9,14 @@ import {
   SimplifiedOpenSearchPPLParser as OpenSearchPPLParser,
 } from '@osd/antlr-grammar';
 import { PPLSyntaxErrorListener, SyntaxError } from './ppl_error_listener';
+import type { Diagnostic, LintResult } from './lint/diagnostic';
+import { runLint } from './lint/lint_runner';
+
+// Constant synthetic prefix for pipe-first fragments. Verified against the
+// simplified grammar: `source=<ID>` is a valid searchCommand/pplCommands start,
+// and the lexer's ID_LITERAL forbids a single leading '_', so we use the plain
+// letter identifier 't'. NO newline -> only line-1 columns shift on remap.
+const PIPE_FIRST_PREFIX = 'source=t ';
 
 export interface PPLToken {
   type: string;
@@ -155,6 +163,46 @@ export class PPLLanguageAnalyzer {
   }
 
   /**
+   * Lint PPL code on the compiled simplified-grammar path.
+   *
+   * Lint runs REGARDLESS of syntax errors: `parser.root()` returns an
+   * error-recovery tree, and a cleanly-parsed rex stage is flagged even when an
+   * unrelated syntax error exists elsewhere in the query. There is no
+   * syntax-clean gate. Returns `{ diagnostics: [] }` only on a thrown parse
+   * exception. Pipe-first fragments are made reliably parseable by a constant
+   * source-prefix prepend, then diagnostic columns are remapped back to the
+   * original content.
+   */
+  lint(code: string): LintResult {
+    try {
+      // Pipe-first fragments (e.g. `| rex field=m pattern="(?<a_b>x)"`) do not
+      // start with pplCommands, so ANTLR error recovery at the very first token
+      // is unreliable and may not descend into the rex stage. Prepend a synthetic
+      // source so the fragment parses into a clean rexExpr node.
+      const isPipeFirst = code.trimStart().startsWith('|');
+      const parseInput = isPipeFirst ? PIPE_FIRST_PREFIX + code : code;
+
+      const { tokenStream } = this.createLexerAndTokenStream(parseInput);
+      const { parser } = this.createParserWithErrorHandling(tokenStream);
+
+      // Error-recovery tree — lint does NOT read parser/lexer error counts. Even
+      // if the query has a syntax error elsewhere, root() returns a walkable tree
+      // and runLint flags any cleanly-parsed offending rex stage.
+      const tree = parser.root();
+
+      const diagnostics = runLint(tree);
+      return {
+        diagnostics: isPipeFirst
+          ? remapPipeFirstDiagnostics(diagnostics, PIPE_FIRST_PREFIX.length)
+          : diagnostics,
+      };
+    } catch (error) {
+      // HARD parse exception only — not a syntax error in the query text.
+      return { diagnostics: [] };
+    }
+  }
+
+  /**
    * Get token type name from ANTLR token type
    */
   private getTokenTypeName(tokenType: number, lexer: OpenSearchPPLLexer): string {
@@ -172,6 +220,28 @@ export class PPLLanguageAnalyzer {
 
     return 'unknown';
   }
+}
+
+/**
+ * Inverse of the runtime path's `remapErrors`: the synthetic prefix added no
+ * newline, so ONLY line-1 columns shift. Subtract the prefix length from the
+ * start/end columns of any diagnostic token on line 1, clamped at 0 (ANTLR
+ * 0-based columns must never go negative). Diagnostics on later lines are
+ * returned unchanged.
+ */
+function remapPipeFirstDiagnostics(diagnostics: Diagnostic[], prefixLen: number): Diagnostic[] {
+  return diagnostics.map((d) => ({
+    ...d,
+    range: {
+      ...d.range,
+      startColumn:
+        d.range.startLine === 1
+          ? Math.max(0, d.range.startColumn - prefixLen)
+          : d.range.startColumn,
+      endColumn:
+        d.range.endLine === 1 ? Math.max(0, d.range.endColumn - prefixLen) : d.range.endColumn,
+    },
+  }));
 }
 
 /**

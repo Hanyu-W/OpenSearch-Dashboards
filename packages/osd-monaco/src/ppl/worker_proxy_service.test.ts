@@ -129,6 +129,53 @@ describe('PPLWorkerProxyService', () => {
     });
   });
 
+  describe('lint', () => {
+    it('should throw error if setup not called', async () => {
+      await expect(service.lint('test')).rejects.toThrow('has not been setup');
+    });
+
+    it('should post a lint message and resolve the worker LintResult', async () => {
+      service.setup();
+
+      const lintPromise = service.lint('source=t | rex field=m pattern="(?<a_b>x)"');
+
+      const messageData = mockWorker.postMessage.mock.calls[0][0];
+      expect(messageData.method).toBe('lint');
+
+      const mockLintResult = {
+        diagnostics: [
+          {
+            ruleId: 'rex-no-underscore',
+            severity: 'warning',
+            message: 'no underscores',
+            range: { startLine: 1, startColumn: 0, endLine: 1, endColumn: 5 },
+          },
+        ],
+      };
+      mockWorker.onmessage({ data: { id: messageData.id, result: mockLintResult } });
+
+      const result = await lintPromise;
+      expect(result).toEqual(mockLintResult);
+    });
+
+    it('should reject when no worker is set up', async () => {
+      await expect(service.lint('test')).rejects.toThrow('has not been setup');
+    });
+
+    it('should timeout if worker never responds', async () => {
+      jest.useFakeTimers();
+      service.setup();
+
+      const lintPromise = service.lint('test');
+
+      jest.advanceTimersByTime(5001);
+
+      await expect(lintPromise).rejects.toThrow('Worker timeout');
+
+      jest.useRealTimers();
+    });
+  });
+
   describe('stop', () => {
     it('should clean up worker resources', async () => {
       service.setup();
