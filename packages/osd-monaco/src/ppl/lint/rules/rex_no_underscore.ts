@@ -27,7 +27,7 @@ export const REX_NO_UNDERSCORE_METADATA: LintRuleMetadata = {
     'Capture group names cannot contain underscores because of Java regex ' +
     'limitations. For example, (?<error_type>\\w+) is invalid; use ' +
     '(?<errortype>\\w+) instead.',
-  docUrl: 'https://opensearch.org/docs/latest/search-plugins/ppl/cmd/rex/',
+  docUrl: 'https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/rex/',
 };
 
 // Java named-capture group names are [A-Za-z][A-Za-z0-9]*. An underscore inside

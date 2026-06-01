@@ -82,7 +82,7 @@ describe('diagnosticToMarker', () => {
   });
 
   it('sets code to a value+target object when docUrl is present', () => {
-    const docUrl = 'https://opensearch.org/docs/latest/search-plugins/ppl/cmd/rex/';
+    const docUrl = 'https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/rex/';
     const marker = diagnosticToMarker(baseDiagnostic({ docUrl }));
 
     expect(typeof marker.code).toBe('object');

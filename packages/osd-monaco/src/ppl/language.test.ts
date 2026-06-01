@@ -95,7 +95,7 @@ const offending = {
   ruleId: 'rex-no-underscore',
   severity: 'warning' as const,
   message: 'no underscores',
-  docUrl: 'https://opensearch.org/docs/latest/search-plugins/ppl/cmd/rex/',
+  docUrl: 'https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/rex/',
   range: { startLine: 1, startColumn: 23, endLine: 1, endColumn: 33 },
 };
 
