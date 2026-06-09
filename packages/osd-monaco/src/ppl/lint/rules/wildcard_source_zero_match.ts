@@ -5,8 +5,8 @@
 
 import { Diagnostic } from '../diagnostic';
 import { Detector } from '../types';
-import { findAllDescendantsByRule, findChildByRule } from '../rule_index';
-import { rangeFromContext } from '../range_utils';
+import { findAllDescendantsByRule } from '../rule_index';
+import { rangeFromContext, unquote } from '../range_utils';
 
 // Host index-list check: a wildcard source pattern matching zero visible indices
 // is advisory. Self-suppresses without a visible-index list.
@@ -18,17 +18,6 @@ import { rangeFromContext } from '../range_utils';
 function wildcardToRegExp(pattern: string): RegExp {
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
   return new RegExp(`^${escaped}$`);
-}
-
-function unquote(raw: string): string {
-  if (raw.length >= 2) {
-    const first = raw[0];
-    const last = raw[raw.length - 1];
-    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
-      return raw.slice(1, -1);
-    }
-  }
-  return raw;
 }
 
 export const wildcardSourceZeroMatchDetector: Detector = (
@@ -66,8 +55,6 @@ export const wildcardSourceZeroMatchDetector: Detector = (
       }
     }
   }
-
-  void findChildByRule;
 
   return diagnostics;
 };

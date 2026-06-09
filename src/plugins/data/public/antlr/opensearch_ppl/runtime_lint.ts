@@ -18,51 +18,12 @@ import {
   LexerInterpreter,
   ParserInterpreter,
   ParserRuleContext,
-  Token,
 } from 'antlr4ng';
 import { GeneralErrorListener } from '../shared/general_error_listerner';
 import { CachedGrammar, pplGrammarCache } from './ppl_grammar_cache';
+import { pickStartRuleIndex, resolveSpaceToken } from './runtime_grammar_utils';
 
 const PIPE_FIRST_PREFIX = 'source=t ';
-
-function tokenTypeBySymbolic(grammar: CachedGrammar, symbolicName: string): number {
-  return grammar.runtimeSymbolicNameToTokenType.get(symbolicName) ?? Token.INVALID_TYPE;
-}
-
-function getRuleIndex(grammar: CachedGrammar, ruleName: string): number {
-  return grammar.runtimeRuleNameToIndex.get(ruleName) ?? -1;
-}
-
-function pickStartRuleIndex(query: string, grammar: CachedGrammar): number {
-  if (!query.trimStart().startsWith('|')) {
-    return grammar.startRuleIndex ?? 0;
-  }
-  if (typeof grammar.pipeStartRuleIndex === 'number' && grammar.pipeStartRuleIndex >= 0) {
-    return grammar.pipeStartRuleIndex;
-  }
-  const commandsRule = getRuleIndex(grammar, 'commands');
-  if (commandsRule >= 0) {
-    return commandsRule;
-  }
-  return grammar.startRuleIndex ?? 0;
-}
-
-/**
- * Resolve the whitespace token type for the runtime grammar's error listener.
- */
-function resolveSpaceToken(grammar: CachedGrammar): number {
-  const dictionaryValue = grammar.tokenDictionary.WHITESPACE ?? grammar.tokenDictionary.SPACE;
-  if (typeof dictionaryValue === 'number' && dictionaryValue > Token.INVALID_TYPE) {
-    return dictionaryValue;
-  }
-  for (const name of ['WHITESPACE', 'SPACE', 'WS']) {
-    const token = tokenTypeBySymbolic(grammar, name);
-    if (token > Token.INVALID_TYPE) {
-      return token;
-    }
-  }
-  return Token.INVALID_TYPE;
-}
 
 function buildRuntimeTree(query: string, grammar: CachedGrammar): ParserRuleContext | undefined {
   const isPipeFirst = query.trimStart().startsWith('|');

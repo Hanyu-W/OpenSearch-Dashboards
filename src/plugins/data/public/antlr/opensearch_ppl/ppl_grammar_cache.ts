@@ -413,3 +413,28 @@ export function shouldUseRuntimeGrammar(
   }
   return true;
 }
+
+/**
+ * Derive whether a data source runs the Calcite engine from its version:
+ * `true` for OpenSearch >= 3.3.0 (where Calcite is default-on), `false` below
+ * 3.3.0, and `undefined` when the version is unknown or unparseable.
+ *
+ * Feeds `PPLLintContext.isCalcite`, which gates the Calcite-only lint rules.
+ * Note: the three Calcite-gated detectors each guard with
+ * `if (context.isCalcite !== true) return []`, so both `undefined` and `false`
+ * keep them silent — on unknown-version clusters no Calcite-gated diagnostic
+ * fires, which preserves the zero-false-positive bar. The version heuristic
+ * cannot observe an administratively-disabled Calcite engine
+ * (`plugins.calcite.enabled=false`) on a >= 3.3.0 cluster, the one case where it
+ * may over-report `true`; there is no client-readable engine flag to consult.
+ */
+export function deriveIsCalcite(dataSourceVersion?: string): boolean | undefined {
+  if (!dataSourceVersion) {
+    return undefined;
+  }
+  const coerced = semver.coerce(dataSourceVersion);
+  if (!coerced) {
+    return undefined;
+  }
+  return semver.gte(coerced.version, '3.3.0');
+}

@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import semver from 'semver';
 import { getBundledCatalog, loadCatalog, validateCatalogEntry } from '../catalog';
+import { OSD_KNOWN_VERSION } from '../version_filter';
 
 describe('catalog loading', () => {
   it('loads the bundled catalog with the expected rule ids', () => {
@@ -84,5 +86,24 @@ describe('catalog loading', () => {
         appliesTo: { engine: 'spark' },
       })
     ).toBeNull();
+  });
+
+  // The version filter caps the effective max applicability at OSD_KNOWN_VERSION
+  // when a rule declares no maxVersion. If a rule's minVersion ever exceeds
+  // OSD_KNOWN_VERSION, that rule would be silently suppressed on the very
+  // clusters it targets. Guard against forgetting to bump OSD_KNOWN_VERSION.
+  it('keeps OSD_KNOWN_VERSION at or above every rule minVersion', () => {
+    const knownVersion = semver.coerce(OSD_KNOWN_VERSION)?.version;
+    expect(knownVersion).toBeTruthy();
+
+    for (const entry of getBundledCatalog()) {
+      const minVersion = entry.appliesTo.minVersion;
+      if (!minVersion) {
+        continue;
+      }
+      const coercedMin = semver.coerce(minVersion)?.version;
+      expect(coercedMin).toBeTruthy();
+      expect(semver.gte(knownVersion!, coercedMin!)).toBe(true);
+    }
   });
 });

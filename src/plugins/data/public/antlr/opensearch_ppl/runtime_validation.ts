@@ -4,74 +4,15 @@
  */
 
 import type { PPLValidationProviderRequest, PPLValidationResult } from '@osd/monaco';
-import {
-  CharStream,
-  CommonTokenStream,
-  LexerInterpreter,
-  ParserInterpreter,
-  Token,
-} from 'antlr4ng';
+import { CharStream, CommonTokenStream, LexerInterpreter, ParserInterpreter } from 'antlr4ng';
 import { GeneralErrorListener } from '../shared/general_error_listerner';
 import { CachedGrammar, pplGrammarCache } from './ppl_grammar_cache';
+import { pickStartRuleIndex, resolveSpaceToken } from './runtime_grammar_utils';
 
 interface PipeStripResult {
   effectiveQuery: string;
   strippedLineCount: number;
   strippedFirstLineLength: number;
-}
-
-function tokenTypeBySymbolic(grammar: CachedGrammar, symbolicName: string): number {
-  return grammar.runtimeSymbolicNameToTokenType.get(symbolicName) ?? Token.INVALID_TYPE;
-}
-
-function resolveSpaceToken(grammar: CachedGrammar): number {
-  const dictionaryValue = grammar.tokenDictionary.WHITESPACE ?? grammar.tokenDictionary.SPACE;
-  if (typeof dictionaryValue === 'number' && dictionaryValue > Token.INVALID_TYPE) {
-    return dictionaryValue;
-  }
-
-  const whitespaceToken = tokenTypeBySymbolic(grammar, 'WHITESPACE');
-  if (whitespaceToken > Token.INVALID_TYPE) {
-    return whitespaceToken;
-  }
-
-  const spaceToken = tokenTypeBySymbolic(grammar, 'SPACE');
-  if (spaceToken > Token.INVALID_TYPE) {
-    return spaceToken;
-  }
-
-  const wsToken = tokenTypeBySymbolic(grammar, 'WS');
-  if (wsToken > Token.INVALID_TYPE) {
-    return wsToken;
-  }
-
-  return Token.INVALID_TYPE;
-}
-
-function getRuleIndex(grammar: CachedGrammar, ruleName: string): number {
-  return grammar.runtimeRuleNameToIndex.get(ruleName) ?? -1;
-}
-
-function pickStartRuleIndex(query: string, grammar: CachedGrammar): number {
-  if (!query.trimStart().startsWith('|')) {
-    return grammar.startRuleIndex ?? 0;
-  }
-
-  if (typeof grammar.pipeStartRuleIndex === 'number' && grammar.pipeStartRuleIndex >= 0) {
-    return grammar.pipeStartRuleIndex;
-  }
-
-  const commandsRule = getRuleIndex(grammar, 'commands');
-  if (commandsRule >= 0) {
-    return commandsRule;
-  }
-
-  const subPipelineRule = getRuleIndex(grammar, 'subPipeline');
-  if (subPipelineRule >= 0) {
-    return subPipelineRule;
-  }
-
-  return grammar.startRuleIndex ?? 0;
 }
 
 function stripLeadingPipe(query: string): PipeStripResult {
@@ -125,7 +66,7 @@ function validateWithGrammar(query: string, grammar: CachedGrammar): PPLValidati
   }
 
   const spaceToken = resolveSpaceToken(grammar);
-  const startRuleIndex = pickStartRuleIndex(query, grammar);
+  const startRuleIndex = pickStartRuleIndex(query, grammar, true);
   const pipeStrip = stripLeadingPipe(query);
   const errorListener = new GeneralErrorListener(spaceToken);
 

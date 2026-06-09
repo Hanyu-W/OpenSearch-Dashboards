@@ -64,3 +64,19 @@ export function rangeWithinToken(
     endColumn: startColumn + length,
   };
 }
+
+/**
+ * Strip a single layer of matching surrounding quotes (single or double) from a
+ * string-literal token's raw text. Returns the input unchanged when it is not
+ * quoted.
+ */
+export function unquote(raw: string): string {
+  if (raw.length >= 2) {
+    const first = raw[0];
+    const last = raw[raw.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return raw.slice(1, -1);
+    }
+  }
+  return raw;
+}

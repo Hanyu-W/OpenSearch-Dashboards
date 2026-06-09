@@ -57,8 +57,18 @@ function findStringLiteral(
   if (direct) {
     return direct;
   }
+  // The regex pattern is the last string literal in source order; a quoted
+  // field/mode argument, when present, precedes it. findAllDescendantsByRule
+  // yields nodes in DFS pop order (not source order), so select by source
+  // position rather than relying on the array index.
   const descendants = findAllDescendantsByRule(command, ruleNameToIndex, 'stringLiteral');
-  return descendants[descendants.length - 1];
+  let pattern: ParserRuleContext | undefined;
+  for (const node of descendants) {
+    if (!pattern || (node.start?.start ?? -1) > (pattern.start?.start ?? -1)) {
+      pattern = node;
+    }
+  }
+  return pattern;
 }
 
 export const invalidCaptureGroupNameDetector: Detector = (
