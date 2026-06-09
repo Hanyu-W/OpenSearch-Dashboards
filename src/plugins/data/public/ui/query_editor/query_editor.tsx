@@ -16,7 +16,7 @@ import {
 } from '@elastic/eui';
 import classNames from 'classnames';
 import React, { useEffect, useRef, useState } from 'react';
-import { monaco, PPLValidationContext, revalidatePPLModel } from '@osd/monaco';
+import { monaco, PPLValidationContext, PPLLintContext, revalidatePPLModel } from '@osd/monaco';
 import {
   IDataPluginServices,
   Query,
@@ -45,6 +45,11 @@ import {
   attachPPLValidationContext,
   syncPPLValidationContext,
 } from './validation_context';
+import {
+  attachPPLLintContext,
+  attachPPLLintGrammarRefresh,
+  syncPPLLintContext,
+} from './lint_context';
 
 export interface QueryEditorProps {
   query: Query;
@@ -85,6 +90,14 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
   const inputRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const detachValidationContextRef = useRef<(() => void) | undefined>();
   const detachGrammarRefreshRef = useRef<(() => void) | undefined>();
+  const detachLintContextRef = useRef<(() => void) | undefined>();
+  const detachLintGrammarRefreshRef = useRef<(() => void) | undefined>();
+  // Cache of derived field metadata per dataset id, populated asynchronously.
+  const lintFieldsRef = useRef<{
+    datasetId?: string;
+    fields?: Set<string>;
+    typeMap?: Map<string, string>;
+  }>({});
   const headerRef = useRef<HTMLDivElement>(null);
   const bannerRef = useRef<HTMLDivElement>(null);
   const bottomPanelRef = useRef<HTMLDivElement>(null);
@@ -132,12 +145,29 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     };
   };
 
+  const getLintContext = (): PPLLintContext => {
+    const dsId = queryRef.current.dataset?.dataSource?.id;
+    const dsVersion = queryRef.current.dataset?.dataSource?.version;
+    const cached = lintFieldsRef.current;
+    return {
+      useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
+      dataSourceId: dsId,
+      dataSourceVersion: dsVersion,
+      fields: cached.fields,
+      typeMap: cached.typeMap,
+    };
+  };
+
   useEffect(
     () => () => {
       detachValidationContextRef.current?.();
       detachValidationContextRef.current = undefined;
       detachGrammarRefreshRef.current?.();
       detachGrammarRefreshRef.current = undefined;
+      detachLintContextRef.current?.();
+      detachLintContextRef.current = undefined;
+      detachLintGrammarRefreshRef.current?.();
+      detachLintGrammarRefreshRef.current = undefined;
     },
     []
   );
@@ -163,6 +193,65 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
       void revalidatePPLModel(model);
     }
   }, [query.dataset?.dataSource?.id, query.dataset?.dataSource?.version]);
+
+  // Load field metadata for the active dataset and feed it to the lint context.
+  // Field-aware lint rules self-suppress until this resolves, so we set the
+  // context in a single phase after the async load to avoid flicker (R8.5).
+  useEffect(() => {
+    const datasetId = query.dataset?.id;
+    const dsId = query.dataset?.dataSource?.id;
+    const dsVersion = query.dataset?.dataSource?.version;
+    let cancelled = false;
+
+    const syncLint = () => {
+      syncPPLLintContext(inputRef.current, {
+        useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
+        dataSourceId: dsId,
+        dataSourceVersion: dsVersion,
+        fields: lintFieldsRef.current.fields,
+        typeMap: lintFieldsRef.current.typeMap,
+      });
+      const model = inputRef.current?.getModel();
+      if (model) {
+        void revalidatePPLModel(model);
+      }
+    };
+
+    const loadFields = async () => {
+      if (!datasetId) {
+        return;
+      }
+      try {
+        const indexPattern = await getIndexPatterns().get(datasetId);
+        if (cancelled) {
+          return;
+        }
+        const fields = new Set<string>();
+        const typeMap = new Map<string, string>();
+        for (const field of indexPattern.fields ?? []) {
+          if (!field?.name) {
+            continue;
+          }
+          fields.add(field.name);
+          const esType = field.esTypes?.[0];
+          if (esType) {
+            typeMap.set(field.name, esType);
+          }
+        }
+        lintFieldsRef.current = { datasetId, fields, typeMap };
+        // Single-phase update after the async load resolves (R8.5).
+        syncLint();
+      } catch {
+        // On failure, leave fields unset so field-aware rules self-suppress.
+      }
+    };
+
+    void loadFields();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [query.dataset?.id, query.dataset?.dataSource?.id, query.dataset?.dataSource?.version]);
 
   const renderQueryEditorExtensions = () => {
     if (
@@ -384,6 +473,15 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
         (listener) => pplGrammarCache.subscribeToGrammarUpdates(listener),
         revalidatePPLModel
       );
+      detachLintContextRef.current?.();
+      detachLintGrammarRefreshRef.current?.();
+      detachLintContextRef.current = attachPPLLintContext(editor, getLintContext);
+      detachLintGrammarRefreshRef.current = attachPPLLintGrammarRefresh(
+        editor,
+        getLintContext,
+        (listener) => pplGrammarCache.subscribeToGrammarUpdates(listener),
+        revalidatePPLModel
+      );
       const editorModel = editor.getModel();
       if (editorModel) {
         void revalidatePPLModel(editorModel);
@@ -456,6 +554,15 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
       detachGrammarRefreshRef.current = attachPPLGrammarRefresh(
         editor,
         getValidationContext,
+        (listener) => pplGrammarCache.subscribeToGrammarUpdates(listener),
+        revalidatePPLModel
+      );
+      detachLintContextRef.current?.();
+      detachLintGrammarRefreshRef.current?.();
+      detachLintContextRef.current = attachPPLLintContext(editor, getLintContext);
+      detachLintGrammarRefreshRef.current = attachPPLLintGrammarRefresh(
+        editor,
+        getLintContext,
         (listener) => pplGrammarCache.subscribeToGrammarUpdates(listener),
         revalidatePPLModel
       );

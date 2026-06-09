@@ -755,6 +755,21 @@ export function getUiSettings(
       requiresPageReload: true,
       schema: schema.boolean(),
     },
+    [UI_SETTINGS.QUERY_ENHANCEMENTS_PPL_LINT]: {
+      name: i18n.translate('data.advancedSettings.query.enhancements.pplLintTitle', {
+        defaultMessage: 'Enable PPL linter',
+      }),
+      value: true,
+      description: i18n.translate('data.advancedSettings.query.enhancements.pplLintText', {
+        defaultMessage: `
+          Show inline diagnostics for PPL queries that parse successfully but will fail or behave
+          unexpectedly when executed by the engine. Acts as a kill-switch for the entire linter.
+          <strong>Experimental</strong>: Requires query enhancements enabled.`,
+      }),
+      category: ['search'],
+      requiresPageReload: true,
+      schema: schema.boolean(),
+    },
     [UI_SETTINGS.QUERY_ENHANCEMENTS_SUGGEST_VALUES]: {
       name: i18n.translate('data.advancedSettings.query.enhancements.suggestValuesTitle', {
         defaultMessage: 'Allow for Value Suggestion through the enhancements APIs',

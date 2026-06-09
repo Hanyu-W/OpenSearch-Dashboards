@@ -333,13 +333,13 @@ describe('ppl_grammar_cache', () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
-  it('should retry localhost grammar fetch when /api/status was not ready on page load', async () => {
+  it('should retry localhost grammar fetch when the cluster version was not ready on page load', async () => {
     const statusGet = jest
       .fn()
-      // First call: /api/status not ready on page load
+      // First call: localClusterVersion route not ready on page load
       .mockRejectedValueOnce(new Error('ECONNREFUSED'))
-      // Second call: /api/status ready, returns version
-      .mockResolvedValueOnce({ version: { number: '3.6.0' } })
+      // Second call: route ready, returns the OpenSearch cluster version
+      .mockResolvedValueOnce({ version: '3.6.0' })
       // Third call: grammar fetch succeeds
       .mockResolvedValueOnce(createBundle('sha256:localhost'));
 
@@ -349,15 +349,35 @@ describe('ppl_grammar_cache', () => {
     pplGrammarCache.warmUp(http, mockUiSettings);
     await flushPromises();
 
-    // First attempt: /api/status failed → version unknown → skipped (NOT marked failed)
+    // First attempt: version lookup failed → version unknown → skipped (NOT marked failed)
     expect(pplGrammarCache.getCachedGrammar(undefined)).toBeNull();
 
     // Dataset creation: warmUp for localhost again
     pplGrammarCache.warmUp(http, mockUiSettings);
     await flushPromises();
 
-    // Second attempt: /api/status ready → version 3.6.0 → grammar fetched
+    // Second attempt: cluster version 3.6.0 resolved → grammar fetched
     expect(pplGrammarCache.getCachedGrammar(undefined)?.grammarHash).toBe('sha256:localhost');
+
+    // The local-cluster version must come from the cluster route, not /api/status
+    expect(statusGet).toHaveBeenCalledWith('/internal/data-source-management/localClusterVersion');
+    expect(statusGet).not.toHaveBeenCalledWith('/api/status');
+  });
+
+  it('should treat an empty cluster-version response as unknown and skip the fetch', async () => {
+    // The localClusterVersion route fails-open with { version: '' } when the
+    // cluster is unreachable; an empty string must not be cached or fetched on.
+    const http = ({
+      get: jest.fn().mockResolvedValue({ version: '' }),
+    } as unknown) as HttpSetup;
+
+    pplGrammarCache.warmUp(http, mockUiSettings);
+    await flushPromises();
+
+    expect(pplGrammarCache.getCachedGrammar(undefined)).toBeNull();
+    // Only the version lookup happened; no grammar fetch followed.
+    expect(http.get).toHaveBeenCalledTimes(1);
+    expect(http.get).toHaveBeenCalledWith('/internal/data-source-management/localClusterVersion');
   });
 
   it('should cycle through multiple remote datasources without leaking state', async () => {
@@ -398,8 +418,8 @@ describe('ppl_grammar_cache', () => {
     const http = ({
       get: jest.fn((url: string) => {
         calls.push(url);
-        if (url === '/api/status') {
-          return Promise.resolve({ version: { number: '3.6.0' } });
+        if (url === '/internal/data-source-management/localClusterVersion') {
+          return Promise.resolve({ version: '3.6.0' });
         }
         return Promise.resolve(createBundle(`sha256:${calls.length}`));
       }),
@@ -422,7 +442,7 @@ describe('ppl_grammar_cache', () => {
     expect(pplGrammarCache.getCachedGrammar('ds-old')).toBeNull();
     expect(pplGrammarCache.getCachedGrammar('ds-remote')).toBeNull();
 
-    // Back to localhost → reset + re-fetch (need /api/status again since version was cleared)
+    // Back to localhost → reset + re-fetch (need the cluster version again since it was cleared)
     pplGrammarCache.warmUp(http, mockUiSettings);
     await flushPromises();
     expect(pplGrammarCache.getCachedGrammar(undefined)).not.toBeNull();
@@ -554,7 +574,7 @@ describe('ppl_grammar_cache', () => {
     const http = ({
       get: jest
         .fn()
-        .mockResolvedValueOnce({ version: { number: '3.6.0' } }) // /api/status
+        .mockResolvedValueOnce({ version: '3.6.0' }) // localClusterVersion route
         .mockResolvedValueOnce(createBundle('sha256:local')), // grammar
     } as unknown) as HttpSetup;
 

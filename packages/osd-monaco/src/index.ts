@@ -37,12 +37,29 @@ export {
   registerPPLValidationProvider,
   resolvePPLValidationResult,
   setPPLValidationContext,
+  clearPPLLintContext,
+  isPPLLintEnabled,
+  registerPPLLintProvider,
+  resolvePPLLintResult,
+  setPPLLintContext,
+  setPPLLintEnabled,
+  runLint,
+  createRuntimeRuleNameToIndex,
 } from './ppl';
 export type {
   PPLValidationContext,
   PPLValidationProvider,
   PPLValidationProviderRequest,
   PPLValidationResult,
+  PPLLintContext,
+  PPLLintProvider,
+  PPLLintProviderRequest,
+  Diagnostic,
+  DiagnosticRange,
+  LintResult,
+  LintSeverity,
+  CatalogEntry,
+  LintRunContext,
 } from './ppl';
 
 /* eslint-disable-next-line @osd/eslint/module_migration */
