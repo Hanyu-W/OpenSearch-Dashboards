@@ -9,6 +9,10 @@ import {
   SimplifiedOpenSearchPPLParser as OpenSearchPPLParser,
 } from '@osd/antlr-grammar';
 import { PPLSyntaxErrorListener, SyntaxError } from './ppl_error_listener';
+import { Diagnostic, LintResult } from './lint/diagnostic';
+import { runLint } from './lint/lint_runner';
+import { createCompiledRuleNameToIndex } from './lint/rule_index';
+import { LintRunContext } from './lint/types';
 
 export interface PPLToken {
   type: string;
@@ -23,6 +27,9 @@ export interface PPLValidationResult {
   isValid: boolean;
   errors: SyntaxError[];
 }
+
+/** Synthetic prefix prepended when a query begins with a leading pipe. */
+const PIPE_FIRST_PREFIX = 'source=t ';
 
 export interface PPLCompletionItem {
   label: string;
@@ -152,6 +159,62 @@ export class PPLLanguageAnalyzer {
         ],
       };
     }
+  }
+
+  /**
+   * Lint PPL code using the compiled grammar surface.
+   *
+   * Builds the parser's error-recovery tree (no syntax-clean gate) so the
+   * linter contributes diagnostics even on partially-broken queries and never
+   * competes with the syntax-error path. Pipe-first queries get a synthetic
+   * source prefix; line-one diagnostic columns are remapped afterward.
+   * Any hard throw degrades to an empty diagnostic set (R11.3).
+   */
+  lint(code: string, context?: LintRunContext): LintResult {
+    try {
+      const trimmed = code.trimStart();
+      const isPipeFirst = trimmed.startsWith('|');
+      const effectiveCode = isPipeFirst ? PIPE_FIRST_PREFIX + code : code;
+
+      const { tokenStream } = this.createLexerAndTokenStream(effectiveCode);
+      const { parser } = this.createParserWithErrorHandling(tokenStream);
+
+      // The standard generated parser builds parse trees by default.
+      const tree = parser.root();
+
+      const diagnostics = runLint(tree, {
+        ruleNameToIndex: createCompiledRuleNameToIndex(),
+        dataSourceVersion: context?.dataSourceVersion,
+        context,
+      });
+
+      if (isPipeFirst) {
+        return { diagnostics: this.remapPipeFirstColumns(diagnostics) };
+      }
+
+      return { diagnostics };
+    } catch {
+      return { diagnostics: [] };
+    }
+  }
+
+  /**
+   * Subtract the synthetic pipe-first prefix length from line-one diagnostic
+   * columns, clamped to a minimum of zero (R13.6). Other lines are unchanged.
+   */
+  private remapPipeFirstColumns(diagnostics: Diagnostic[]): Diagnostic[] {
+    const prefixLength = PIPE_FIRST_PREFIX.length;
+    return diagnostics.map((diagnostic) => {
+      const { range } = diagnostic;
+      const startColumn =
+        range.startLine === 1 ? Math.max(0, range.startColumn - prefixLength) : range.startColumn;
+      const endColumn =
+        range.endLine === 1 ? Math.max(0, range.endColumn - prefixLength) : range.endColumn;
+      return {
+        ...diagnostic,
+        range: { ...range, startColumn, endColumn },
+      };
+    });
   }
 
   /**

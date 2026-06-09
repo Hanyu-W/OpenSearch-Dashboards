@@ -1,0 +1,186 @@
+/*
+ * Copyright OpenSearch Contributors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import type { ParserRuleContext, ParseTree, TerminalNode } from 'antlr4ng';
+import { isRuleNode, isTerminalNode } from './rule_index';
+import { RuleNameToIndex } from './rule_index';
+
+export interface PipelineStage {
+  command: string;
+  node: ParserRuleContext;
+}
+
+export interface PipelineShape {
+  /** Command stages in pipe (source) order. */
+  stages: PipelineStage[];
+  /** Field names created upstream in the pipeline. */
+  createdFields: Set<string>;
+}
+
+// Command rule names recognized as pipeline stages, mapped to a short label.
+const COMMAND_RULE_NAMES = [
+  'searchCommand',
+  'whereCommand',
+  'fieldsCommand',
+  'tableCommand',
+  'joinCommand',
+  'renameCommand',
+  'statsCommand',
+  'eventstatsCommand',
+  'streamstatsCommand',
+  'dedupCommand',
+  'sortCommand',
+  'evalCommand',
+  'headCommand',
+  'binCommand',
+  'topCommand',
+  'rareCommand',
+  'grokCommand',
+  'parseCommand',
+  'spathCommand',
+  'patternsCommand',
+  'lookupCommand',
+  'fillnullCommand',
+  'trendlineCommand',
+  'appendcolCommand',
+  'appendCommand',
+  'expandCommand',
+  'flattenCommand',
+  'reverseCommand',
+  'regexCommand',
+  'timechartCommand',
+  'rexCommand',
+  'replaceCommand',
+  'unionCommand',
+  'multisearchCommand',
+];
+
+function buildIndexToCommandName(ruleNameToIndex: RuleNameToIndex): Map<number, string> {
+  const map = new Map<number, string>();
+  for (const name of COMMAND_RULE_NAMES) {
+    const idx = ruleNameToIndex(name);
+    if (idx !== -1) {
+      map.set(idx, name);
+    }
+  }
+  return map;
+}
+
+function getTerminalText(node: ParserRuleContext): string {
+  // Concatenate the first identifier-like terminal text.
+  const children = node.children ?? [];
+  for (const child of children) {
+    if (isTerminalNode(child)) {
+      return child.getText();
+    }
+  }
+  return '';
+}
+
+/**
+ * Collect created field names from a single command node. Best-effort: it scans
+ * for `... AS <name>` patterns and known LHS positions.
+ */
+function collectCreatedFields(
+  stage: PipelineStage,
+  ruleNameToIndex: RuleNameToIndex,
+  out: Set<string>
+): void {
+  const asIdx = ruleNameToIndex('qualifiedName');
+  const fieldExprIdx = ruleNameToIndex('fieldExpression');
+  const wcFieldExprIdx = ruleNameToIndex('wcFieldExpression');
+
+  // Walk descendants looking for an `AS` terminal followed by a name node.
+  const stack: ParseTree[] = [stage.node];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (!isRuleNode(node)) {
+      continue;
+    }
+    const children = node.children ?? [];
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+      if (isTerminalNode(child) && child.getText().toLowerCase() === 'as') {
+        const next = children[i + 1];
+        if (isRuleNode(next)) {
+          const name = next.getText();
+          if (name) {
+            out.add(name);
+          }
+        }
+      }
+    }
+
+    // evalClause: fieldExpression EQUAL logicalExpression — LHS is created.
+    if (stage.command === 'evalCommand' || stage.command === 'evalClause') {
+      // handled generically below via evalClause nodes
+    }
+
+    stack.push(...children);
+  }
+
+  // eval LHS names: evalClause's first fieldExpression child.
+  const evalClauseIdx = ruleNameToIndex('evalClause');
+  if (evalClauseIdx !== -1) {
+    const evalStack: ParseTree[] = [stage.node];
+    while (evalStack.length > 0) {
+      const node = evalStack.pop()!;
+      if (!isRuleNode(node)) {
+        continue;
+      }
+      if (node.ruleIndex === evalClauseIdx) {
+        const first = (node.children ?? []).find(
+          (c) => isRuleNode(c) && c.ruleIndex === fieldExprIdx
+        ) as ParserRuleContext | undefined;
+        if (first) {
+          const name = first.getText();
+          if (name) {
+            out.add(name);
+          }
+        }
+      }
+      evalStack.push(...(node.children ?? []));
+    }
+  }
+
+  void asIdx;
+  void wcFieldExprIdx;
+}
+
+/**
+ * Pre-order DFS that visits parse-tree nodes in source order and collects the
+ * pipeline command stages plus the set of field names created upstream.
+ */
+export function buildPipelineShape(
+  tree: ParserRuleContext,
+  ruleNameToIndex: RuleNameToIndex
+): PipelineShape {
+  const indexToCommand = buildIndexToCommandName(ruleNameToIndex);
+  const stages: PipelineStage[] = [];
+  const createdFields = new Set<string>();
+
+  // Pre-order traversal preserving child order.
+  const visit = (node: ParseTree): void => {
+    if (isRuleNode(node)) {
+      const commandName = indexToCommand.get(node.ruleIndex);
+      if (commandName) {
+        stages.push({ command: commandName, node });
+      }
+      const children = node.children ?? [];
+      for (const child of children) {
+        visit(child);
+      }
+    }
+  };
+  visit(tree);
+
+  for (const stage of stages) {
+    collectCreatedFields(stage, ruleNameToIndex, createdFields);
+  }
+
+  void getTerminalText;
+
+  return { stages, createdFields };
+}
