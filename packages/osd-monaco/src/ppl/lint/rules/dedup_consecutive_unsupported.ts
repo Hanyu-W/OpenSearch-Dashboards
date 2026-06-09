@@ -6,7 +6,7 @@
 import { ParserRuleContext } from 'antlr4ng';
 import { Diagnostic } from '../diagnostic';
 import { Detector } from '../types';
-import { findAllDescendantsByRule, RuleNameToIndex } from '../rule_index';
+import { findAllDescendantsByRule } from '../rule_index';
 import { rangeFromContext } from '../range_utils';
 
 // Engine ground truth: `dedup consecutive=true` throws CalciteUnsupportedException
@@ -16,19 +16,14 @@ import { rangeFromContext } from '../range_utils';
 
 /**
  * Scan the flattened token text of a `dedupCommand` for `consecutive = true`,
- * tolerant of whitespace between tokens.
+ * tolerant of whitespace between tokens. The grammar collapses labeled
+ * alternatives under ParserInterpreter, so a token-text scan is the reliable
+ * way to read the CONSECUTIVE boolean literal.
  */
-function hasConsecutiveTrue(command: ParserRuleContext, ruleNameToIndex: RuleNameToIndex): boolean {
-  // Resolve the consecutive boolean literal: in the grammar it is the last
-  // booleanLiteral preceded by the CONSECUTIVE keyword. Scan token text.
+function hasConsecutiveTrue(command: ParserRuleContext): boolean {
   const text = command.getText().toLowerCase();
   const match = /consecutive=(true|false)/.exec(text);
-  if (match) {
-    return match[1] === 'true';
-  }
-  // Fallback: inspect booleanLiteral children paired with CONSECUTIVE keyword.
-  void findAllDescendantsByRule(command, ruleNameToIndex, 'booleanLiteral');
-  return false;
+  return match ? match[1] === 'true' : false;
 }
 
 export const dedupConsecutiveUnsupportedDetector: Detector = (
@@ -47,7 +42,7 @@ export const dedupConsecutiveUnsupportedDetector: Detector = (
   const commands = findAllDescendantsByRule(tree, ruleNameToIndex, 'dedupCommand');
 
   for (const command of commands) {
-    if (hasConsecutiveTrue(command, ruleNameToIndex)) {
+    if (hasConsecutiveTrue(command)) {
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,

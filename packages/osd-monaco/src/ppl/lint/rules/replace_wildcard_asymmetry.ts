@@ -3,11 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ParserRuleContext } from 'antlr4ng';
 import { Diagnostic } from '../diagnostic';
 import { Detector } from '../types';
 import { findAllChildrenByRule, findAllDescendantsByRule, RuleNameToIndex } from '../rule_index';
-import { rangeFromContext } from '../range_utils';
+import { rangeFromContext, unquote } from '../range_utils';
 
 // Engine ground truth: CalciteRelNodeVisitor.visitReplace throws
 // IllegalArgumentException (WildcardUtils.validateWildcardSymmetry) when the
@@ -35,20 +34,6 @@ function countUnescapedWildcards(text: string): number {
     }
   }
   return count;
-}
-
-/**
- * Strip surrounding quotes from a string-literal token text.
- */
-function unquote(raw: string): string {
-  if (raw.length >= 2) {
-    const first = raw[0];
-    const last = raw[raw.length - 1];
-    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
-      return raw.slice(1, -1);
-    }
-  }
-  return raw;
 }
 
 export const replaceWildcardAsymmetryDetector: Detector = (

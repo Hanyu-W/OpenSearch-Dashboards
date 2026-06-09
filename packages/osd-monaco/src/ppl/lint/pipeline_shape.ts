@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { ParserRuleContext, ParseTree, TerminalNode } from 'antlr4ng';
+import type { ParserRuleContext, ParseTree } from 'antlr4ng';
 import { isRuleNode, isTerminalNode } from './rule_index';
 import { RuleNameToIndex } from './rule_index';
 
@@ -68,17 +68,6 @@ function buildIndexToCommandName(ruleNameToIndex: RuleNameToIndex): Map<number, 
   return map;
 }
 
-function getTerminalText(node: ParserRuleContext): string {
-  // Concatenate the first identifier-like terminal text.
-  const children = node.children ?? [];
-  for (const child of children) {
-    if (isTerminalNode(child)) {
-      return child.getText();
-    }
-  }
-  return '';
-}
-
 /**
  * Collect created field names from a single command node. Best-effort: it scans
  * for `... AS <name>` patterns and known LHS positions.
@@ -88,10 +77,6 @@ function collectCreatedFields(
   ruleNameToIndex: RuleNameToIndex,
   out: Set<string>
 ): void {
-  const asIdx = ruleNameToIndex('qualifiedName');
-  const fieldExprIdx = ruleNameToIndex('fieldExpression');
-  const wcFieldExprIdx = ruleNameToIndex('wcFieldExpression');
-
   // Walk descendants looking for an `AS` terminal followed by a name node.
   const stack: ParseTree[] = [stage.node];
   while (stack.length > 0) {
@@ -113,15 +98,11 @@ function collectCreatedFields(
       }
     }
 
-    // evalClause: fieldExpression EQUAL logicalExpression — LHS is created.
-    if (stage.command === 'evalCommand' || stage.command === 'evalClause') {
-      // handled generically below via evalClause nodes
-    }
-
     stack.push(...children);
   }
 
   // eval LHS names: evalClause's first fieldExpression child.
+  const fieldExprIdx = ruleNameToIndex('fieldExpression');
   const evalClauseIdx = ruleNameToIndex('evalClause');
   if (evalClauseIdx !== -1) {
     const evalStack: ParseTree[] = [stage.node];
@@ -144,9 +125,6 @@ function collectCreatedFields(
       evalStack.push(...(node.children ?? []));
     }
   }
-
-  void asIdx;
-  void wcFieldExprIdx;
 }
 
 /**
@@ -179,8 +157,6 @@ export function buildPipelineShape(
   for (const stage of stages) {
     collectCreatedFields(stage, ruleNameToIndex, createdFields);
   }
-
-  void getTerminalText;
 
   return { stages, createdFields };
 }

@@ -37,6 +37,7 @@ import { DefaultInputProps } from './editors';
 import { MonacoCompatibleQuerySuggestion } from '../../autocomplete/providers/query_suggestion_provider';
 import { getEffectiveLanguageForAutoComplete } from './utils';
 import {
+  deriveIsCalcite,
   pplGrammarCache,
   shouldUseRuntimeGrammar,
 } from '../../antlr/opensearch_ppl/ppl_grammar_cache';
@@ -153,6 +154,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
       useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
       dataSourceId: dsId,
       dataSourceVersion: dsVersion,
+      isCalcite: deriveIsCalcite(dsVersion),
       fields: cached.fields,
       typeMap: cached.typeMap,
     };
@@ -208,6 +210,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
         useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
         dataSourceId: dsId,
         dataSourceVersion: dsVersion,
+        isCalcite: deriveIsCalcite(dsVersion),
         fields: lintFieldsRef.current.fields,
         typeMap: lintFieldsRef.current.typeMap,
       });
