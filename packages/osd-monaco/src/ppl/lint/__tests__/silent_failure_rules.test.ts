@@ -40,6 +40,9 @@ describe('PPL silent-failure lint rules (compiled surface)', () => {
   const ids = (code: string, context?: LintRunContext): string[] =>
     analyzer.lint(code, context).diagnostics.map((d) => d.ruleId);
 
+  const diag = (code: string, ruleId: string, context: LintRunContext = ctx) =>
+    analyzer.lint(code, context).diagnostics.find((d) => d.ruleId === ruleId);
+
   describe('division-by-zero', () => {
     it('flags division by literal zero', () => {
       expect(ids('search accounts | eval x = balance / 0 | fields x', ctx)).toContain(
@@ -159,6 +162,21 @@ describe('PPL silent-failure lint rules (compiled surface)', () => {
       expect(ids('search otel | fields raw.k.deep', { fields, typeMap })).not.toContain(
         'enabled-false-object'
       );
+    });
+  });
+
+  describe('field-validation quick fix', () => {
+    it('suggests the nearest field as an in-place replacement', () => {
+      const d = diag('search accounts | where firstnam = "x"', 'field-validation');
+      expect(d?.fix).toEqual({ title: 'Replace with "firstname"', text: 'firstname' });
+      // Default range — the fix replaces the squiggled field reference.
+      expect(d?.fix?.range).toBeUndefined();
+    });
+
+    it('offers no fix when no known field is close (still flags)', () => {
+      const d = diag('search accounts | where zzzzzzzz = "x"', 'field-validation');
+      expect(d).toBeDefined();
+      expect(d?.fix).toBeUndefined();
     });
   });
 

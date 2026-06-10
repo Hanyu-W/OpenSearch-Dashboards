@@ -4,7 +4,32 @@
  */
 
 import { monaco } from '../../monaco';
-import { Diagnostic, LintSeverity } from './diagnostic';
+import { Diagnostic, DiagnosticRange, LintSeverity } from './diagnostic';
+
+interface MonacoRange {
+  startLineNumber: number;
+  startColumn: number;
+  endLineNumber: number;
+  endColumn: number;
+}
+
+/**
+ * Convert an ANTLR-convention {@link DiagnosticRange} (1-based line, 0-based
+ * column, exclusive end) into Monaco coordinates (1-based line and column). It
+ *  - shifts the 0-based ANTLR column to a 1-based Monaco column (+1) (R13.1),
+ *  - clamps negative columns and sub-one lines (R13.2, R13.3),
+ *  - keeps start <= end when both ends are on the same line.
+ */
+function toMonacoRange(range: DiagnosticRange): MonacoRange {
+  const startLineNumber = Math.max(1, range.startLine);
+  const endLineNumber = Math.max(startLineNumber, range.endLine);
+  const startColumn = Math.max(1, range.startColumn + 1);
+  let endColumn = Math.max(1, range.endColumn + 1);
+  if (endLineNumber === startLineNumber) {
+    endColumn = Math.max(startColumn, endColumn);
+  }
+  return { startLineNumber, startColumn, endLineNumber, endColumn };
+}
 
 /**
  * Marker source tag for all lint diagnostics. Used by the code-action provider
@@ -37,28 +62,16 @@ function toMarkerSeverity(severity: LintSeverity): monaco.MarkerSeverity {
  *  - sets `code: { value: ruleId, target: docUrl }` when a doc URL is present.
  */
 export function diagnosticToMarker(diagnostic: Diagnostic): monaco.editor.IMarkerData {
-  const { range } = diagnostic;
-
-  // Clamp lines to a minimum of 1 (R13.3).
-  const startLine = Math.max(1, range.startLine);
-  const endLine = Math.max(startLine, range.endLine);
-
-  // Shift 0-based ANTLR columns to 1-based Monaco columns (R13.1), clamping
-  // negatives (R13.2).
-  const startColumn = Math.max(1, range.startColumn + 1);
-  let endColumn = Math.max(1, range.endColumn + 1);
-
-  // When start and end are on the same line, ensure start is not after end (R13.2).
-  if (endLine === startLine) {
-    endColumn = Math.max(startColumn, endColumn);
-  }
+  const { startLineNumber, startColumn, endLineNumber, endColumn } = toMonacoRange(
+    diagnostic.range
+  );
 
   const marker: monaco.editor.IMarkerData = {
     severity: toMarkerSeverity(diagnostic.severity),
     message: diagnostic.message,
-    startLineNumber: startLine,
+    startLineNumber,
     startColumn,
-    endLineNumber: endLine,
+    endLineNumber,
     endColumn,
     source: LINT_MARKER_SOURCE,
   };
@@ -67,6 +80,19 @@ export function diagnosticToMarker(diagnostic: Diagnostic): monaco.editor.IMarke
     marker.code = {
       value: diagnostic.ruleId,
       target: monaco.Uri.parse(diagnostic.docUrl),
+    };
+  }
+
+  // Attach the quick-fix payload the code-action provider reads off the marker.
+  // An explicit fix range is converted to Monaco coordinates here; when absent,
+  // the provider falls back to the marker's own range.
+  if (diagnostic.fix) {
+    (marker as monaco.editor.IMarkerData & {
+      fix?: { title: string; text: string; range?: MonacoRange };
+    }).fix = {
+      title: diagnostic.fix.title,
+      text: diagnostic.fix.text,
+      range: diagnostic.fix.range ? toMonacoRange(diagnostic.fix.range) : undefined,
     };
   }
 

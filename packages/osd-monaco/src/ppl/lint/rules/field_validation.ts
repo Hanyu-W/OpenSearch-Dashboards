@@ -149,6 +149,11 @@ export const fieldValidationDetector: Detector = (tree, config, context, ruleNam
           message: `Unknown field "${name}".${suffix}`,
           range: rangeFromContext(node),
           docUrl: config.docUrl,
+          // The diagnostic range spans exactly the field reference, so the fix
+          // replaces it in place (no explicit fix range needed).
+          ...(suggestion
+            ? { fix: { title: `Replace with "${suggestion}"`, text: suggestion } }
+            : {}),
         });
       }
     }

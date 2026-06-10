@@ -26,6 +26,26 @@ export interface DiagnosticRange {
 }
 
 /**
+ * A deterministic quick-fix attached to a diagnostic. The code-action provider
+ * turns it into a Monaco workspace edit. Fixes are opt-in suggestions: they are
+ * attached only when the rewrite is unambiguous and would not re-fire the same
+ * diagnostic, and the `title` shows the resulting text so the user previews the
+ * change before accepting.
+ */
+export interface DiagnosticFix {
+  /** Human-readable action title shown in the lightbulb menu. */
+  title: string;
+  /** Replacement text for the fix range. */
+  text: string;
+  /**
+   * Source range the fix replaces. When omitted, the fix replaces the
+   * diagnostic's own `range` (the common case). Same coordinate convention as
+   * {@link DiagnosticRange} (1-based line, 0-based column, exclusive end).
+   */
+  range?: DiagnosticRange;
+}
+
+/**
  * A single linter finding emitted by a detector.
  */
 export interface Diagnostic {
@@ -34,6 +54,8 @@ export interface Diagnostic {
   message: string;
   range: DiagnosticRange;
   docUrl?: string;
+  /** Optional deterministic quick-fix. Absent for rules with no safe rewrite. */
+  fix?: DiagnosticFix;
 }
 
 /**
