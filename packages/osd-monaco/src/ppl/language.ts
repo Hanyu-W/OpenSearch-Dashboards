@@ -18,6 +18,8 @@ import { pplLintCodeActionProvider } from './lint/code_action_provider';
 const PPL_LANGUAGE_ID = ID;
 const OWNER = 'PPL_WORKER';
 const LINT_OWNER = 'PPL_LINT';
+const LINT_DEBOUNCE_MS = 500;
+const lintDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 // PPL worker proxy service for worker-based syntax highlighting
 const pplWorkerProxyService = new PPLWorkerProxyService();
@@ -228,6 +230,22 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
 };
 
 /**
+ * Debounced wrapper for keystroke-driven lint. Restarts a 500ms trailing-edge
+ * timer per model; only the last keystroke in a burst triggers actual lint work.
+ */
+const scheduleLintHighlighting = (model: monaco.editor.IModel): void => {
+  const existing = lintDebounceTimers.get(model.id);
+  if (existing !== undefined) {
+    clearTimeout(existing);
+  }
+  const handle = setTimeout(() => {
+    lintDebounceTimers.delete(model.id);
+    processLintHighlighting(model);
+  }, LINT_DEBOUNCE_MS);
+  lintDebounceTimers.set(model.id, handle);
+};
+
+/**
  * Set up PPL document range formatting provider
  */
 const setupPPLFormatter = () => {
@@ -249,7 +267,7 @@ const setupPPLSyntaxHighlighting = () => {
       model.onDidChangeContent(async () => {
         if (model.getLanguageId() === PPL_LANGUAGE_ID) {
           await processSyntaxHighlighting(model);
-          processLintHighlighting(model);
+          scheduleLintHighlighting(model);
         }
       })
     );
@@ -280,6 +298,11 @@ const setupPPLSyntaxHighlighting = () => {
   // Listen for model disposal to clear markers
   disposables.push(
     monaco.editor.onWillDisposeModel((model) => {
+      const pending = lintDebounceTimers.get(model.id);
+      if (pending !== undefined) {
+        clearTimeout(pending);
+        lintDebounceTimers.delete(model.id);
+      }
       monaco.editor.setModelMarkers(model, OWNER, []);
       monaco.editor.setModelMarkers(model, LINT_OWNER, []);
     })
@@ -290,6 +313,8 @@ const setupPPLSyntaxHighlighting = () => {
 
   // Return cleanup function
   return () => {
+    lintDebounceTimers.forEach(clearTimeout);
+    lintDebounceTimers.clear();
     disposables.forEach((d) => d.dispose());
     pplWorkerProxyService.stop();
   };
