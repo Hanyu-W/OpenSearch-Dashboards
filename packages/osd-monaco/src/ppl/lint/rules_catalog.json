@@ -103,5 +103,54 @@
     "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
     "appliesTo": {},
     "needsContext": true
+  },
+  {
+    "id": "division-by-zero",
+    "detector": "division-by-zero",
+    "enabled": true,
+    "severity": "warning",
+    "message": "Division by literal zero evaluates to null rather than raising an error.",
+    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "appliesTo": {}
+  },
+  {
+    "id": "agg-on-text",
+    "detector": "agg-on-text",
+    "enabled": true,
+    "severity": "warning",
+    "message": "Numeric aggregation on a text field returns null.",
+    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "appliesTo": {},
+    "needsContext": true
+  },
+  {
+    "id": "flat-object-subfield",
+    "detector": "flat-object-subfield",
+    "enabled": true,
+    "severity": "error",
+    "message": "Subfield of a flat_object field is not queryable.",
+    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "appliesTo": {},
+    "needsContext": true
+  },
+  {
+    "id": "type-mismatch-numeric",
+    "detector": "type-mismatch-numeric",
+    "enabled": true,
+    "severity": "warning",
+    "message": "Comparing a numeric field to a non-numeric string matches no documents.",
+    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "appliesTo": {},
+    "needsContext": true
+  },
+  {
+    "id": "enabled-false-object",
+    "detector": "enabled-false-object",
+    "enabled": true,
+    "severity": "warning",
+    "message": "Field inside an enabled:false object is not indexed and resolves to null.",
+    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "appliesTo": {},
+    "needsContext": true
   }
 ]

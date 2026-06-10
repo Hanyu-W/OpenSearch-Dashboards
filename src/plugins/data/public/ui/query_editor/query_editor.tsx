@@ -98,6 +98,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     datasetId?: string;
     fields?: Set<string>;
     typeMap?: Map<string, string>;
+    disabledObjectFields?: Set<string>;
   }>({});
   const headerRef = useRef<HTMLDivElement>(null);
   const bannerRef = useRef<HTMLDivElement>(null);
@@ -157,6 +158,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
       isCalcite: deriveIsCalcite(dsVersion),
       fields: cached.fields,
       typeMap: cached.typeMap,
+      disabledObjectFields: cached.disabledObjectFields,
     };
   };
 
@@ -213,10 +215,33 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
         isCalcite: deriveIsCalcite(dsVersion),
         fields: lintFieldsRef.current.fields,
         typeMap: lintFieldsRef.current.typeMap,
+        disabledObjectFields: lintFieldsRef.current.disabledObjectFields,
       });
       const model = inputRef.current?.getModel();
       if (model) {
         void revalidatePPLModel(model);
+      }
+    };
+
+    // Best-effort fetch of object fields mapped `enabled: false` from the
+    // read-only mappings route. Returns undefined on any failure so the
+    // `enabled-false-object` rule self-suppresses rather than false-firing.
+    const loadDisabledObjectFields = async (indexPattern: {
+      title?: string;
+      dataSourceRef?: { id?: string };
+    }): Promise<Set<string> | undefined> => {
+      const pattern = indexPattern.title;
+      if (!pattern || !services.http) {
+        return undefined;
+      }
+      try {
+        const resp = await services.http.fetch('/api/index_patterns/_disabled_object_fields', {
+          query: { pattern, data_source: indexPattern.dataSourceRef?.id },
+        });
+        const names: string[] = resp?.fields ?? [];
+        return names.length > 0 ? new Set(names) : undefined;
+      } catch {
+        return undefined;
       }
     };
 
@@ -241,7 +266,17 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
             typeMap.set(field.name, esType);
           }
         }
-        lintFieldsRef.current = { datasetId, fields, typeMap };
+
+        // The `enabled: false` object attribute is stripped by `_field_caps`
+        // (and so absent from `indexPattern.fields`); fetch it separately from
+        // the read-only mappings route. Best-effort: on any failure the set is
+        // left undefined and the `enabled-false-object` rule self-suppresses.
+        const disabledObjectFields = await loadDisabledObjectFields(indexPattern);
+        if (cancelled) {
+          return;
+        }
+
+        lintFieldsRef.current = { datasetId, fields, typeMap, disabledObjectFields };
         // Single-phase update after the async load resolves (R8.5).
         syncLint();
       } catch {
@@ -254,7 +289,12 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     return () => {
       cancelled = true;
     };
-  }, [query.dataset?.id, query.dataset?.dataSource?.id, query.dataset?.dataSource?.version]);
+  }, [
+    query.dataset?.id,
+    query.dataset?.dataSource?.id,
+    query.dataset?.dataSource?.version,
+    services.http,
+  ]);
 
   const renderQueryEditorExtensions = () => {
     if (

@@ -18,6 +18,12 @@ export interface PPLLintContext extends PPLValidationContext {
   fields?: Set<string>;
   /** Field name -> esTypes[0]. */
   typeMap?: Map<string, string>;
+  /**
+   * Names of object fields mapped with `enabled: false`. These are absent from
+   * `_field_caps` (and therefore from `typeMap`), so they are sourced from a
+   * `_mappings` walk. Used by the `enabled-false-object` rule.
+   */
+  disabledObjectFields?: Set<string>;
   /** Visible index names, for wildcard-source-zero-match. */
   visibleIndices?: string[];
   settings?: { allJoinTypesAllowed?: boolean };

@@ -97,4 +97,56 @@ describe('lintRuntimePPLQuery', () => {
       'unsupported-window-function-in-eventstats'
     );
   });
+
+  describe('silent-failure rules on the runtime surface', () => {
+    const typeMap = new Map<string, string>([
+      ['age', 'long'],
+      ['balance', 'long'],
+      ['firstname', 'text'],
+      ['attributes', 'flat_object'],
+    ]);
+    const fields = new Set<string>([...typeMap.keys(), 'raw']);
+    const runtimeContext = {
+      useRuntimeGrammar: true,
+      fields,
+      typeMap,
+      disabledObjectFields: new Set(['raw']),
+    };
+
+    const runtimeIds = (content: string): string[] => {
+      jest.spyOn(pplGrammarCache, 'getCachedGrammar').mockReturnValue(buildRuntimeGrammar());
+      const result = lintRuntimePPLQuery({ content, context: runtimeContext, model: {} as any });
+      return result!.diagnostics.map((d) => d.ruleId);
+    };
+
+    it('flags division-by-zero', () => {
+      expect(runtimeIds('source=accounts | eval x = balance / 0')).toContain('division-by-zero');
+    });
+
+    it('flags agg-on-text', () => {
+      expect(runtimeIds('source=accounts | stats avg(firstname)')).toContain('agg-on-text');
+    });
+
+    it('flags flat-object-subfield', () => {
+      expect(runtimeIds('source=otel | where attributes.http.method = "GET"')).toContain(
+        'flat-object-subfield'
+      );
+    });
+
+    it('flags type-mismatch-numeric', () => {
+      expect(runtimeIds('source=accounts | where age = "thirty"')).toContain(
+        'type-mismatch-numeric'
+      );
+    });
+
+    it('does not flag a coercible quoted number for type-mismatch-numeric', () => {
+      expect(runtimeIds('source=accounts | where age = "32"')).not.toContain(
+        'type-mismatch-numeric'
+      );
+    });
+
+    it('flags enabled-false-object', () => {
+      expect(runtimeIds('source=otel | fields raw.k.deep')).toContain('enabled-false-object');
+    });
+  });
 });
