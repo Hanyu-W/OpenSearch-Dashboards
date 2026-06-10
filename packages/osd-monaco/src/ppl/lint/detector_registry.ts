@@ -15,6 +15,11 @@ import { headWithoutSortDetector } from './rules/head_without_sort';
 import { fieldValidationDetector } from './rules/field_validation';
 import { expandOnNonArrayDetector } from './rules/expand_on_non_array';
 import { wildcardSourceZeroMatchDetector } from './rules/wildcard_source_zero_match';
+import { divisionByZeroDetector } from './rules/division_by_zero';
+import { aggOnTextDetector } from './rules/agg_on_text';
+import { flatObjectSubfieldDetector } from './rules/flat_object_subfield';
+import { typeMismatchNumericDetector } from './rules/type_mismatch_numeric';
+import { enabledFalseObjectDetector } from './rules/enabled_false_object';
 
 const registry = new Map<string, Detector>();
 
@@ -57,6 +62,11 @@ export function registerBuiltInDetectors(): void {
   registerDetector('field-validation', fieldValidationDetector);
   registerDetector('expand-on-non-array', expandOnNonArrayDetector);
   registerDetector('wildcard-source-zero-match', wildcardSourceZeroMatchDetector);
+  registerDetector('division-by-zero', divisionByZeroDetector);
+  registerDetector('agg-on-text', aggOnTextDetector);
+  registerDetector('flat-object-subfield', flatObjectSubfieldDetector);
+  registerDetector('type-mismatch-numeric', typeMismatchNumericDetector);
+  registerDetector('enabled-false-object', enabledFalseObjectDetector);
 }
 
 // Register built-ins at module load.

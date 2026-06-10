@@ -23,6 +23,11 @@ describe('catalog loading', () => {
         'field-validation',
         'expand-on-non-array',
         'wildcard-source-zero-match',
+        'division-by-zero',
+        'agg-on-text',
+        'flat-object-subfield',
+        'type-mismatch-numeric',
+        'enabled-false-object',
       ])
     );
   });

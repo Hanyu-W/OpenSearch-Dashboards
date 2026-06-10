@@ -33,6 +33,45 @@ import { HttpServiceSetup, RequestHandlerContext } from 'opensearch-dashboards/s
 import { IndexPatternsFetcher } from './fetcher';
 import { decideLegacyClient } from '../../../data_source/common/util/';
 
+/**
+ * Walk an `indices.getMapping` response and collect the dotted names of object
+ * fields mapped with `enabled: false`. Such objects are not indexed, so every
+ * field beneath them silently resolves to null at query time. Only the field
+ * names are returned — no other mapping detail leaves the server.
+ */
+export function collectDisabledObjectFields(getMappingResponse: unknown): string[] {
+  const names = new Set<string>();
+  const body = (getMappingResponse as { body?: unknown })?.body ?? getMappingResponse;
+  if (typeof body !== 'object' || body === null) {
+    return [];
+  }
+
+  const walkProperties = (properties: Record<string, any> | undefined, prefix: string): void => {
+    if (!properties) {
+      return;
+    }
+    for (const [name, definition] of Object.entries(properties)) {
+      if (typeof definition !== 'object' || definition === null) {
+        continue;
+      }
+      const path = prefix ? `${prefix}.${name}` : name;
+      if (definition.enabled === false) {
+        names.add(path);
+        // The subtree is not indexed; no need to descend further.
+        continue;
+      }
+      walkProperties(definition.properties, path);
+    }
+  };
+
+  // Response shape: { [indexName]: { mappings: { properties: {...} } } }.
+  for (const indexEntry of Object.values(body as Record<string, any>)) {
+    walkProperties(indexEntry?.mappings?.properties, '');
+  }
+
+  return [...names];
+}
+
 export function registerRoutes(http: HttpServiceSetup) {
   const parseMetaFields = (metaFields: string | string[]) => {
     let parsedFields: string[] = [];
@@ -45,6 +84,47 @@ export function registerRoutes(http: HttpServiceSetup) {
   };
 
   const router = http.createRouter();
+
+  router.get(
+    {
+      path: '/api/index_patterns/_disabled_object_fields',
+      validate: {
+        query: schema.object({
+          pattern: schema.string(),
+          data_source: schema.maybe(schema.string()),
+        }),
+      },
+    },
+    async (context, request, response) => {
+      const callAsCurrentUser = await decideLegacyClient(context, request);
+      const { pattern } = request.query;
+
+      try {
+        // Read-only mapping lookup, scoped to the current user / data source.
+        // The mapping-level `enabled: false` attribute is stripped by
+        // `_field_caps`, so it must be read from `_mappings` directly. Only the
+        // resulting object field-name list leaves the server.
+        const mappings = await callAsCurrentUser('indices.getMapping', {
+          index: pattern,
+          allow_no_indices: true,
+          ignore_unavailable: true,
+        });
+
+        return response.ok({
+          body: { fields: collectDisabledObjectFields(mappings) },
+          headers: { 'content-type': 'application/json' },
+        });
+      } catch (error) {
+        // Mirror the wildcard route: a missing index is a not-found, anything
+        // else degrades to an empty set so the linter simply self-suppresses.
+        return response.ok({
+          body: { fields: [] },
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+    }
+  );
+
   router.get(
     {
       path: '/api/index_patterns/_fields_for_wildcard',

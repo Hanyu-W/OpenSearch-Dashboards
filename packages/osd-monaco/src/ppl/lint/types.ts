@@ -55,6 +55,12 @@ export interface LintRunContext {
   fields?: Set<string>;
   /** Field name -> esTypes[0]. */
   typeMap?: Map<string, string>;
+  /**
+   * Names of object fields mapped with `enabled: false`. Such fields are absent
+   * from `_field_caps` (and therefore from `typeMap`), so this set is sourced
+   * separately from a `_mappings` walk. Used by `enabled-false-object`.
+   */
+  disabledObjectFields?: Set<string>;
   /** Visible index names, for wildcard-source-zero-match. */
   visibleIndices?: string[];
   settings?: { allJoinTypesAllowed?: boolean };
