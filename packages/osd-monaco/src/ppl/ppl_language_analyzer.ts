@@ -9,7 +9,7 @@ import {
   SimplifiedOpenSearchPPLParser as OpenSearchPPLParser,
 } from '@osd/antlr-grammar';
 import { PPLSyntaxErrorListener, SyntaxError } from './ppl_error_listener';
-import { Diagnostic, LintResult } from './lint/diagnostic';
+import { Diagnostic, DiagnosticRange, LintResult } from './lint/diagnostic';
 import { runLint } from './lint/lint_runner';
 import { createCompiledRuleNameToIndex } from './lint/rule_index';
 import { LintRunContext } from './lint/types';
@@ -204,17 +204,22 @@ export class PPLLanguageAnalyzer {
    */
   private remapPipeFirstColumns(diagnostics: Diagnostic[]): Diagnostic[] {
     const prefixLength = PIPE_FIRST_PREFIX.length;
-    return diagnostics.map((diagnostic) => {
-      const { range } = diagnostic;
-      const startColumn =
-        range.startLine === 1 ? Math.max(0, range.startColumn - prefixLength) : range.startColumn;
-      const endColumn =
-        range.endLine === 1 ? Math.max(0, range.endColumn - prefixLength) : range.endColumn;
-      return {
-        ...diagnostic,
-        range: { ...range, startColumn, endColumn },
-      };
+    const shift = (range: DiagnosticRange): DiagnosticRange => ({
+      ...range,
+      startColumn:
+        range.startLine === 1 ? Math.max(0, range.startColumn - prefixLength) : range.startColumn,
+      endColumn:
+        range.endLine === 1 ? Math.max(0, range.endColumn - prefixLength) : range.endColumn,
     });
+    return diagnostics.map((diagnostic) => ({
+      ...diagnostic,
+      range: shift(diagnostic.range),
+      // An explicit fix range needs the same shift; a default-range fix rides
+      // the already-remapped diagnostic range via the provider fallback.
+      fix: diagnostic.fix?.range
+        ? { ...diagnostic.fix, range: shift(diagnostic.fix.range) }
+        : diagnostic.fix,
+    }));
   }
 
   /**

@@ -30,12 +30,22 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
       }
 
       const fix = (marker as monaco.editor.IMarkerData & {
-        fix?: { title: string; text: string };
+        fix?: { title: string; text: string; range?: monaco.IRange };
       }).fix;
 
       if (!fix) {
         continue;
       }
+
+      // Use the fix's own range when it targets a span different from the
+      // squiggle (e.g. deleting one character before the underlined name);
+      // otherwise replace the marker's range.
+      const editRange = fix.range ?? {
+        startLineNumber: marker.startLineNumber,
+        startColumn: marker.startColumn,
+        endLineNumber: marker.endLineNumber,
+        endColumn: marker.endColumn,
+      };
 
       actions.push({
         title: fix.title,
@@ -47,12 +57,7 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
               resource: model.uri,
 
               textEdit: {
-                range: {
-                  startLineNumber: marker.startLineNumber,
-                  startColumn: marker.startColumn,
-                  endLineNumber: marker.endLineNumber,
-                  endColumn: marker.endColumn,
-                },
+                range: editRange,
                 text: fix.text,
               },
               versionId: model.getVersionId(),

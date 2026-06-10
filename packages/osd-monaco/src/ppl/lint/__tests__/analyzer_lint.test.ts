@@ -14,6 +14,9 @@ describe('PPLLanguageAnalyzer.lint (compiled surface)', () => {
 
   const ruleIds = (code: string): string[] => analyzer.lint(code).diagnostics.map((d) => d.ruleId);
 
+  const diag = (code: string, ruleId: string) =>
+    analyzer.lint(code).diagnostics.find((d) => d.ruleId === ruleId);
+
   it('returns a LintResult with a diagnostics array', () => {
     const result = analyzer.lint('search source=logs');
     expect(Array.isArray(result.diagnostics)).toBe(true);
@@ -45,6 +48,56 @@ describe('PPLLanguageAnalyzer.lint (compiled surface)', () => {
     it('does not flag grok %{PATTERN:subname} syntax', () => {
       const ids = ruleIds('source=logs | grok msg "%{NUMBER:duration}"');
       expect(ids).not.toContain('invalid-capture-group-name');
+    });
+
+    describe('quick fixes', () => {
+      it('offers a delete-P fix (explicit range) for the Python opener', () => {
+        const d = diag(
+          'source=logs | rex field=msg "(?P<name>\\\\d+)"',
+          'invalid-capture-group-name'
+        );
+        expect(d?.fix).toBeDefined();
+        expect(d?.fix?.text).toBe('');
+        // Explicit range pointing at the single `P` (width 1).
+        expect(d?.fix?.range).toBeDefined();
+        const r = d!.fix!.range!;
+        expect(r.startLine).toBe(r.endLine);
+        expect(r.endColumn - r.startColumn).toBe(1);
+      });
+
+      it('offers a sanitize fix (default range) for a dashed name', () => {
+        const d = diag(
+          'source=logs | rex field=msg "(?<bad-name>\\\\d+)"',
+          'invalid-capture-group-name'
+        );
+        expect(d?.fix).toEqual({ title: 'Remove invalid characters → "badname"', text: 'badname' });
+        expect(d?.fix?.range).toBeUndefined();
+      });
+
+      it('strips an underscore to suggest a valid name', () => {
+        const d = diag(
+          'source=logs | rex field=msg "(?<user_id>\\\\d+)"',
+          'invalid-capture-group-name'
+        );
+        expect(d?.fix?.text).toBe('userid');
+      });
+
+      it('strips leading digits so the first-character rule holds', () => {
+        const d = diag(
+          'source=logs | rex field=msg "(?<1name>\\\\d+)"',
+          'invalid-capture-group-name'
+        );
+        expect(d?.fix?.text).toBe('name');
+      });
+
+      it('offers no fix when sanitizing leaves nothing valid (still flags)', () => {
+        const d = diag(
+          'source=logs | rex field=msg "(?<123>\\\\d+)"',
+          'invalid-capture-group-name'
+        );
+        expect(d).toBeDefined();
+        expect(d?.fix).toBeUndefined();
+      });
     });
   });
 
