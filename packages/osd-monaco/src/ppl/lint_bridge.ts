@@ -14,7 +14,7 @@ import type { LintResult } from './lint/diagnostic';
 export interface PPLLintContext extends PPLValidationContext {
   /** True when the data source is identified as running the Calcite engine. */
   isCalcite?: boolean;
-  /** Index field names; empty/absent gates Bucket-B rules. */
+  /** Index field names; empty/absent suppresses Bucket-B rules. */
   fields?: Set<string>;
   /** Field name -> esTypes[0]. */
   typeMap?: Map<string, string>;
@@ -29,23 +29,23 @@ export interface PPLLintContext extends PPLValidationContext {
   settings?: { allJoinTypesAllowed?: boolean };
 }
 
-export interface PPLLintProviderRequest {
+export interface PPLLintBridgeRequest {
   content: string;
   model: monaco.editor.IModel;
   context?: PPLLintContext;
 }
 
-export type PPLLintProvider = (
-  request: PPLLintProviderRequest
+export type PPLLintBridge = (
+  request: PPLLintBridgeRequest
 ) => Promise<LintResult | null> | LintResult | null;
 
 interface PPLLintGlobalState {
-  provider: PPLLintProvider | undefined;
+  bridge: PPLLintBridge | undefined;
   contexts: WeakMap<monaco.editor.IModel, PPLLintContext>;
   enabled: boolean;
 }
 
-// Use globalThis so multiple bundled Monaco/language modules share one provider
+// Use globalThis so multiple bundled Monaco/language modules share one bridge
 // registry and one per-model context map.
 const PPL_LINT_GLOBAL_STATE_KEY = '__osdPPLLintGlobalState';
 
@@ -56,7 +56,7 @@ function getGlobalLintState(): PPLLintGlobalState {
 
   if (!globalScope[PPL_LINT_GLOBAL_STATE_KEY]) {
     globalScope[PPL_LINT_GLOBAL_STATE_KEY] = {
-      provider: undefined,
+      bridge: undefined,
       contexts: new WeakMap<monaco.editor.IModel, PPLLintContext>(),
       // Default enabled; the host (data plugin) may disable via the
       // QUERY_ENHANCEMENTS_PPL_LINT setting (R1).
@@ -81,12 +81,12 @@ export function isPPLLintEnabled(): boolean {
   return getGlobalLintState().enabled;
 }
 
-export function registerPPLLintProvider(provider?: PPLLintProvider): () => void {
+export function registerPPLLintBridge(bridge?: PPLLintBridge): () => void {
   const state = getGlobalLintState();
-  state.provider = provider;
+  state.bridge = bridge;
   return () => {
-    if (state.provider === provider) {
-      state.provider = undefined;
+    if (state.bridge === bridge) {
+      state.bridge = undefined;
     }
   };
 }
@@ -100,11 +100,11 @@ export function clearPPLLintContext(model: monaco.editor.IModel): void {
 }
 
 /**
- * Resolve a lint result using the six-case provider contract:
- *  1. provider returns non-null LintResult → use it (even when empty).
- *  2. provider returns null/undefined → compiled fallback.
- *  3. provider throws → compiled fallback.
- *  4. no provider registered → compiled fallback.
+ * Resolve a lint result using the bridge contract:
+ *  1. bridge returns non-null LintResult → use it (even when empty).
+ *  2. bridge returns null/undefined → compiled fallback.
+ *  3. bridge throws → compiled fallback.
+ *  4. no bridge registered → compiled fallback.
  *  5/6 unregister + cross-bundle sharing handled by the global state above.
  */
 export async function resolvePPLLintResult(
@@ -113,9 +113,9 @@ export async function resolvePPLLintResult(
   fallbackLint: (content: string) => Promise<LintResult>
 ): Promise<LintResult> {
   const state = getGlobalLintState();
-  if (state.provider) {
+  if (state.bridge) {
     try {
-      const runtimeResult = await state.provider({
+      const runtimeResult = await state.bridge({
         content,
         model,
         context: state.contexts.get(model),
@@ -126,7 +126,7 @@ export async function resolvePPLLintResult(
         return runtimeResult;
       }
     } catch {
-      // Fall through to compiled lint on runtime-provider failures (R2.4).
+      // Fall through to compiled lint on runtime-bridge failures (R2.4).
     }
   }
 

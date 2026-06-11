@@ -10,10 +10,11 @@ import { getPPLLanguageAnalyzer, PPLValidationResult } from './ppl_language_anal
 import { getPPLDocumentationLink } from './ppl_documentation';
 import { pplRangeFormatProvider } from './formatter';
 import { resolvePPLValidationResult } from './validation_provider';
-import { isPPLLintEnabled, resolvePPLLintResult } from './lint_provider';
+import { isPPLLintEnabled, resolvePPLLintResult } from './lint_bridge';
 import { LintResult } from './lint/diagnostic';
 import { diagnosticToMarker } from './lint/diagnostic_to_marker';
 import { pplLintCodeActionProvider } from './lint/code_action_provider';
+import { clearModelFixes, markerFixKey, MarkerFix, setModelFixes } from './lint/fix_registry';
 
 const PPL_LANGUAGE_ID = ID;
 const OWNER = 'PPL_WORKER';
@@ -197,11 +198,13 @@ export const revalidatePPLModel = async (model: monaco.editor.IModel) => {
 const processLintHighlighting = (model: monaco.editor.IModel): void => {
   if (!isPPLLintEnabled()) {
     monaco.editor.setModelMarkers(model, LINT_OWNER, []);
+    clearModelFixes(model);
     return;
   }
 
   if (model.getLanguageId() !== PPL_LANGUAGE_ID) {
     monaco.editor.setModelMarkers(model, LINT_OWNER, []);
+    clearModelFixes(model);
     return;
   }
 
@@ -222,6 +225,19 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
         return;
       }
       const markers = lintResult.diagnostics.map(diagnosticToMarker);
+      // Monaco's MarkerService rebuilds each marker from a fixed field list and
+      // drops the custom `fix` property, so it would never reach the code-action
+      // provider. Capture each fix into a side table keyed by the fields the
+      // service preserves, then strip it off the marker before handing it over.
+      const fixes = new Map<string, MarkerFix>();
+      for (const marker of markers) {
+        const withFix = marker as monaco.editor.IMarkerData & { fix?: MarkerFix };
+        if (withFix.fix) {
+          fixes.set(markerFixKey(marker), withFix.fix);
+          delete withFix.fix;
+        }
+      }
+      setModelFixes(model, fixes);
       monaco.editor.setModelMarkers(model, LINT_OWNER, markers);
     })
     .catch(() => {
@@ -281,6 +297,7 @@ const setupPPLSyntaxHighlighting = () => {
         } else {
           monaco.editor.setModelMarkers(model, OWNER, []);
           monaco.editor.setModelMarkers(model, LINT_OWNER, []);
+          clearModelFixes(model);
         }
       })
     );
@@ -305,6 +322,7 @@ const setupPPLSyntaxHighlighting = () => {
       }
       monaco.editor.setModelMarkers(model, OWNER, []);
       monaco.editor.setModelMarkers(model, LINT_OWNER, []);
+      clearModelFixes(model);
     })
   );
 

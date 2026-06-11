@@ -25,12 +25,12 @@ export type { PPLValidationResult } from './ppl_language_analyzer';
 export {
   clearPPLLintContext,
   isPPLLintEnabled,
-  registerPPLLintProvider,
+  registerPPLLintBridge,
   resolvePPLLintResult,
   setPPLLintContext,
   setPPLLintEnabled,
-} from './lint_provider';
-export type { PPLLintContext, PPLLintProvider, PPLLintProviderRequest } from './lint_provider';
+} from './lint_bridge';
+export type { PPLLintContext, PPLLintBridge, PPLLintBridgeRequest } from './lint_bridge';
 export type { Diagnostic, DiagnosticRange, LintResult, LintSeverity } from './lint/diagnostic';
 export type { CatalogEntry, LintRunContext } from './lint/types';
 export { runLint } from './lint/lint_runner';

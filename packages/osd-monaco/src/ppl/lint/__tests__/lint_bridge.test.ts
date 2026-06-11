@@ -6,14 +6,14 @@
 import {
   clearPPLLintContext,
   isPPLLintEnabled,
-  registerPPLLintProvider,
+  registerPPLLintBridge,
   resolvePPLLintResult,
   setPPLLintContext,
   setPPLLintEnabled,
-} from '../../lint_provider';
+} from '../../lint_bridge';
 import { LintResult } from '../diagnostic';
 
-describe('PPL lint provider bridge', () => {
+describe('PPL lint bridge', () => {
   let model: any;
   let unregister: (() => void) | undefined;
   const emptyResult: LintResult = { diagnostics: [] };
@@ -28,7 +28,7 @@ describe('PPL lint provider bridge', () => {
     clearPPLLintContext(model);
   });
 
-  it('uses the registered provider result when available', async () => {
+  it('uses the registered bridge result when available', async () => {
     const fallback = jest.fn().mockResolvedValue(emptyResult);
     const runtimeResult: LintResult = {
       diagnostics: [
@@ -41,7 +41,7 @@ describe('PPL lint provider bridge', () => {
       ],
     };
     setPPLLintContext(model, { useRuntimeGrammar: true, dataSourceId: 'ds-1' });
-    unregister = registerPPLLintProvider(({ context }) => {
+    unregister = registerPPLLintBridge(({ context }) => {
       expect(context?.dataSourceId).toBe('ds-1');
       return runtimeResult;
     });
@@ -52,7 +52,7 @@ describe('PPL lint provider bridge', () => {
     expect(fallback).not.toHaveBeenCalled();
   });
 
-  it('treats an empty (but non-null) provider result as complete without fallback', async () => {
+  it('treats an empty (but non-null) bridge result as complete without fallback', async () => {
     const fallback = jest.fn().mockResolvedValue({
       diagnostics: [
         {
@@ -63,25 +63,25 @@ describe('PPL lint provider bridge', () => {
         },
       ],
     });
-    unregister = registerPPLLintProvider(() => ({ diagnostics: [] }));
+    unregister = registerPPLLintBridge(() => ({ diagnostics: [] }));
     await expect(resolvePPLLintResult(model, 'source=logs', fallback)).resolves.toEqual({
       diagnostics: [],
     });
     expect(fallback).not.toHaveBeenCalled();
   });
 
-  it('falls back when the provider returns null', async () => {
+  it('falls back when the bridge returns null', async () => {
     const fallback = jest.fn().mockResolvedValue(emptyResult);
-    unregister = registerPPLLintProvider(() => null);
+    unregister = registerPPLLintBridge(() => null);
     await expect(resolvePPLLintResult(model, 'source=logs', fallback)).resolves.toEqual(
       emptyResult
     );
     expect(fallback).toHaveBeenCalledWith('source=logs');
   });
 
-  it('falls back when the provider throws', async () => {
+  it('falls back when the bridge throws', async () => {
     const fallback = jest.fn().mockResolvedValue(emptyResult);
-    unregister = registerPPLLintProvider(() => {
+    unregister = registerPPLLintBridge(() => {
       throw new Error('boom');
     });
     await expect(resolvePPLLintResult(model, 'source=logs', fallback)).resolves.toEqual(
@@ -90,7 +90,7 @@ describe('PPL lint provider bridge', () => {
     expect(fallback).toHaveBeenCalled();
   });
 
-  it('falls back when no provider is registered', async () => {
+  it('falls back when no bridge is registered', async () => {
     const fallback = jest.fn().mockResolvedValue(emptyResult);
     await expect(resolvePPLLintResult(model, 'source=logs', fallback)).resolves.toEqual(
       emptyResult
@@ -98,9 +98,9 @@ describe('PPL lint provider bridge', () => {
     expect(fallback).toHaveBeenCalled();
   });
 
-  it('unregister removes only the current provider', async () => {
+  it('unregister removes only the current bridge', async () => {
     const fallback = jest.fn().mockResolvedValue(emptyResult);
-    unregister = registerPPLLintProvider(() => ({ diagnostics: [] }));
+    unregister = registerPPLLintBridge(() => ({ diagnostics: [] }));
     unregister();
     unregister = undefined;
     await resolvePPLLintResult(model, 'source=logs', fallback);

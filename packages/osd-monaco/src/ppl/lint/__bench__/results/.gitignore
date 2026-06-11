@@ -1,0 +1,4 @@
+# Benchmark output is generated locally by the PPL_BENCH / PPL_BENCH_FIX runs
+# (see ../lint_perf.bench.test.ts, ../remeasure_contaminated.bench.test.ts).
+# The numbers are environment-sensitive, so we don't track them.
+*.json

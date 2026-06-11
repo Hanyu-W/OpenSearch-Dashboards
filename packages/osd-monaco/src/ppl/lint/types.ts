@@ -42,9 +42,9 @@ export interface CatalogEntry {
 }
 
 /**
- * Host-supplied lint context. Mirrors `PPLLintContext` in `lint_provider.ts`,
+ * Host-supplied lint context. Mirrors `PPLLintContext` in `lint_bridge.ts`,
  * narrowed to the fields detectors consume. Defined here to avoid the engine
- * depending on the provider module.
+ * depending on the bridge module.
  */
 export interface LintRunContext {
   dataSourceId?: string;
