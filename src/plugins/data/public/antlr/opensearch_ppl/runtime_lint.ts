@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { LintResult, PPLLintContext, PPLLintProviderRequest } from '@osd/monaco';
+import type { LintResult, PPLLintContext, PPLLintBridgeRequest } from '@osd/monaco';
 // NOTE: these are deep imports into the built output rather than the '@osd/monaco'
 // barrel on purpose. The barrel pulls in monaco-editor's browser ESM (incl. .css
 // side-effect imports), which breaks bare Node resolution, and it is globally
@@ -97,11 +97,11 @@ function lintWithGrammar(
 }
 
 /**
- * Runtime-grammar lint provider. Returns null when the runtime grammar is
+ * Runtime-grammar lint bridge. Returns null when the runtime grammar is
  * disabled or not cached (the null triggers the compiled-grammar fallback).
  * Runs on the main thread, mirroring validateRuntimePPLQuery.
  */
-export function lintRuntimePPLQuery(request: PPLLintProviderRequest): LintResult | null {
+export function lintRuntimePPLQuery(request: PPLLintBridgeRequest): LintResult | null {
   const { content, context } = request;
   if (!context?.useRuntimeGrammar) {
     return null;

@@ -32,7 +32,7 @@ import './index.scss';
 
 import {
   registerPPLValidationProvider,
-  registerPPLLintProvider,
+  registerPPLLintBridge,
   setPPLLintEnabled,
 } from '@osd/monaco';
 import { PluginInitializerContext, CoreSetup, CoreStart, Plugin } from 'src/core/public';
@@ -148,7 +148,7 @@ export class DataPublicPlugin
   private resourceClientFactory!: ResourceClientFactory;
   private pplGrammarWarmupSubscription?: Subscription;
   private unregisterPplValidationProvider?: () => void;
-  private unregisterPplLintProvider?: () => void;
+  private unregisterPplLintBridge?: () => void;
   constructor(initializerContext: PluginInitializerContext<ConfigSchema>) {
     this.searchService = new SearchService(initializerContext);
     this.uiService = new UiService(initializerContext);
@@ -354,7 +354,7 @@ export class DataPublicPlugin
       uiSettings.get(UI_SETTINGS.QUERY_ENHANCEMENTS_PPL_LINT, true) !== false;
     setPPLLintEnabled(isPplLintEnabled);
     if (isPplLintEnabled && isRuntimePplGrammarEnabled) {
-      this.unregisterPplLintProvider = registerPPLLintProvider(lintRuntimePPLQuery);
+      this.unregisterPplLintBridge = registerPPLLintBridge(lintRuntimePPLQuery);
     }
 
     const search = this.searchService.start(core, { fieldFormats, indexPatterns });
@@ -414,8 +414,8 @@ export class DataPublicPlugin
     this.pplGrammarWarmupSubscription = undefined;
     this.unregisterPplValidationProvider?.();
     this.unregisterPplValidationProvider = undefined;
-    this.unregisterPplLintProvider?.();
-    this.unregisterPplLintProvider = undefined;
+    this.unregisterPplLintBridge?.();
+    this.unregisterPplLintBridge = undefined;
     this.autocomplete.clearProviders();
     this.queryService.stop();
     this.searchService.stop();

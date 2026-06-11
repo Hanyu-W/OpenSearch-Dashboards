@@ -5,16 +5,19 @@
 
 import { monaco } from '../../monaco';
 import { LINT_MARKER_SOURCE } from './diagnostic_to_marker';
+import { getModelFix, markerFixKey } from './fix_registry';
 
 /**
  * Code-action provider that surfaces quick-fixes for lint markers. It considers
  * only markers whose `source` is `ppl-lint` (R10.1) and, for each marker that
- * carries an available fix, returns a quick-fix code action with a workspace
- * edit (R10.2).
+ * has an associated fix, returns a quick-fix code action with a workspace edit
+ * (R10.2).
  *
- * v1 ships the provider plumbing; individual rules attach their fixes via the
- * marker `code`/`tags` channel. Markers without an associated fix yield no
- * action.
+ * The fix payload is NOT read off the marker: Monaco's MarkerService rebuilds
+ * each marker from a fixed field list when `setModelMarkers` is called, dropping
+ * any custom property, so a fix hung off the marker never survives to here.
+ * Instead the lint lifecycle records fixes in a side table keyed by the marker
+ * fields the service preserves (position + message); we re-associate them here.
  */
 export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
   provideCodeActions(
@@ -29,9 +32,7 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
         continue;
       }
 
-      const fix = (marker as monaco.editor.IMarkerData & {
-        fix?: { title: string; text: string; range?: monaco.IRange };
-      }).fix;
+      const fix = getModelFix(model, markerFixKey(marker));
 
       if (!fix) {
         continue;
