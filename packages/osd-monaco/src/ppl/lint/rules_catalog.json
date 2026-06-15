@@ -1,0 +1,11 @@
+[
+  {
+    "id": "invalid-capture-group-name",
+    "detector": "invalid-capture-group-name",
+    "enabled": true,
+    "severity": "error",
+    "message": "Invalid regex capture group name.",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/rex/#parameters",
+    "appliesTo": {}
+  }
+]
