@@ -11,6 +11,7 @@ import {
   PPLValidationResult,
 } from '../ppl_language_analyzer';
 import { LintResult } from '../lint/diagnostic';
+import { BundleRuleOverrides } from '../lint/types';
 
 // Simple worker implementation that doesn't depend on Monaco's internal modules
 class PPLWorkerImpl {
@@ -30,11 +31,13 @@ class PPLWorkerImpl {
     return this.analyzer.validate(content);
   }
 
-  async lint(content: string): Promise<LintResult> {
+  async lint(content: string, overrides?: BundleRuleOverrides): Promise<LintResult> {
     if (!this.analyzer) {
       this.analyzer = getPPLLanguageAnalyzer();
     }
-    return this.analyzer.lint(content);
+    // The compiled fallback has no host context except the per-rule overrides
+    // forwarded from the main thread; carry them on a minimal LintRunContext.
+    return this.analyzer.lint(content, overrides ? { overrides } : undefined);
   }
 }
 
@@ -55,7 +58,7 @@ self.onmessage = async (e: MessageEvent) => {
         result = await worker.validate(args[0]);
         break;
       case 'lint':
-        result = await worker.lint(args[0]);
+        result = await worker.lint(args[0], args[1]);
         break;
       default:
         throw new Error(`Unknown method: ${method}`);

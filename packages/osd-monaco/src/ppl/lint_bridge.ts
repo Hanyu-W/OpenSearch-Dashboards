@@ -6,6 +6,7 @@
 import { monaco } from '../monaco';
 import type { PPLValidationContext } from './validation_provider';
 import type { LintResult } from './lint/diagnostic';
+import type { BundleRuleOverrides } from './lint/types';
 
 /**
  * Host-supplied lint context. Extends the validation context with the
@@ -27,6 +28,13 @@ export interface PPLLintContext extends PPLValidationContext {
   /** Visible index names, for wildcard-source-zero-match. */
   visibleIndices?: string[];
   settings?: { allJoinTypesAllowed?: boolean };
+  /**
+   * Per-rule overrides resolved from uiSettings (enable/disable + severity).
+   * Carried verbatim into `LintRunContext.overrides` so the engine merges them
+   * over the bundled catalog. On the runtime (main-thread) path this rides
+   * through automatically; the compiled worker fallback threads it explicitly.
+   */
+  overrides?: BundleRuleOverrides;
 }
 
 export interface PPLLintBridgeRequest {
@@ -93,6 +101,17 @@ export function registerPPLLintBridge(bridge?: PPLLintBridge): () => void {
 
 export function setPPLLintContext(model: monaco.editor.IModel, context: PPLLintContext): void {
   getGlobalLintState().contexts.set(model, context);
+}
+
+/**
+ * Read the host-supplied lint context stored for a model. The runtime bridge
+ * receives the context directly in its request, but the compiled-grammar
+ * fallback runs in a web worker with no access to this registry, so the
+ * lifecycle reads the context here on the main thread and forwards the parts
+ * the worker needs (per-rule `overrides`) across `postMessage`.
+ */
+export function getPPLLintContext(model: monaco.editor.IModel): PPLLintContext | undefined {
+  return getGlobalLintState().contexts.get(model);
 }
 
 export function clearPPLLintContext(model: monaco.editor.IModel): void {

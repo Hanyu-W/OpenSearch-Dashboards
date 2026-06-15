@@ -652,4 +652,13 @@ export {
   attachPPLGrammarRefresh,
   syncPPLValidationContext,
 } from './ui/query_editor/validation_context';
-export { pplGrammarCache, shouldUseRuntimeGrammar } from './antlr/opensearch_ppl/ppl_grammar_cache';
+export {
+  attachPPLLintContext,
+  attachPPLLintGrammarRefresh,
+  syncPPLLintContext,
+} from './ui/query_editor/lint_context';
+export {
+  pplGrammarCache,
+  shouldUseRuntimeGrammar,
+  deriveIsCalcite,
+} from './antlr/opensearch_ppl/ppl_grammar_cache';

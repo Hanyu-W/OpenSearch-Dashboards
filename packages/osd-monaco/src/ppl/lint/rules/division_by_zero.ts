@@ -64,6 +64,7 @@ export const divisionByZeroDetector: Detector = (tree, config, _context, ruleNam
           message: 'Division by literal zero evaluates to null rather than raising an error.',
           range: rangeFromContext(divisor),
           docUrl: config.docUrl,
+          hoverFacts: { literal: divisor.getText() },
         });
       }
     }

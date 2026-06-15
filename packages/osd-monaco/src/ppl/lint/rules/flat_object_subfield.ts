@@ -65,6 +65,7 @@ export const flatObjectSubfieldDetector: Detector = (tree, config, context, rule
       message: `Subfield "${path}" of flat_object field "${root}" is not queryable; the engine rejects it with "Field [${path}] not found".`,
       range: rangeFromContext(node),
       docUrl: config.docUrl,
+      hoverFacts: { field: path, root, esType: rootType },
     });
   }
 

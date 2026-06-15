@@ -5,17 +5,15 @@
 
 import { ParserRuleContext } from 'antlr4ng';
 import { Diagnostic } from './diagnostic';
-import { CatalogEntry, LintRunContext } from './types';
+import { BundleRuleOverrides, CatalogEntry, LintRunContext } from './types';
 import { RuleNameToIndex } from './rule_index';
 import { getBundledCatalog } from './catalog';
 import { getDetector } from './detector_registry';
 import { appliesTo, OSD_KNOWN_VERSION } from './version_filter';
 
-/**
- * Optional per-rule configuration overrides supplied by a runtime grammar
- * bundle. Bundle config overrides local catalog config; local is the floor.
- */
-export type BundleRuleOverrides = Record<string, Partial<CatalogEntry>>;
+// `BundleRuleOverrides` now lives in `./types` so `LintRunContext` can reference
+// it without a cycle. Re-exported here for existing importers.
+export type { BundleRuleOverrides };
 
 export interface RunLintOptions {
   /** The catalog to iterate; defaults to the bundled catalog. */
@@ -60,8 +58,13 @@ export function runLint(tree: ParserRuleContext, options: RunLintOptions): Diagn
 
   const diagnostics: Diagnostic[] = [];
 
+  // An explicit `bundleOverrides` option wins (the future runtime-bundle path);
+  // otherwise fall back to overrides threaded through the context (the host's
+  // resolved uiSettings path). Both are per-rule patch maps merged the same way.
+  const effectiveOverrides = bundleOverrides ?? context?.overrides;
+
   for (const localConfig of catalog) {
-    const config = mergeConfig(localConfig, bundleOverrides?.[localConfig.id]);
+    const config = mergeConfig(localConfig, effectiveOverrides?.[localConfig.id]);
 
     // R6.3 — disabled rules are skipped.
     if (!config.enabled) {

@@ -42,6 +42,18 @@ export interface CatalogEntry {
 }
 
 /**
+ * Per-rule configuration overrides, keyed by rule id. Each entry shallow-merges
+ * over the bundled catalog entry (see `mergeConfig` in `lint_runner.ts`).
+ *
+ * Two producers populate this: a future runtime grammar bundle (the original
+ * `bundleOverrides` option) and the user/workspace/admin uiSettings resolved on
+ * the host (threaded through `LintRunContext.overrides`). Defined here, rather
+ * than in `lint_runner.ts`, so `LintRunContext` can carry it without the engine
+ * depending on the runner module.
+ */
+export type BundleRuleOverrides = Record<string, Partial<CatalogEntry>>;
+
+/**
  * Host-supplied lint context. Mirrors `PPLLintContext` in `lint_bridge.ts`,
  * narrowed to the fields detectors consume. Defined here to avoid the engine
  * depending on the bridge module.
@@ -64,6 +76,12 @@ export interface LintRunContext {
   /** Visible index names, for wildcard-source-zero-match. */
   visibleIndices?: string[];
   settings?: { allJoinTypesAllowed?: boolean };
+  /**
+   * Per-rule overrides resolved from uiSettings on the host and merged over the
+   * bundled catalog at run time. Layers below an explicit `bundleOverrides`
+   * option (see `runLint`).
+   */
+  overrides?: BundleRuleOverrides;
 }
 
 /**

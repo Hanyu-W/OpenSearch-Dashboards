@@ -5,7 +5,7 @@
     "enabled": true,
     "severity": "error",
     "message": "Invalid regex capture group name.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/rex/#parameters",
     "appliesTo": {}
   },
   {
@@ -14,7 +14,7 @@
     "enabled": true,
     "severity": "error",
     "message": "Unsupported window function in eventstats/streamstats.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/eventstats/#aggregation-functions",
     "appliesTo": { "minVersion": "3.4.0" }
   },
   {
@@ -23,7 +23,7 @@
     "enabled": true,
     "severity": "warning",
     "message": "dedup consecutive=true relies on engine fallback.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/#unsupported-functionalities",
     "appliesTo": { "minVersion": "3.3.0", "engine": "calcite" }
   },
   {
@@ -32,7 +32,7 @@
     "enabled": true,
     "severity": "error",
     "message": "Asymmetric wildcard counts in replace.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/replace/#limitations",
     "appliesTo": { "minVersion": "3.4.0", "engine": "calcite" },
     "runtimeOnly": true
   },
@@ -42,7 +42,7 @@
     "enabled": true,
     "severity": "error",
     "message": "union requires at least two datasets.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/",
     "appliesTo": { "minVersion": "3.7.0", "engine": "calcite" },
     "runtimeOnly": true
   },
@@ -52,7 +52,7 @@
     "enabled": true,
     "severity": "error",
     "message": "multisearch requires at least two subsearches.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/multisearch/#limitations",
     "appliesTo": { "minVersion": "3.4.0" },
     "runtimeOnly": true
   },
@@ -62,7 +62,7 @@
     "enabled": true,
     "severity": "warning",
     "message": "Performance-sensitive join type is disabled by default.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/join/#limitations",
     "appliesTo": {}
   },
   {
@@ -71,7 +71,7 @@
     "enabled": true,
     "severity": "info",
     "message": "head without a preceding sort returns nondeterministic rows.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/head/",
     "appliesTo": {}
   },
   {
@@ -80,7 +80,7 @@
     "enabled": true,
     "severity": "warning",
     "message": "Reference to an unknown field.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/fields/",
     "appliesTo": {},
     "needsContext": true
   },
@@ -90,7 +90,7 @@
     "enabled": true,
     "severity": "warning",
     "message": "expand on a non-array field.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/expand/#limitations",
     "appliesTo": {},
     "needsContext": true
   },
@@ -100,7 +100,7 @@
     "enabled": true,
     "severity": "info",
     "message": "Wildcard source pattern matches no index.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/search/",
     "appliesTo": {},
     "needsContext": true
   },
@@ -110,7 +110,7 @@
     "enabled": true,
     "severity": "warning",
     "message": "Division by literal zero evaluates to null rather than raising an error.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/expressions/#arithmetic-operators",
     "appliesTo": {}
   },
   {
@@ -119,7 +119,7 @@
     "enabled": true,
     "severity": "warning",
     "message": "Numeric aggregation on a text field returns null.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/aggregations/",
     "appliesTo": {},
     "needsContext": true
   },
@@ -129,7 +129,7 @@
     "enabled": true,
     "severity": "error",
     "message": "Subfield of a flat_object field is not queryable.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/mappings/supported-field-types/flat-object/#limitations",
     "appliesTo": {},
     "needsContext": true
   },
@@ -139,7 +139,7 @@
     "enabled": true,
     "severity": "warning",
     "message": "Comparing a numeric field to a non-numeric string matches no documents.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/conversion/#string-to-numeric-type-conversion",
     "appliesTo": {},
     "needsContext": true
   },
@@ -149,7 +149,7 @@
     "enabled": true,
     "severity": "warning",
     "message": "Field inside an enabled:false object is not indexed and resolves to null.",
-    "docUrl": "https://opensearch.org/docs/latest/search-plugins/sql/ppl/functions/",
+    "docUrl": "https://docs.opensearch.org/latest/mappings/mapping-parameters/enabled/#disabling-object-fields",
     "appliesTo": {},
     "needsContext": true
   }

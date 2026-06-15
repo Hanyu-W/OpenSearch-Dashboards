@@ -79,6 +79,7 @@ export const aggOnTextDetector: Detector = (tree, config, context, ruleNameToInd
         message: `Numeric aggregation "${aggName}" on text field "${fieldExpr.getText()}" returns null rather than a numeric result.`,
         range: rangeFromContext(statsFunction),
         docUrl: config.docUrl,
+        hoverFacts: { field: fieldExpr.getText(), esType, aggName },
       });
     }
   }

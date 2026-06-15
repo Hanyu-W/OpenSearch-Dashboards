@@ -26,6 +26,7 @@ import {
   QueryResult,
   QueryStatus,
   useQueryStringManager,
+  UI_SETTINGS,
 } from '../..';
 import { OpenSearchDashboardsReactContextValue } from '../../../../opensearch_dashboards_react/public';
 import { fromUser, getQueryLog, PersistedLog, toUser } from '../../query';
@@ -51,6 +52,7 @@ import {
   attachPPLLintGrammarRefresh,
   syncPPLLintContext,
 } from './lint_context';
+import { buildOverridesFromSettings } from './lint_overrides';
 
 export interface QueryEditorProps {
   query: Query;
@@ -151,14 +153,22 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     const dsId = queryRef.current.dataset?.dataSource?.id;
     const dsVersion = queryRef.current.dataset?.dataSource?.version;
     const cached = lintFieldsRef.current;
+    // Only feed cached field metadata to the lint rules when it belongs to the
+    // dataset the query currently targets. After a dataset switch the async
+    // field load for the new dataset has not resolved yet, so the cache still
+    // holds the previous dataset's fields — using them would make field-aware
+    // rules fire against the wrong index. When they don't match, omit them so
+    // those rules self-suppress until the new load resolves.
+    const cacheMatchesDataset = cached.datasetId === queryRef.current.dataset?.id;
     return {
       useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
       dataSourceId: dsId,
       dataSourceVersion: dsVersion,
       isCalcite: deriveIsCalcite(dsVersion),
-      fields: cached.fields,
-      typeMap: cached.typeMap,
-      disabledObjectFields: cached.disabledObjectFields,
+      fields: cacheMatchesDataset ? cached.fields : undefined,
+      typeMap: cacheMatchesDataset ? cached.typeMap : undefined,
+      disabledObjectFields: cacheMatchesDataset ? cached.disabledObjectFields : undefined,
+      overrides: buildOverridesFromSettings(services.uiSettings),
     };
   };
 
@@ -216,6 +226,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
         fields: lintFieldsRef.current.fields,
         typeMap: lintFieldsRef.current.typeMap,
         disabledObjectFields: lintFieldsRef.current.disabledObjectFields,
+        overrides: buildOverridesFromSettings(services.uiSettings),
       });
       const model = inputRef.current?.getModel();
       if (model) {
@@ -247,6 +258,11 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
 
     const loadFields = async () => {
       if (!datasetId) {
+        // No dataset selected: drop any cached fields so field-aware rules
+        // self-suppress instead of running against the previous dataset's
+        // metadata, then push the cleared context.
+        lintFieldsRef.current = {};
+        syncLint();
         return;
       }
       try {
@@ -294,7 +310,37 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     query.dataset?.dataSource?.id,
     query.dataset?.dataSource?.version,
     services.http,
+    services.uiSettings,
   ]);
+
+  // Live-revalidate when a per-rule lint setting changes — no page reload. Both
+  // lint paths read the per-model context, so refresh it from getLintContext
+  // (which rebuilds overrides) before revalidating, otherwise the stored
+  // context would still carry the pre-change overrides.
+  //
+  // We subscribe to getUpdate$ (the optimistic local write), NOT getSaved$. The
+  // optimistic value is what we want: a user's own write is the highest soft
+  // scope (USER > WORKSPACE > GLOBAL), so it is also the resolved value. The one
+  // case where the post-merge value could differ — writing a non-winning scope
+  // while a higher scope overrides the same rule — is not reachable from this
+  // editor, and even then the next keystroke lint reads the merged cache and
+  // self-corrects. Chasing getSaved$ would not help anyway: update() fires
+  // saved$ before the multi-scope cache merge resolves, so it carries the same
+  // optimistic value. See ppl-lint-rule-config-ui-settings-merge-fix.md.
+  useEffect(() => {
+    const subscription = services.uiSettings.getUpdate$().subscribe(({ key }) => {
+      if (!key.startsWith(UI_SETTINGS.QUERY_ENHANCEMENTS_PPL_LINT_RULE_PREFIX)) {
+        return;
+      }
+      syncPPLLintContext(inputRef.current, getLintContext());
+      const model = inputRef.current?.getModel();
+      if (model) {
+        void revalidatePPLModel(model);
+      }
+    });
+    return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [services.uiSettings]);
 
   const renderQueryEditorExtensions = () => {
     if (

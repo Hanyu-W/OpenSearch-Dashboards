@@ -59,15 +59,18 @@ describe('diagnosticToMarker', () => {
     );
   });
 
-  it('sets code target to the doc URL when present', () => {
+  it('sets code to the object form (value + target) when a doc URL is present', () => {
     const marker = diagnosticToMarker(makeDiagnostic({ docUrl: 'https://example.com/docs' }));
     expect(marker.code).toBeDefined();
     expect((marker.code as { value: string }).value).toBe('rule');
+    expect((marker.code as { target: monaco.Uri }).target.toString()).toContain('example.com/docs');
   });
 
-  it('omits code when no doc URL is present', () => {
+  it('still carries the ruleId on code (plain-string form) when no doc URL is present', () => {
+    // The ruleId must reach the hover provider regardless of whether the rule
+    // has a doc link, so code is the plain-string ruleId rather than undefined.
     const marker = diagnosticToMarker(makeDiagnostic({ docUrl: undefined }));
-    expect(marker.code).toBeUndefined();
+    expect(marker.code).toBe('rule');
   });
 
   describe('fix', () => {

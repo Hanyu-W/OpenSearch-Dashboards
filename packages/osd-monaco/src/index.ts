@@ -38,12 +38,14 @@ export {
   resolvePPLValidationResult,
   setPPLValidationContext,
   clearPPLLintContext,
+  getPPLLintContext,
   isPPLLintEnabled,
   registerPPLLintBridge,
   resolvePPLLintResult,
   setPPLLintContext,
   setPPLLintEnabled,
   runLint,
+  getBundledCatalog,
   createRuntimeRuleNameToIndex,
 } from './ppl';
 export type {
@@ -58,6 +60,7 @@ export type {
   DiagnosticRange,
   LintResult,
   LintSeverity,
+  BundleRuleOverrides,
   CatalogEntry,
   LintRunContext,
 } from './ppl';

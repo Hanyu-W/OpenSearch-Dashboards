@@ -10,17 +10,28 @@ import { getPPLLanguageAnalyzer, PPLValidationResult } from './ppl_language_anal
 import { getPPLDocumentationLink } from './ppl_documentation';
 import { pplRangeFormatProvider } from './formatter';
 import { resolvePPLValidationResult } from './validation_provider';
-import { isPPLLintEnabled, resolvePPLLintResult } from './lint_bridge';
+import { getPPLLintContext, isPPLLintEnabled, resolvePPLLintResult } from './lint_bridge';
 import { LintResult } from './lint/diagnostic';
 import { diagnosticToMarker } from './lint/diagnostic_to_marker';
 import { pplLintCodeActionProvider } from './lint/code_action_provider';
 import { clearModelFixes, markerFixKey, MarkerFix, setModelFixes } from './lint/fix_registry';
+import { LINT_OWNER, pplLintHoverProvider } from './lint/hover/hover_provider';
+import { clearModelHoverFacts, HoverFacts, setModelHoverFacts } from './lint/hover/hover_registry';
 
 const PPL_LANGUAGE_ID = ID;
 const OWNER = 'PPL_WORKER';
-const LINT_OWNER = 'PPL_LINT';
+// LINT_OWNER is defined in hover_provider.ts (its single source) and imported
+// here, so the marker owner the lint lifecycle writes under and the owner the
+// hover provider queries can never drift apart.
 const LINT_DEBOUNCE_MS = 500;
 const lintDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+// Monotonic per-model lint counter. Each lint pass claims a generation before
+// dispatching its async worker call and only applies its markers if it is still
+// the latest pass. This makes lint results "last-request-wins" rather than
+// "last-response-wins", so an earlier pass whose response arrives late (e.g. the
+// context-less lint fired on model creation, before the editor attaches the
+// per-model context) can never overwrite a newer pass's markers.
+const lintGenerations = new Map<string, number>();
 
 // PPL worker proxy service for worker-based syntax highlighting
 const pplWorkerProxyService = new PPLWorkerProxyService();
@@ -196,15 +207,23 @@ export const revalidatePPLModel = async (model: monaco.editor.IModel) => {
  * QUERY_ENHANCEMENTS_PPL_LINT setting (R1).
  */
 const processLintHighlighting = (model: monaco.editor.IModel): void => {
+  // Claim this pass's generation up front — even the early-return branches below
+  // count, so a synchronous "clear markers" pass invalidates an in-flight async
+  // response that would otherwise re-add stale markers after the clear.
+  const generation = (lintGenerations.get(model.id) ?? 0) + 1;
+  lintGenerations.set(model.id, generation);
+
   if (!isPPLLintEnabled()) {
     monaco.editor.setModelMarkers(model, LINT_OWNER, []);
     clearModelFixes(model);
+    clearModelHoverFacts(model);
     return;
   }
 
   if (model.getLanguageId() !== PPL_LANGUAGE_ID) {
     monaco.editor.setModelMarkers(model, LINT_OWNER, []);
     clearModelFixes(model);
+    clearModelHoverFacts(model);
     return;
   }
 
@@ -212,13 +231,23 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
 
   pplWorkerProxyService.setup();
 
+  // The compiled fallback runs in a web worker with no uiSettings client, so
+  // read the per-model overrides here on the main thread and forward them.
+  const overrides = getPPLLintContext(model)?.overrides;
+
   void resolvePPLLintResult(
     model,
     content,
-    async (query) => (await pplWorkerProxyService.lint(query)) as LintResult
+    async (query) => (await pplWorkerProxyService.lint(query, overrides)) as LintResult
   )
     .then((lintResult: LintResult) => {
-      if (model.isDisposed() || model.getValue() !== content) {
+      // Drop a response that a newer lint pass has superseded (stale context or
+      // stale content), so out-of-order worker responses can't clobber markers.
+      if (
+        lintGenerations.get(model.id) !== generation ||
+        model.isDisposed() ||
+        model.getValue() !== content
+      ) {
         return;
       }
       if (model.getLanguageId() !== PPL_LANGUAGE_ID) {
@@ -226,18 +255,29 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
       }
       const markers = lintResult.diagnostics.map(diagnosticToMarker);
       // Monaco's MarkerService rebuilds each marker from a fixed field list and
-      // drops the custom `fix` property, so it would never reach the code-action
-      // provider. Capture each fix into a side table keyed by the fields the
-      // service preserves, then strip it off the marker before handing it over.
+      // drops the custom `fix` / `hoverFacts` properties, so they would never
+      // reach the code-action or hover providers. Capture each into a side table
+      // keyed by the fields the service preserves, then strip them off the
+      // marker before handing it over.
       const fixes = new Map<string, MarkerFix>();
+      const hoverFacts = new Map<string, HoverFacts>();
       for (const marker of markers) {
-        const withFix = marker as monaco.editor.IMarkerData & { fix?: MarkerFix };
-        if (withFix.fix) {
-          fixes.set(markerFixKey(marker), withFix.fix);
-          delete withFix.fix;
+        const withExtras = marker as monaco.editor.IMarkerData & {
+          fix?: MarkerFix;
+          hoverFacts?: HoverFacts;
+        };
+        const key = markerFixKey(marker);
+        if (withExtras.fix) {
+          fixes.set(key, withExtras.fix);
+          delete withExtras.fix;
+        }
+        if (withExtras.hoverFacts) {
+          hoverFacts.set(key, withExtras.hoverFacts);
+          delete withExtras.hoverFacts;
         }
       }
       setModelFixes(model, fixes);
+      setModelHoverFacts(model, hoverFacts);
       monaco.editor.setModelMarkers(model, LINT_OWNER, markers);
     })
     .catch(() => {
@@ -298,6 +338,7 @@ const setupPPLSyntaxHighlighting = () => {
           monaco.editor.setModelMarkers(model, OWNER, []);
           monaco.editor.setModelMarkers(model, LINT_OWNER, []);
           clearModelFixes(model);
+          clearModelHoverFacts(model);
         }
       })
     );
@@ -320,9 +361,11 @@ const setupPPLSyntaxHighlighting = () => {
         clearTimeout(pending);
         lintDebounceTimers.delete(model.id);
       }
+      lintGenerations.delete(model.id);
       monaco.editor.setModelMarkers(model, OWNER, []);
       monaco.editor.setModelMarkers(model, LINT_OWNER, []);
       clearModelFixes(model);
+      clearModelHoverFacts(model);
     })
   );
 
@@ -368,10 +411,18 @@ export const registerPPLLanguage = () => {
     pplLintCodeActionProvider
   );
 
+  // Register the lint hover provider (the rich "view more" card). It reads
+  // markers + the side tables lazily on hover, so it adds no per-lint cost.
+  const hoverDisposable = monaco.languages.registerHoverProvider(
+    PPL_LANGUAGE_ID,
+    pplLintHoverProvider
+  );
+
   return {
     dispose: () => {
       disposeSyntaxHighlighting();
       codeActionDisposable.dispose();
+      hoverDisposable.dispose();
     },
   };
 };

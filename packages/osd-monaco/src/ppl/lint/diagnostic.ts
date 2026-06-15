@@ -46,6 +46,26 @@ export interface DiagnosticFix {
 }
 
 /**
+ * Per-instance facts a detector knows about *this* finding (the actual field,
+ * its mapped type, the offending literal, candidate indices, ...). Surfaced in
+ * the hover card's "Your query" line. Mirror of {@link HoverFacts} in
+ * `hover/hover_registry.ts`; redeclared here so `diagnostic.ts` stays free of a
+ * dependency on the hover module. All fields optional — a detector populates
+ * only what it knows.
+ */
+export interface DiagnosticHoverFacts {
+  field?: string;
+  esType?: string;
+  root?: string;
+  literal?: string;
+  aggName?: string;
+  suggestion?: string;
+  pattern?: string;
+  candidateIndices?: string[];
+  totalIndices?: number;
+}
+
+/**
  * A single linter finding emitted by a detector.
  */
 export interface Diagnostic {
@@ -56,6 +76,11 @@ export interface Diagnostic {
   docUrl?: string;
   /** Optional deterministic quick-fix. Absent for rules with no safe rewrite. */
   fix?: DiagnosticFix;
+  /**
+   * Optional per-instance facts for the hover card. Absent for rules with no
+   * instance-specific detail worth surfacing.
+   */
+  hoverFacts?: DiagnosticHoverFacts;
 }
 
 /**

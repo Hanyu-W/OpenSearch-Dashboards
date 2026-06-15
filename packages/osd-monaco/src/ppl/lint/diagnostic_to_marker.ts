@@ -4,7 +4,7 @@
  */
 
 import { monaco } from '../../monaco';
-import { Diagnostic, DiagnosticRange, LintSeverity } from './diagnostic';
+import { Diagnostic, DiagnosticHoverFacts, DiagnosticRange, LintSeverity } from './diagnostic';
 
 interface MonacoRange {
   startLineNumber: number;
@@ -76,11 +76,16 @@ export function diagnosticToMarker(diagnostic: Diagnostic): monaco.editor.IMarke
     source: LINT_MARKER_SOURCE,
   };
 
-  if (diagnostic.docUrl) {
-    marker.code = {
-      value: diagnostic.ruleId,
-      target: monaco.Uri.parse(diagnostic.docUrl),
-    };
+  // The ruleId rides on `code` and is what the hover provider keys its rich-card
+  // lookup on, so it must be set whenever a ruleId exists — independently of
+  // whether the rule has a doc link. With a doc link we use the object form
+  // `{ value, target }` (Monaco renders `target` as the marker's link); without
+  // one we use the plain-string form (Monaco's `code` is `string | {…}`). The
+  // hover provider reads both shapes.
+  if (diagnostic.ruleId) {
+    marker.code = diagnostic.docUrl
+      ? { value: diagnostic.ruleId, target: monaco.Uri.parse(diagnostic.docUrl) }
+      : diagnostic.ruleId;
   }
 
   // Attach the quick-fix payload the code-action provider reads off the marker.
@@ -94,6 +99,15 @@ export function diagnosticToMarker(diagnostic: Diagnostic): monaco.editor.IMarke
       text: diagnostic.fix.text,
       range: diagnostic.fix.range ? toMonacoRange(diagnostic.fix.range) : undefined,
     };
+  }
+
+  // Attach per-instance hover facts the same way. Like `fix`, this transient
+  // property does not survive Monaco's MarkerService rebuild; `language.ts`
+  // moves it into the hover side table before calling `setModelMarkers`.
+  if (diagnostic.hoverFacts) {
+    (marker as monaco.editor.IMarkerData & {
+      hoverFacts?: DiagnosticHoverFacts;
+    }).hoverFacts = diagnostic.hoverFacts;
   }
 
   return marker;

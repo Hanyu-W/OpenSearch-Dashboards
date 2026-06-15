@@ -63,6 +63,7 @@ export const enabledFalseObjectDetector: Detector = (tree, config, context, rule
       message: `Field "${path}" lives inside object "${root}" mapped with enabled:false; it is not indexed and resolves to null.`,
       range: rangeFromContext(node),
       docUrl: config.docUrl,
+      hoverFacts: { field: path, root },
     });
   }
 

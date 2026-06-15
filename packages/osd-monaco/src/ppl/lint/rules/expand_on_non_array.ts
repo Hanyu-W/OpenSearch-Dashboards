@@ -37,6 +37,7 @@ export const expandOnNonArrayDetector: Detector = (tree, config, context, ruleNa
         message: `expand target "${fieldName}" has type "${esType}", which is not an array/nested/object type.`,
         range: rangeFromContext(fieldExpr),
         docUrl: config.docUrl,
+        hoverFacts: { field: fieldName, esType },
       });
     }
   }

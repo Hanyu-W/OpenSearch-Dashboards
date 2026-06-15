@@ -24,6 +24,7 @@ export type { PPLValidationResult } from './ppl_language_analyzer';
 
 export {
   clearPPLLintContext,
+  getPPLLintContext,
   isPPLLintEnabled,
   registerPPLLintBridge,
   resolvePPLLintResult,
@@ -32,8 +33,9 @@ export {
 } from './lint_bridge';
 export type { PPLLintContext, PPLLintBridge, PPLLintBridgeRequest } from './lint_bridge';
 export type { Diagnostic, DiagnosticRange, LintResult, LintSeverity } from './lint/diagnostic';
-export type { CatalogEntry, LintRunContext } from './lint/types';
+export type { BundleRuleOverrides, CatalogEntry, LintRunContext } from './lint/types';
 export { runLint } from './lint/lint_runner';
+export { getBundledCatalog } from './lint/catalog';
 export { createRuntimeRuleNameToIndex } from './lint/rule_index';
 
 export const PPLLang = { ID };

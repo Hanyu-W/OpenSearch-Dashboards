@@ -134,6 +134,7 @@ export const typeMismatchNumericDetector: Detector = (tree, config, context, rul
       message: `Comparing numeric field "${fieldName}" (${esType}) to non-numeric string ${literalSide.getText()} matches no documents (returns 0 rows, no error).`,
       range: rangeFromContext(parent),
       docUrl: config.docUrl,
+      hoverFacts: { field: fieldName, esType, literal: literalSide.getText() },
     });
   }
 

@@ -149,6 +149,7 @@ export const fieldValidationDetector: Detector = (tree, config, context, ruleNam
           message: `Unknown field "${name}".${suffix}`,
           range: rangeFromContext(node),
           docUrl: config.docUrl,
+          hoverFacts: { field: name, ...(suggestion ? { suggestion } : {}) },
           // The diagnostic range spans exactly the field reference, so the fix
           // replaces it in place (no explicit fix range needed).
           ...(suggestion
