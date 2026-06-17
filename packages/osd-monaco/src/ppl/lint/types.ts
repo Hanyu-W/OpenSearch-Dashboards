@@ -13,7 +13,7 @@ import { RuleNameToIndex } from './rule_index';
 export interface AppliesTo {
   /** semver; rule must not fire below this version. */
   minVersion?: string;
-  /** semver; absent = open-ended (capped at OSD_KNOWN_VERSION). */
+  /** semver; hard ceiling — rule must not fire above this. Absent = no upper bound. */
   maxVersion?: string;
   /** engine predicate; absent = no engine filtering. */
   engine?: 'calcite';

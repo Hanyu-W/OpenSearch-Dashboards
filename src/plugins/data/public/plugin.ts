@@ -30,11 +30,7 @@
 
 import './index.scss';
 
-import {
-  registerPPLValidationProvider,
-  registerPPLLintBridge,
-  setPPLLintEnabled,
-} from '@osd/monaco';
+import { registerPPLValidationProvider } from '@osd/monaco';
 import { PluginInitializerContext, CoreSetup, CoreStart, Plugin } from 'src/core/public';
 import { Subscription } from 'rxjs';
 import { ConfigSchema } from '../config';
@@ -115,7 +111,6 @@ import {
 } from './antlr/opensearch_ppl/code_completion';
 import { createPplGrammarWarmupHandler } from './antlr/opensearch_ppl/ppl_grammar_warmup';
 import { validateRuntimePPLQuery } from './antlr/opensearch_ppl/runtime_validation';
-import { lintRuntimePPLQuery } from './antlr/opensearch_ppl/runtime_lint';
 import { getSuggestions as getPromQLSuggestions } from './antlr/promql/code_completion';
 import { promqlTriggerCharacters } from './antlr/promql/constants';
 import { createStorage, DataStorage, UI_SETTINGS } from '../common';
@@ -148,7 +143,6 @@ export class DataPublicPlugin
   private resourceClientFactory!: ResourceClientFactory;
   private pplGrammarWarmupSubscription?: Subscription;
   private unregisterPplValidationProvider?: () => void;
-  private unregisterPplLintBridge?: () => void;
   constructor(initializerContext: PluginInitializerContext<ConfigSchema>) {
     this.searchService = new SearchService(initializerContext);
     this.uiService = new UiService(initializerContext);
@@ -346,16 +340,9 @@ export class DataPublicPlugin
       this.unregisterPplValidationProvider = registerPPLValidationProvider(validateRuntimePPLQuery);
     }
 
-    // Register the PPL lint provider, gated by the QUERY_ENHANCEMENTS_PPL_LINT
-    // setting (R1.5). The runtime provider lints against the runtime grammar;
-    // when no runtime grammar is cached it returns null and the editor's worker
-    // lints against the compiled grammar.
-    const isPplLintEnabled =
-      uiSettings.get(UI_SETTINGS.QUERY_ENHANCEMENTS_PPL_LINT, true) !== false;
-    setPPLLintEnabled(isPplLintEnabled);
-    if (isPplLintEnabled && isRuntimePplGrammarEnabled) {
-      this.unregisterPplLintBridge = registerPPLLintBridge(lintRuntimePPLQuery);
-    }
+    // The PPL lint provider is registered by the query_enhancements plugin's
+    // start(), gated by the queryEnhancements.pplLint dynamic app config
+    // capability. See query_enhancements/public/ppl_lint/register_ppl_lint.ts.
 
     const search = this.searchService.start(core, { fieldFormats, indexPatterns });
     setSearchService(search);
@@ -414,8 +401,6 @@ export class DataPublicPlugin
     this.pplGrammarWarmupSubscription = undefined;
     this.unregisterPplValidationProvider?.();
     this.unregisterPplValidationProvider = undefined;
-    this.unregisterPplLintBridge?.();
-    this.unregisterPplLintBridge = undefined;
     this.autocomplete.clearProviders();
     this.queryService.stop();
     this.searchService.stop();

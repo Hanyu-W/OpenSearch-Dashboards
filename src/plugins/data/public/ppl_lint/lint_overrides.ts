@@ -5,7 +5,7 @@
 
 import { IUiSettingsClient } from 'opensearch-dashboards/public';
 import { BundleRuleOverrides, CatalogEntry, getBundledCatalog, LintSeverity } from '@osd/monaco';
-import { UI_SETTINGS } from '../../../common';
+import { UI_SETTINGS } from '../../common';
 
 const SEV_RANK: Record<LintSeverity, number> = { info: 0, warning: 1, error: 2 };
 

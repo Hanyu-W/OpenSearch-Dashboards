@@ -657,6 +657,11 @@ export {
   attachPPLLintGrammarRefresh,
   syncPPLLintContext,
 } from './ui/query_editor/lint_context';
+export { lintRuntimePPLQuery } from './antlr/opensearch_ppl/runtime_lint';
+export { collectDisabledObjectFields } from './ppl_lint/disabled_object_fields';
+export { calciteSettingsCache, CalciteSettings } from './ppl_lint/calcite_settings';
+export { buildOverridesFromSettings } from './ppl_lint/lint_overrides';
+export { fetchVisibleIndices } from './ppl_lint/visible_indices';
 export {
   pplGrammarCache,
   shouldUseRuntimeGrammar,

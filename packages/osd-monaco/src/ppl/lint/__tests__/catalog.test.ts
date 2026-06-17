@@ -93,10 +93,12 @@ describe('catalog loading', () => {
     ).toBeNull();
   });
 
-  // The version filter caps the effective max applicability at OSD_KNOWN_VERSION
-  // when a rule declares no maxVersion. If a rule's minVersion ever exceeds
-  // OSD_KNOWN_VERSION, that rule would be silently suppressed on the very
-  // clusters it targets. Guard against forgetting to bump OSD_KNOWN_VERSION.
+  // OSD_KNOWN_VERSION is the *undefined-version* self-suppress horizon: when a
+  // cluster's version is unknown, rules with minVersion above this threshold are
+  // suppressed (conservative). It is NOT a ceiling for known-version clusters.
+  // This test guards against forgetting to bump OSD_KNOWN_VERSION when adding a
+  // new rule — without a bump, the rule would be suppressed on unknown-version
+  // clusters even if the rule's minVersion is reachable.
   it('keeps OSD_KNOWN_VERSION at or above every rule minVersion', () => {
     const knownVersion = semver.coerce(OSD_KNOWN_VERSION)?.version;
     expect(knownVersion).toBeTruthy();

@@ -98,6 +98,40 @@ describe('lintRuntimePPLQuery', () => {
     );
   });
 
+  describe('pipe-first column remap', () => {
+    it('subtracts the synthetic prefix width from line-one columns', () => {
+      jest.spyOn(pplGrammarCache, 'getCachedGrammar').mockReturnValue(buildRuntimeGrammar());
+
+      // `| head 10` is parsed with a synthetic `source=t ` (9-char) prefix. The
+      // head-without-sort squiggle must point at `head` in the user's text
+      // (0-based column 2), not 9 columns to the right.
+      const pipeFirst = lintRuntimePPLQuery({
+        content: '| head 10',
+        context: { useRuntimeGrammar: true },
+        model: {} as any,
+      });
+      const head = pipeFirst!.diagnostics.find((d) => d.ruleId === 'head-without-sort');
+      expect(head).toBeDefined();
+      expect(head!.range.startLine).toBe(1);
+      expect(head!.range.startColumn).toBe(2);
+      expect(head!.range.endColumn).toBe(9);
+    });
+
+    it('does not shift columns for a non-pipe-first query', () => {
+      jest.spyOn(pplGrammarCache, 'getCachedGrammar').mockReturnValue(buildRuntimeGrammar());
+
+      const regular = lintRuntimePPLQuery({
+        content: 'source=logs | head 10',
+        context: { useRuntimeGrammar: true },
+        model: {} as any,
+      });
+      const head = regular!.diagnostics.find((d) => d.ruleId === 'head-without-sort');
+      expect(head).toBeDefined();
+      // `head` sits at 0-based column 14 in `source=logs | head 10`; unchanged.
+      expect(head!.range.startColumn).toBe(14);
+    });
+  });
+
   describe('silent-failure rules on the runtime surface', () => {
     const typeMap = new Map<string, string>([
       ['age', 'long'],

@@ -36,6 +36,7 @@ import { resourceManagerService } from './connections/resource_manager_service';
 import { queryManagerService } from './connections/query_manager_service';
 import { BaseConnectionManager } from './connections/managers/base_connection_manager';
 import { prometheusManager } from './connections/managers/prometheus_manager';
+import { getPplLintRuleSettings } from './ui_settings';
 
 export class QueryEnhancementsPlugin
   implements Plugin<QueryEnhancementsPluginSetup, QueryEnhancementsPluginStart> {

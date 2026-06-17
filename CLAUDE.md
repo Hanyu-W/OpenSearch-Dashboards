@@ -120,6 +120,7 @@ Use `core.getStartServices()` in application mount handlers rather than storing 
 - **Integration tests** (`**/integration_tests/**/*.test.ts`): Jest, run with `yarn test:jest_integration`.
 - **Functional tests**: Cypress (preferred). Selenium is legacy — do not write new Selenium tests.
 - **Cypress best practices:** Use `data-test-subj` attributes for selectors. Use `cy.intercept()` instead of hard-coded delays. Always use UTC time.
+- **Front-end verification:** Use Playwright to verify UI changes and front-end bug fixes before reporting them as complete. Launch the dev server, navigate to the affected page, and confirm the fix works visually — type checking and unit tests alone do not prove a UI change is correct.
 
 ## Core API Changes
 

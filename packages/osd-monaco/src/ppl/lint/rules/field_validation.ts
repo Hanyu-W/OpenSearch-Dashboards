@@ -7,8 +7,13 @@ import type { ParserRuleContext, ParseTree } from 'antlr4ng';
 import { isRuleNode } from '../rule_index';
 import { Diagnostic } from '../diagnostic';
 import { Detector } from '../types';
-import { buildPipelineShape } from '../pipeline_shape';
-import { isParserRuleContext, RuleNameToIndex } from '../rule_index';
+import { buildPipelineShape, collectAlternateSourceSubtrees } from '../pipeline_shape';
+import {
+  findAllChildrenByRule,
+  findAllDescendantsByRule,
+  isParserRuleContext,
+  RuleNameToIndex,
+} from '../rule_index';
 import { rangeFromContext } from '../range_utils';
 
 // Schema check: a field reference is unknown when it is not in the union of
@@ -27,6 +32,7 @@ function resolveExcludedAncestorIndices(ruleNameToIndex: RuleNameToIndex): Set<n
     'tableQualifiedName',
     'sourceReference',
     'sideAlias',
+    'joinCriteria',
     'evalClause',
     'renameClasue',
   ]) {
@@ -36,6 +42,42 @@ function resolveExcludedAncestorIndices(ruleNameToIndex: RuleNameToIndex): Set<n
     }
   }
   return excluded;
+}
+
+/**
+ * Collect join alias names declared in `left=l right=r` (`sideAlias`) clauses.
+ * Downstream stages can reference these aliases (`| where l.response = 200`),
+ * and the leading segment then names the join side rather than a field on the
+ * outer index — so a dotted reference whose prefix matches a declared alias is
+ * skipped by field-validation. Returns an empty set when `sideAlias` /
+ * `qualifiedName` are absent on the active grammar surface.
+ */
+function collectJoinAliases(
+  tree: ParserRuleContext,
+  ruleNameToIndex: RuleNameToIndex
+): Set<string> {
+  const aliases = new Set<string>();
+  const sideAliasNodes = findAllDescendantsByRule(tree, ruleNameToIndex, 'sideAlias');
+  for (const sideAlias of sideAliasNodes) {
+    for (const qn of findAllChildrenByRule(sideAlias, ruleNameToIndex, 'qualifiedName')) {
+      const text = qn.getText();
+      if (text) {
+        aliases.add(text);
+      }
+    }
+  }
+  return aliases;
+}
+
+/**
+ * Strip a single pair of enclosing backticks from one dotted segment so a
+ * backtick-quoted identifier (`` `age` ``) matches the unquoted name in the
+ * field set. Applied per segment, so `` a.`b` `` normalizes to `a.b`.
+ */
+function unquoteIdent(segment: string): string {
+  return segment.startsWith('`') && segment.endsWith('`') && segment.length >= 2
+    ? segment.slice(1, -1)
+    : segment;
 }
 
 function hasExcludedAncestor(node: ParserRuleContext, excludedIndices: Set<number>): boolean {
@@ -114,6 +156,8 @@ export const fieldValidationDetector: Detector = (tree, config, context, ruleNam
   const { createdFields } = buildPipelineShape(tree, ruleNameToIndex);
   const known = new Set<string>([...fields, ...createdFields]);
   const excludedIndices = resolveExcludedAncestorIndices(ruleNameToIndex);
+  const alternateSourceRoots = collectAlternateSourceSubtrees(tree, ruleNameToIndex);
+  const joinAliases = collectJoinAliases(tree, ruleNameToIndex);
   const fieldExprIdx = ruleNameToIndex('fieldExpression');
   if (fieldExprIdx === -1) {
     return [];
@@ -128,11 +172,28 @@ export const fieldValidationDetector: Detector = (tree, config, context, ruleNam
     if (!isParserRuleContext(node)) {
       continue;
     }
+    // Hard prune: alternate-source subtree roots (lookup / append-with-source /
+    // subsearch / union). Their field refs belong to a different source, so we
+    // skip the whole subtree without pushing children.
+    if (alternateSourceRoots.has(node)) {
+      continue;
+    }
     if (node.ruleIndex === fieldExprIdx) {
-      const name = node.getText();
+      const raw = node.getText();
+      // Normalize backtick-quoted segments per dotted part so `` `age` ``
+      // matches the unquoted `age` in the field set.
+      const name = raw.split('.').map(unquoteIdent).join('.');
+      const prefix = name.includes('.') ? name.split('.')[0] : null;
+      // Soft skip: alias-qualified refs (`l.response` where `l` is a declared
+      // join alias). Still descend into children — alias-qualified refs appear
+      // in downstream pipeline stages outside the alternate-source regions.
+      if (prefix !== null && joinAliases.has(prefix)) {
+        stack.push(...(node.children ?? []));
+        continue;
+      }
       // Dot-qualified references: validate only the leaf for join contexts is
       // complex; v1 validates the full text and the leading segment.
-      const leaf = name.includes('.') ? name.split('.')[0] : name;
+      const leaf = prefix ?? name;
       if (
         name &&
         !hasExcludedAncestor(node, excludedIndices) &&

@@ -45,6 +45,10 @@ import {
   pplGrammarCache,
   shouldUseRuntimeGrammar,
   deriveIsCalcite,
+  collectDisabledObjectFields,
+  calciteSettingsCache,
+  buildOverridesFromSettings,
+  fetchVisibleIndices,
 } from '../../../../../../data/public';
 
 type IStandaloneCodeEditor = monaco.editor.IStandaloneCodeEditor;
@@ -118,6 +122,11 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
   const queryLanguageRef = useRef(queryLanguage);
   const isQueryEditorDirty = useSelector(selectIsQueryEditorDirty);
   const dataset = useSelector(selectDataset);
+  // Always-current view of the active dataset. The grammar-refresh listener
+  // captures getLintContext / getValidationContext once at editorDidMount; a
+  // ref keeps those closures reading the latest dataset (mirrors caller A's
+  // queryRef pattern) instead of a transiently dataset-less queryString.getQuery().
+  const datasetRef = useRef(dataset);
   const detachValidationContextRef = useRef<(() => void) | undefined>();
   const detachGrammarRefreshRef = useRef<(() => void) | undefined>();
   const detachLintContextRef = useRef<(() => void) | undefined>();
@@ -129,23 +138,24 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     fields?: Set<string>;
     typeMap?: Map<string, string>;
     disabledObjectFields?: Set<string>;
+    visibleIndices?: string[];
   }>({});
 
   const getValidationContext = useCallback((): PPLValidationContext => {
-    const currentQuery = queryString.getQuery();
-    const dsId = currentQuery.dataset?.dataSource?.id;
-    const dsVersion = currentQuery.dataset?.dataSource?.version;
+    const ds = datasetRef.current;
+    const dsId = ds?.dataSource?.id;
+    const dsVersion = ds?.dataSource?.version;
     return {
       useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
       dataSourceId: dsId,
       dataSourceVersion: dsVersion,
     };
-  }, [queryString]);
+  }, []);
 
   const getLintContext = useCallback((): PPLLintContext => {
-    const currentQuery = queryString.getQuery();
-    const dsId = currentQuery.dataset?.dataSource?.id;
-    const dsVersion = currentQuery.dataset?.dataSource?.version;
+    const ds = datasetRef.current;
+    const dsId = ds?.dataSource?.id;
+    const dsVersion = ds?.dataSource?.version;
     const cached = lintFieldsRef.current;
     // Only feed cached field metadata to the lint rules when it belongs to the
     // dataset the query currently targets. After a dataset switch the async
@@ -153,17 +163,21 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     // holds the previous dataset's fields — using them would make field-aware
     // rules fire against the wrong index. When they don't match, omit them so
     // those rules self-suppress until the new load resolves.
-    const cacheMatchesDataset = cached.datasetId === currentQuery.dataset?.id;
+    const cacheMatchesDataset = cached.datasetId === ds?.id;
+    const calcite = calciteSettingsCache.getCached(dsId);
     return {
       useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
       dataSourceId: dsId,
       dataSourceVersion: dsVersion,
-      isCalcite: deriveIsCalcite(dsVersion),
+      isCalcite: calcite?.isCalcite ?? deriveIsCalcite(dsVersion),
+      settings: { allJoinTypesAllowed: calcite?.allJoinTypesAllowed ?? false },
       fields: cacheMatchesDataset ? cached.fields : undefined,
       typeMap: cacheMatchesDataset ? cached.typeMap : undefined,
       disabledObjectFields: cacheMatchesDataset ? cached.disabledObjectFields : undefined,
+      visibleIndices: cacheMatchesDataset ? cached.visibleIndices : undefined,
+      overrides: buildOverridesFromSettings(services.uiSettings),
     };
-  }, [queryString]);
+  }, [services.uiSettings]);
 
   const switchEditorMode = useLanguageSwitch();
 
@@ -180,6 +194,9 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
   useEffect(() => {
     queryLanguageRef.current = queryLanguage;
   }, [queryLanguage]);
+  useEffect(() => {
+    datasetRef.current = dataset;
+  }, [dataset]);
 
   // Sync editor text when Redux query string changes externally (e.g., language switch)
   useEffect(() => {
@@ -217,14 +234,18 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     let cancelled = false;
 
     const syncLint = () => {
+      const calcite = calciteSettingsCache.getCached(dsId);
       syncPPLLintContext(editorRef.current, {
         useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
         dataSourceId: dsId,
         dataSourceVersion: dsVersion,
-        isCalcite: deriveIsCalcite(dsVersion),
+        isCalcite: calcite?.isCalcite ?? deriveIsCalcite(dsVersion),
+        settings: { allJoinTypesAllowed: calcite?.allJoinTypesAllowed ?? false },
         fields: lintFieldsRef.current.fields,
         typeMap: lintFieldsRef.current.typeMap,
         disabledObjectFields: lintFieldsRef.current.disabledObjectFields,
+        visibleIndices: lintFieldsRef.current.visibleIndices,
+        overrides: buildOverridesFromSettings(services.uiSettings),
       });
       const model = editorRef.current?.getModel();
       if (model) {
@@ -232,11 +253,13 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
       }
     };
 
-    // Best-effort fetch of object fields mapped `enabled: false` from the
-    // read-only mappings route. The `enabled: false` attribute is stripped by
-    // `_field_caps` (so it never appears in `indexPattern.fields`); it must be
-    // read from `_mappings`. Returns undefined on any failure so the
-    // `enabled-false-object` rule self-suppresses rather than false-firing.
+    // Best-effort fetch of object fields mapped `enabled: false`. The attribute
+    // is stripped by `_field_caps` (so it never appears in `indexPattern.fields`)
+    // and must be read from `_mappings`. Rather than a dedicated endpoint, this
+    // calls the existing read-only DSL mapping route (which proxies
+    // `indices.getMapping`) and walks the response client-side. Returns undefined
+    // on any failure so the `enabled-false-object` rule self-suppresses rather
+    // than false-firing.
     const loadDisabledObjectFields = async (indexPattern: {
       title?: string;
       dataSourceRef?: { id?: string };
@@ -246,11 +269,16 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
         return undefined;
       }
       try {
-        const resp = await services.http.fetch('/api/index_patterns/_disabled_object_fields', {
-          query: { pattern, data_source: indexPattern.dataSourceRef?.id },
+        const DSL_MAPPING_URL = '/api/directquery/dsl/indices.getFieldMapping';
+        const mdsId = indexPattern.dataSourceRef?.id;
+        const url = mdsId
+          ? `${DSL_MAPPING_URL}/dataSourceMDSId=${encodeURIComponent(mdsId)}`
+          : DSL_MAPPING_URL;
+        const resp = await services.http.get(url, {
+          query: { index: pattern },
         });
-        const names: string[] = resp?.fields ?? [];
-        return names.length > 0 ? new Set(names) : undefined;
+        const fields = collectDisabledObjectFields(resp);
+        return fields.length > 0 ? new Set(fields) : undefined;
       } catch {
         return undefined;
       }
@@ -285,11 +313,23 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
             typeMap.set(field.name, esType);
           }
         }
-        const disabledObjectFields = await loadDisabledObjectFields(indexPattern);
+        // Fetch the visible-index list (for wildcard-source-zero-match)
+        // concurrently with the disabled-object-fields walk so both gate the
+        // same single-phase context update below.
+        const [disabledObjectFields, visibleIndices] = await Promise.all([
+          loadDisabledObjectFields(indexPattern),
+          services.http ? fetchVisibleIndices(services.http, dsId) : Promise.resolve([]),
+        ]);
         if (cancelled) {
           return;
         }
-        lintFieldsRef.current = { datasetId, fields, typeMap, disabledObjectFields };
+        lintFieldsRef.current = {
+          datasetId,
+          fields,
+          typeMap,
+          disabledObjectFields,
+          visibleIndices,
+        };
         // Single-phase update after the async load resolves.
         syncLint();
       } catch {
@@ -298,6 +338,12 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     };
 
     void loadFields();
+
+    if (services.http) {
+      calciteSettingsCache.resolve(services.http, dsId).then(() => {
+        if (!cancelled) syncLint();
+      });
+    }
 
     return () => {
       cancelled = true;
@@ -309,6 +355,7 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     dataViews,
     editorRef,
     services.http,
+    services.uiSettings,
   ]);
 
   // Cleanup validation + lint context on unmount

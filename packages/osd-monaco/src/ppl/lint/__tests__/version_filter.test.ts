@@ -26,15 +26,20 @@ describe('version_filter appliesTo', () => {
       expect(appliesTo(rule, '3.3.0', undefined)).toBe(false);
     });
 
-    it('applies at and above minVersion (up to horizon)', () => {
+    it('applies at and above minVersion', () => {
       const rule = makeRule({ appliesTo: { minVersion: '3.4.0' } });
       expect(appliesTo(rule, '3.4.0', undefined)).toBe(true);
       expect(appliesTo(rule, OSD_KNOWN_VERSION, undefined)).toBe(true);
     });
 
-    it('skips above effective maximum (OSD_KNOWN_VERSION horizon)', () => {
+    it('minVersion-only rule fires on a cluster newer than OSD_KNOWN_VERSION', () => {
       const rule = makeRule({ appliesTo: { minVersion: '3.4.0' } });
-      expect(appliesTo(rule, '99.0.0', undefined)).toBe(false);
+      expect(appliesTo(rule, '99.0.0', undefined)).toBe(true);
+    });
+
+    it('version-agnostic rule fires on a cluster newer than OSD_KNOWN_VERSION', () => {
+      const rule = makeRule({ appliesTo: {} });
+      expect(appliesTo(rule, '3.8.0', undefined)).toBe(true);
     });
 
     it('respects an explicit maxVersion', () => {

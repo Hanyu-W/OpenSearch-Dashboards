@@ -4,7 +4,7 @@
  */
 
 import type { ParserRuleContext, ParseTree } from 'antlr4ng';
-import { isRuleNode, isTerminalNode } from './rule_index';
+import { isRuleNode, isTerminalNode, findAllDescendantsByRule } from './rule_index';
 import { RuleNameToIndex } from './rule_index';
 
 export interface PipelineStage {
@@ -159,4 +159,48 @@ export function buildPipelineShape(
   }
 
   return { stages, createdFields };
+}
+
+/**
+ * Collect the parse-tree nodes whose internal field references belong to a
+ * *different* source than the outer pipeline's index. Field-validation prunes
+ * these subtrees entirely so it never flags a legitimate alternate-source
+ * reference as an unknown field. Covers:
+ *  - `lookup` (whole command — its columns come from the lookup table)
+ *  - `append [source=... | ...]` (only when it embeds its own `searchCommand`;
+ *    an `append [| where f=1]` with no inner source runs against the outer
+ *    index and is left to be validated)
+ *  - `subSearch` (scalar / IN / EXISTS subqueries *and* a join's right side —
+ *    `tableOrSubqueryClause` wraps a `subSearch`)
+ *  - `unionDataset` (runtime-grammar-only; a no-op on the compiled surface
+ *    where `ruleNameToIndex` returns -1 and the descendant scan yields nothing)
+ *
+ * Each membership test in the caller is O(1) (`Set.has`); building the set is a
+ * handful of descendant scans over the tree.
+ */
+export function collectAlternateSourceSubtrees(
+  tree: ParserRuleContext,
+  ruleNameToIndex: RuleNameToIndex
+): Set<ParserRuleContext> {
+  const subtrees = new Set<ParserRuleContext>();
+
+  for (const node of findAllDescendantsByRule(tree, ruleNameToIndex, 'lookupCommand')) {
+    subtrees.add(node);
+  }
+
+  for (const node of findAllDescendantsByRule(tree, ruleNameToIndex, 'appendCommand')) {
+    if (findAllDescendantsByRule(node, ruleNameToIndex, 'searchCommand').length > 0) {
+      subtrees.add(node);
+    }
+  }
+
+  for (const node of findAllDescendantsByRule(tree, ruleNameToIndex, 'subSearch')) {
+    subtrees.add(node);
+  }
+
+  for (const node of findAllDescendantsByRule(tree, ruleNameToIndex, 'unionDataset')) {
+    subtrees.add(node);
+  }
+
+  return subtrees;
 }

@@ -22,8 +22,9 @@ function coerce(version: string): string | null {
  * Decide whether a rule applies to a given data-source version and engine.
  *
  * Implements the version-filtering policy (R7):
- *  - effective max = rule.maxVersion ?? OSD_KNOWN_VERSION
- *  - below minVersion or above effective max → skip
+ *  - below minVersion → skip
+ *  - above an *explicitly declared* maxVersion → skip (no phantom ceiling: a
+ *    rule with no maxVersion is open-ended and runs on any newer cluster)
  *  - engine:'calcite' → applies only when the source runs Calcite
  *  - undefined version policy:
  *      minVersion-only, no engine        → runs
@@ -80,10 +81,11 @@ export function appliesTo(
     }
   }
 
-  const effectiveMax = predicate.maxVersion ?? knownVersion;
-  const coercedMax = coerce(effectiveMax);
-  if (coercedMax && semver.gt(coercedVersion, coercedMax)) {
-    return false; // R7.4
+  if (predicate.maxVersion !== undefined) {
+    const coercedMax = coerce(predicate.maxVersion);
+    if (coercedMax && semver.gt(coercedVersion, coercedMax)) {
+      return false; // R7.4 — explicit hard ceiling exceeded
+    }
   }
 
   return true;
