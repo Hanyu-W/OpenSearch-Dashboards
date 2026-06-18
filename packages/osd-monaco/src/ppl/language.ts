@@ -12,9 +12,16 @@ import { pplRangeFormatProvider } from './formatter';
 import { resolvePPLValidationResult } from './validation_provider';
 import { getPPLLintContext, isPPLLintEnabled, resolvePPLLintResult } from './lint_bridge';
 import { LintResult } from './lint/diagnostic';
-import { diagnosticToMarker } from './lint/diagnostic_to_marker';
+import { diagnosticToMarker, SYNTAX_MARKER_SOURCE } from './lint/diagnostic_to_marker';
 import { pplLintCodeActionProvider } from './lint/code_action_provider';
-import { clearModelFixes, markerFixKey, MarkerFix, setModelFixes } from './lint/fix_registry';
+import {
+  clearModelFixes,
+  clearModelSyntaxFixes,
+  markerFixKey,
+  MarkerFix,
+  setModelFixes,
+  setModelSyntaxFixes,
+} from './lint/fix_registry';
 import { LINT_OWNER, pplLintHoverProvider } from './lint/hover/hover_provider';
 import { clearModelHoverFacts, HoverFacts, setModelHoverFacts } from './lint/hover/hover_registry';
 
@@ -140,6 +147,7 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
   if (model.getLanguageId() !== PPL_LANGUAGE_ID) {
     // Clear any existing PPL markers if language changed
     monaco.editor.setModelMarkers(model, OWNER, []);
+    clearModelSyntaxFixes(model);
     return;
   }
 
@@ -156,6 +164,14 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
     )) as PPLValidationResult;
 
     if (validationResult.errors.length > 0) {
+      // A command-typo error carries a structured `fix`; collect those into the
+      // syntax-fix side table (keyed by the marker fields Monaco preserves) so
+      // the code-action provider can offer a one-click lightbulb. The fix is not
+      // hung off the marker because Monaco's MarkerService rebuilds markers from
+      // a fixed field list and drops custom properties — same constraint the
+      // lint path handles via setModelFixes.
+      const syntaxFixes = new Map<string, MarkerFix>();
+
       // Convert errors to Monaco markers
       const markers: monaco.editor.IMarkerData[] = validationResult.errors.map((error) => {
         // Map SyntaxError properties to Monaco marker properties
@@ -170,24 +186,35 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
         const safeEndColumn = Math.max(safeStartColumn, endColumn);
 
         const docLink = getPPLDocumentationLink(error.message);
-        return {
+        const marker: monaco.editor.IMarkerData = {
           severity: monaco.MarkerSeverity.Error,
           message: error.message,
           startLineNumber: safeStartLine,
           startColumn: safeStartColumn,
           endLineNumber: safeEndLine,
           endColumn: safeEndColumn,
+          // Tag the channel so the code-action provider can serve syntax fixes
+          // without touching lint markers.
+          source: SYNTAX_MARKER_SOURCE,
           // Add error code for better categorization
           code: {
             value: 'View Documentation',
             target: monaco.Uri.parse(docLink.url),
           },
         };
+
+        if (error.fix) {
+          syntaxFixes.set(markerFixKey(marker), error.fix);
+        }
+
+        return marker;
       });
 
+      setModelSyntaxFixes(model, syntaxFixes);
       monaco.editor.setModelMarkers(model, OWNER, markers);
     } else {
-      // Clear markers if no errors
+      // Clear markers and any stale syntax fixes if no errors
+      clearModelSyntaxFixes(model);
       monaco.editor.setModelMarkers(model, OWNER, []);
     }
   } catch (error) {
@@ -338,6 +365,7 @@ const setupPPLSyntaxHighlighting = () => {
           monaco.editor.setModelMarkers(model, OWNER, []);
           monaco.editor.setModelMarkers(model, LINT_OWNER, []);
           clearModelFixes(model);
+          clearModelSyntaxFixes(model);
           clearModelHoverFacts(model);
         }
       })
@@ -365,6 +393,7 @@ const setupPPLSyntaxHighlighting = () => {
       monaco.editor.setModelMarkers(model, OWNER, []);
       monaco.editor.setModelMarkers(model, LINT_OWNER, []);
       clearModelFixes(model);
+      clearModelSyntaxFixes(model);
       clearModelHoverFacts(model);
     })
   );

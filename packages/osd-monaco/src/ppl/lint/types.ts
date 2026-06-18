@@ -61,6 +61,17 @@ export type BundleRuleOverrides = Record<string, Partial<CatalogEntry>>;
 export interface LintRunContext {
   dataSourceId?: string;
   dataSourceVersion?: string;
+  /**
+   * Which grammar surface produced the parse tree. The field-slot shape pass
+   * (`field-validation`) branches on this: it defers to the syntax channel on
+   * `compiled-simplified` (where `grok field=body` error-recovers to a syntax
+   * error) and flags on `runtime-bundle` (where the same input is a silent
+   * misparse). Absent for callers that don't set it (unit tests, older callers);
+   * the shape pass then falls back to an implicit zero-structure heuristic.
+   */
+  grammarSurface?: 'compiled-simplified' | 'runtime-bundle';
+  /** Identifies the runtime grammar bundle a tree came from (debugging aid). */
+  grammarHash?: string;
   /** True when the data source is identified as running the Calcite engine. */
   isCalcite?: boolean;
   /** Index field names; empty/absent gates Bucket-B rules. */

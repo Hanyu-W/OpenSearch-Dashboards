@@ -5,8 +5,8 @@
 
 import type { PPLValidationProviderRequest, PPLValidationResult } from '@osd/monaco';
 import { CharStream, CommonTokenStream, LexerInterpreter, ParserInterpreter } from 'antlr4ng';
-import { GeneralErrorListener } from '../shared/general_error_listerner';
 import { CachedGrammar, pplGrammarCache } from './ppl_grammar_cache';
+import { PPLCommandErrorListener } from './ppl_command_error_listener';
 import { pickStartRuleIndex, resolveSpaceToken } from './runtime_grammar_utils';
 
 interface PipeStripResult {
@@ -68,7 +68,7 @@ function validateWithGrammar(query: string, grammar: CachedGrammar): PPLValidati
   const spaceToken = resolveSpaceToken(grammar);
   const startRuleIndex = pickStartRuleIndex(query, grammar, true);
   const pipeStrip = stripLeadingPipe(query);
-  const errorListener = new GeneralErrorListener(spaceToken);
+  const errorListener = new PPLCommandErrorListener(spaceToken);
 
   const lexer = new LexerInterpreter(
     'PPL',
@@ -126,6 +126,10 @@ function validateWithGrammar(query: string, grammar: CachedGrammar): PPLValidati
       column: error.startColumn,
       endLine: error.endLine,
       endColumn: error.endColumn,
+      // Carry the command-suggestion identity + quick-fix through to the marker
+      // builder. Absent on ordinary syntax errors.
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.fix ? { fix: error.fix } : {}),
     })),
   };
 

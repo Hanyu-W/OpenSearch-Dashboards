@@ -36,7 +36,11 @@ interface MarkerKeyParts {
 }
 
 interface FixRegistryState {
+  // Lint diagnostics (owner PPL_LINT) and syntax errors (owner PPL_WORKER) are
+  // produced by two independent passes, each replacing its own table wholesale.
+  // They are kept apart so one pass's write cannot clobber the other's fixes.
   byModel: WeakMap<monaco.editor.ITextModel, Map<string, MarkerFix>>;
+  syntaxByModel: WeakMap<monaco.editor.ITextModel, Map<string, MarkerFix>>;
 }
 
 // Shared via globalThis so that, even when osd-monaco is bundled more than once,
@@ -49,10 +53,16 @@ function getState(): FixRegistryState {
   };
 
   if (!globalScope[FIX_REGISTRY_KEY]) {
-    globalScope[FIX_REGISTRY_KEY] = { byModel: new WeakMap() };
+    globalScope[FIX_REGISTRY_KEY] = { byModel: new WeakMap(), syntaxByModel: new WeakMap() };
   }
 
-  return globalScope[FIX_REGISTRY_KEY]!;
+  const state = globalScope[FIX_REGISTRY_KEY]!;
+  // Back-fill the syntax table on a registry created by an older bundle.
+  if (!state.syntaxByModel) {
+    state.syntaxByModel = new WeakMap();
+  }
+
+  return state;
 }
 
 /**
@@ -97,4 +107,32 @@ export function getModelFix(model: monaco.editor.ITextModel, key: string): Marke
 
 export function clearModelFixes(model: monaco.editor.ITextModel): void {
   getState().byModel.delete(model);
+}
+
+/**
+ * Replace the syntax-error fix table for a model. Parallel to
+ * {@link setModelFixes} but for the syntax-error channel (owner `PPL_WORKER`),
+ * so a syntax-pass write and a lint-pass write never clobber each other. An
+ * empty map clears the entry.
+ */
+export function setModelSyntaxFixes(
+  model: monaco.editor.ITextModel,
+  fixes: Map<string, MarkerFix>
+): void {
+  if (fixes.size === 0) {
+    getState().syntaxByModel.delete(model);
+    return;
+  }
+  getState().syntaxByModel.set(model, fixes);
+}
+
+export function getModelSyntaxFix(
+  model: monaco.editor.ITextModel,
+  key: string
+): MarkerFix | undefined {
+  return getState().syntaxByModel.get(model)?.get(key);
+}
+
+export function clearModelSyntaxFixes(model: monaco.editor.ITextModel): void {
+  getState().syntaxByModel.delete(model);
 }

@@ -120,7 +120,13 @@ function lintWithGrammar(
   const diagnostics = runLint(tree, {
     ruleNameToIndex: createRuntimeRuleNameToIndex(grammar.runtimeRuleNameToIndex),
     dataSourceVersion: context?.dataSourceVersion,
-    context: context as any,
+    // Declare the surface so the field-slot shape pass fires here: on the
+    // runtime bundle `grok field=body` is a silent misparse (no syntax error).
+    context: {
+      ...(context as any),
+      grammarSurface: 'runtime-bundle',
+      grammarHash: grammar.grammarHash,
+    },
   });
 
   // For a pipe-first query the tree was parsed with a synthetic `source=t `

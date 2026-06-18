@@ -5,8 +5,15 @@
 
 import { monaco } from '../../../monaco';
 import { pplLintCodeActionProvider } from '../code_action_provider';
-import { LINT_MARKER_SOURCE } from '../diagnostic_to_marker';
-import { clearModelFixes, markerFixKey, MarkerFix, setModelFixes } from '../fix_registry';
+import { LINT_MARKER_SOURCE, SYNTAX_MARKER_SOURCE } from '../diagnostic_to_marker';
+import {
+  clearModelFixes,
+  clearModelSyntaxFixes,
+  markerFixKey,
+  MarkerFix,
+  setModelFixes,
+  setModelSyntaxFixes,
+} from '../fix_registry';
 
 type LintMarker = monaco.editor.IMarkerData;
 
@@ -119,5 +126,40 @@ describe('pplLintCodeActionProvider', () => {
     setModelFixes(model, fixes);
     expect(provide([m1]).map((a) => a.title)).toEqual(['fix-1']);
     expect(provide([m2]).map((a) => a.title)).toEqual(['fix-2']);
+  });
+
+  describe('syntax-error channel (command-typo quick-fix)', () => {
+    afterEach(() => clearModelSyntaxFixes(model));
+
+    const syntaxMarker = (overrides: Partial<LintMarker> = {}): LintMarker =>
+      makeMarker({ source: SYNTAX_MARKER_SOURCE, ...overrides });
+
+    function seedSyntaxFix(marker: LintMarker, fix: MarkerFix) {
+      const fixes = new Map<string, MarkerFix>();
+      fixes.set(markerFixKey(marker), fix);
+      setModelSyntaxFixes(model, fixes);
+    }
+
+    it('offers a quick-fix for a syntax marker with a registered syntax fix', () => {
+      const marker = syntaxMarker({ message: 'Unknown command "wherre". Did you mean "where"?' });
+      seedSyntaxFix(marker, { title: 'Replace with "where"', text: 'where' });
+      const actions = provide([marker]);
+      expect(actions).toHaveLength(1);
+      expect(actions[0].title).toBe('Replace with "where"');
+      expect(editOf(actions[0]).text).toBe('where');
+    });
+
+    it('does not read a syntax fix off the lint table (channels are separate)', () => {
+      const marker = syntaxMarker();
+      // Seed the LINT table for this key; the syntax channel must not see it.
+      const lintFixes = new Map<string, MarkerFix>();
+      lintFixes.set(markerFixKey(marker), { title: 'lint-fix', text: 'x' });
+      setModelFixes(model, lintFixes);
+      expect(provide([marker])).toHaveLength(0);
+    });
+
+    it('produces no action for a syntax marker without a registered fix', () => {
+      expect(provide([syntaxMarker()])).toHaveLength(0);
+    });
   });
 });

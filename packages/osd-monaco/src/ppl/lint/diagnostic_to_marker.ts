@@ -37,6 +37,13 @@ function toMonacoRange(range: DiagnosticRange): MonacoRange {
  */
 export const LINT_MARKER_SOURCE = 'ppl-lint';
 
+/**
+ * Marker source tag for syntax-error markers (owner `PPL_WORKER`). Lets the
+ * code-action provider recognize the syntax channel and offer command-typo
+ * quick-fixes there, without disturbing the lint channel (`ppl-lint`).
+ */
+export const SYNTAX_MARKER_SOURCE = 'ppl-syntax';
+
 function toMarkerSeverity(severity: LintSeverity): monaco.MarkerSeverity {
   switch (severity) {
     case 'error':

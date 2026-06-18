@@ -81,8 +81,7 @@
     "severity": "warning",
     "message": "Reference to an unknown field.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/fields/",
-    "appliesTo": {},
-    "needsContext": true
+    "appliesTo": {}
   },
   {
     "id": "expand-on-non-array",
