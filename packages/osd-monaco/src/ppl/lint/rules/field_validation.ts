@@ -53,10 +53,12 @@ function resolveExcludedAncestorIndices(ruleNameToIndex: RuleNameToIndex): Set<n
     'sideAlias',
     'joinCriteria',
     'evalClause',
-    // The simplified-compiled grammar (#1) misspells this rule; the runtime
-    // bundle (#3) spells it correctly. Listing both costs nothing — the absent
-    // one resolves to -1 — and prevents a latent false-positive the moment the
-    // walk broadens to rename targets.
+    // The grammar rule is genuinely named `renameClasue` (sic) in both the
+    // simplified-compiled and runtime `.g4` sources, so that misspelled literal
+    // is the one that actually matches on both surfaces. The correctly-spelled
+    // `renameClause` resolves to -1 today and is kept only as forward defense:
+    // if a future grammar fixes the typo, exclusion of rename targets still
+    // holds. Listing both costs nothing — the absent one resolves to -1.
     'renameClasue',
     'renameClause',
   ]) {
