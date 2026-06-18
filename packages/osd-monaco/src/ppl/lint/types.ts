@@ -39,6 +39,13 @@ export interface CatalogEntry {
   runtimeOnly?: boolean;
   /** Bucket-B context gate. */
   needsContext?: boolean;
+  /**
+   * Marks a rule whose detector reads an `_explain` plan rather than the parse
+   * tree. Such rules run in a separate, asynchronous pass (see
+   * `explain/run_explain_lint.ts`) and are skipped by the synchronous tree loop
+   * in `lint_runner.ts` so they never log as "inert" there.
+   */
+  needsExplain?: boolean;
 }
 
 /**

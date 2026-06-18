@@ -9,6 +9,17 @@ import type { LintResult } from './lint/diagnostic';
 import type { BundleRuleOverrides } from './lint/types';
 
 /**
+ * Minimal HTTP client the explain-backed lint pass uses to POST the `_explain`
+ * request. Declared structurally rather than as core's `HttpSetup` because the
+ * `@osd/monaco` package cannot depend on OpenSearch Dashboards core. The host's
+ * `services.http` is assignable to this. `body`/`query` follow core's
+ * `HttpFetchOptions` shape; the return is left loose so the caller shapes it.
+ */
+export interface PPLLintHttpClient {
+  post: (path: string, options?: { body?: any; query?: Record<string, any> }) => Promise<any>;
+}
+
+/**
  * Host-supplied lint context. Extends the validation context with the
  * field-metadata and settings that field-aware (Bucket B) rules consume.
  */
@@ -35,6 +46,14 @@ export interface PPLLintContext extends PPLValidationContext {
    * through automatically; the compiled worker fallback threads it explicitly.
    */
   overrides?: BundleRuleOverrides;
+  /**
+   * HTTP client for the explain-backed lint pass. Present only on the runtime
+   * (main-thread) bridge path — the compiled worker fallback has no HTTP access,
+   * so explain rules are silently skipped there (they are an enhancement; the
+   * worker still ships every static rule). Non-serializable, so it never crosses
+   * the worker `postMessage` boundary.
+   */
+  http?: PPLLintHttpClient;
 }
 
 export interface PPLLintBridgeRequest {

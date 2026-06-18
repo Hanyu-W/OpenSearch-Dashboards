@@ -66,6 +66,25 @@ export function rangeWithinToken(
 }
 
 /**
+ * Build a {@link DiagnosticRange} spanning the entire query text. Explain-backed
+ * diagnostics have no source position (the plan text carries none), so they
+ * cover the whole query. Computed from the text — rather than a sentinel like
+ * `endColumn: Infinity` — so Monaco receives a concrete, in-bounds range.
+ * `endColumn` is exclusive, matching the {@link DiagnosticRange} convention.
+ */
+export function wholeQueryRange(query: string): DiagnosticRange {
+  const lines = query.split('\n');
+  const endLine = Math.max(1, lines.length);
+  const lastLine = lines[lines.length - 1] ?? '';
+  return {
+    startLine: 1,
+    startColumn: 0,
+    endLine,
+    endColumn: lastLine.length,
+  };
+}
+
+/**
  * Strip a single layer of matching surrounding quotes (single or double) from a
  * string-literal token's raw text. Returns the input unchanged when it is not
  * quoted.

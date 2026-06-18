@@ -31,7 +31,12 @@ export {
   setPPLLintContext,
   setPPLLintEnabled,
 } from './lint_bridge';
-export type { PPLLintContext, PPLLintBridge, PPLLintBridgeRequest } from './lint_bridge';
+export type {
+  PPLLintContext,
+  PPLLintBridge,
+  PPLLintBridgeRequest,
+  PPLLintHttpClient,
+} from './lint_bridge';
 export { buildCommandSuggestion } from './command_suggestion';
 export type { CommandSuggestion } from './command_suggestion';
 export type { Diagnostic, DiagnosticRange, LintResult, LintSeverity } from './lint/diagnostic';
@@ -39,5 +44,11 @@ export type { BundleRuleOverrides, CatalogEntry, LintRunContext } from './lint/t
 export { runLint } from './lint/lint_runner';
 export { getBundledCatalog } from './lint/catalog';
 export { createRuntimeRuleNameToIndex } from './lint/rule_index';
+export { runExplainLint, hasExplainRules } from './lint/explain/run_explain_lint';
+export type {
+  ExplainPlan,
+  ExplainDetector,
+  ExplainLintContext,
+} from './lint/explain/explain_types';
 
 export const PPLLang = { ID };

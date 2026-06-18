@@ -176,6 +176,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
       disabledObjectFields: cacheMatchesDataset ? cached.disabledObjectFields : undefined,
       visibleIndices: cacheMatchesDataset ? cached.visibleIndices : undefined,
       overrides: buildOverridesFromSettings(services.uiSettings),
+      http: services.http,
     };
   };
 
@@ -237,6 +238,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
         disabledObjectFields: lintFieldsRef.current.disabledObjectFields,
         visibleIndices: lintFieldsRef.current.visibleIndices,
         overrides: buildOverridesFromSettings(services.uiSettings),
+        http: services.http,
       });
       const model = inputRef.current?.getModel();
       if (model) {

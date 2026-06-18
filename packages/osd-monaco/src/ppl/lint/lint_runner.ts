@@ -26,7 +26,13 @@ export interface RunLintOptions {
   knownVersion?: string;
 }
 
-function mergeConfig(local: CatalogEntry, override?: Partial<CatalogEntry>): CatalogEntry {
+/**
+ * Shallow-merge a per-rule override patch over a bundled catalog entry, with the
+ * nested `appliesTo` merged one level deep. Shared by the synchronous tree loop
+ * (below) and the asynchronous explain pass (`explain/run_explain_lint.ts`) so
+ * both resolve overrides identically.
+ */
+export function mergeConfig(local: CatalogEntry, override?: Partial<CatalogEntry>): CatalogEntry {
   if (!override) {
     return local;
   }
@@ -68,6 +74,13 @@ export function runLint(tree: ParserRuleContext, options: RunLintOptions): Diagn
 
     // R6.3 — disabled rules are skipped.
     if (!config.enabled) {
+      continue;
+    }
+
+    // Explain-backed rules read an `_explain` plan, not the parse tree. They run
+    // in the asynchronous explain pass (see `explain/run_explain_lint.ts`); skip
+    // them here so the synchronous tree loop never logs them as "inert".
+    if (config.needsExplain) {
       continue;
     }
 

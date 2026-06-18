@@ -63,6 +63,9 @@ export function validateCatalogEntry(value: unknown): CatalogEntry | null {
   if (candidate.needsContext !== undefined && typeof candidate.needsContext !== 'boolean') {
     return null;
   }
+  if (candidate.needsExplain !== undefined && typeof candidate.needsExplain !== 'boolean') {
+    return null;
+  }
 
   return {
     id: candidate.id,
@@ -74,6 +77,7 @@ export function validateCatalogEntry(value: unknown): CatalogEntry | null {
     appliesTo: candidate.appliesTo as AppliesTo,
     runtimeOnly: candidate.runtimeOnly as boolean | undefined,
     needsContext: candidate.needsContext as boolean | undefined,
+    needsExplain: candidate.needsExplain as boolean | undefined,
   };
 }
 

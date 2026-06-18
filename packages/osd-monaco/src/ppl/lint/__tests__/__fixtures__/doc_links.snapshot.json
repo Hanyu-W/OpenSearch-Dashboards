@@ -98,6 +98,18 @@
       "page": "https://docs.opensearch.org/latest/mappings/mapping-parameters/enabled/",
       "anchor": "disabling-object-fields",
       "quality": "close"
+    },
+    "operation-not-pushed": {
+      "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/",
+      "page": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/",
+      "anchor": "",
+      "quality": "weak"
+    },
+    "operation-pushed-as-script": {
+      "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/",
+      "page": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/",
+      "anchor": "",
+      "quality": "weak"
     }
   }
 }

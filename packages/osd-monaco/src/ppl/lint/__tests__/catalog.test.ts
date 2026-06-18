@@ -79,6 +79,47 @@ describe('catalog loading', () => {
     ).not.toBeNull();
   });
 
+  it('preserves the needsExplain flag through validation', () => {
+    const entry = validateCatalogEntry({
+      id: 'operation-not-pushed',
+      detector: 'operation-not-pushed',
+      enabled: false,
+      severity: 'warning',
+      message: 'm',
+      docUrl: 'd',
+      appliesTo: { minVersion: '3.3.0', engine: 'calcite' },
+      runtimeOnly: true,
+      needsExplain: true,
+    });
+    expect(entry).not.toBeNull();
+    expect(entry!.needsExplain).toBe(true);
+  });
+
+  it('rejects a non-boolean needsExplain', () => {
+    expect(
+      validateCatalogEntry({
+        id: 'x',
+        detector: 'x',
+        enabled: true,
+        severity: 'warning',
+        message: 'm',
+        docUrl: 'd',
+        appliesTo: {},
+        needsExplain: 'yes',
+      })
+    ).toBeNull();
+  });
+
+  it('loads the two explain rules with needsExplain set, disabled by default', () => {
+    const byId = new Map(getBundledCatalog().map((c) => [c.id, c]));
+    for (const id of ['operation-not-pushed', 'operation-pushed-as-script']) {
+      const entry = byId.get(id);
+      expect(entry).toBeDefined();
+      expect(entry!.needsExplain).toBe(true);
+      expect(entry!.enabled).toBe(false);
+    }
+  });
+
   it('rejects an invalid engine predicate', () => {
     expect(
       validateCatalogEntry({

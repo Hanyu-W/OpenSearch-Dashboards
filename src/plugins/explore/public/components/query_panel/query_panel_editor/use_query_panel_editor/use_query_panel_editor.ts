@@ -176,8 +176,9 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
       disabledObjectFields: cacheMatchesDataset ? cached.disabledObjectFields : undefined,
       visibleIndices: cacheMatchesDataset ? cached.visibleIndices : undefined,
       overrides: buildOverridesFromSettings(services.uiSettings),
+      http: services.http,
     };
-  }, [services.uiSettings]);
+  }, [services.uiSettings, services.http]);
 
   const switchEditorMode = useLanguageSwitch();
 
@@ -246,6 +247,7 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
         disabledObjectFields: lintFieldsRef.current.disabledObjectFields,
         visibleIndices: lintFieldsRef.current.visibleIndices,
         overrides: buildOverridesFromSettings(services.uiSettings),
+        http: services.http,
       });
       const model = editorRef.current?.getModel();
       if (model) {

@@ -37,6 +37,10 @@ const PPL_LINT_RULE_DEFAULTS: ReadonlyArray<{
   { id: 'flat-object-subfield', enabled: true, severity: 'error' },
   { id: 'type-mismatch-numeric', enabled: true, severity: 'warning' },
   { id: 'enabled-false-object', enabled: true, severity: 'warning' },
+  // Explain-backed rules ship disabled by default (opt-in); registering their
+  // keys is what makes them individually toggleable via the per-rule override.
+  { id: 'operation-not-pushed', enabled: false, severity: 'warning' },
+  { id: 'operation-pushed-as-script', enabled: false, severity: 'info' },
 ];
 
 /**

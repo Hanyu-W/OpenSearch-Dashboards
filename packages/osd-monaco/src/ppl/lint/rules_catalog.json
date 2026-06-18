@@ -151,5 +151,27 @@
     "docUrl": "https://docs.opensearch.org/latest/mappings/mapping-parameters/enabled/#disabling-object-fields",
     "appliesTo": {},
     "needsContext": true
+  },
+  {
+    "id": "operation-not-pushed",
+    "detector": "operation-not-pushed",
+    "enabled": false,
+    "severity": "warning",
+    "message": "An operation in this query could not be pushed to OpenSearch and runs in the coordinator.",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/",
+    "appliesTo": { "minVersion": "3.3.0", "engine": "calcite" },
+    "runtimeOnly": true,
+    "needsExplain": true
+  },
+  {
+    "id": "operation-pushed-as-script",
+    "detector": "operation-pushed-as-script",
+    "enabled": false,
+    "severity": "info",
+    "message": "An operation in this query was pushed to OpenSearch as a Painless script (per-document evaluation).",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/",
+    "appliesTo": { "minVersion": "3.3.0", "engine": "calcite" },
+    "runtimeOnly": true,
+    "needsExplain": true
   }
 ]

@@ -19,6 +19,10 @@ import type {
 import { runLint } from '@osd/monaco/target/ppl/lint/lint_runner';
 import { createRuntimeRuleNameToIndex } from '@osd/monaco/target/ppl/lint/rule_index';
 import {
+  hasExplainRules,
+  runExplainLint,
+} from '@osd/monaco/target/ppl/lint/explain/run_explain_lint';
+import {
   CharStream,
   CommonTokenStream,
   LexerInterpreter,
@@ -28,6 +32,7 @@ import {
 import { GeneralErrorListener } from '../shared/general_error_listerner';
 import { CachedGrammar, pplGrammarCache } from './ppl_grammar_cache';
 import { pickStartRuleIndex, resolveSpaceToken } from './runtime_grammar_utils';
+import { explainCache } from '../../ppl_lint/explain_cache';
 
 const PIPE_FIRST_PREFIX = 'source=t ';
 
@@ -103,18 +108,29 @@ function buildRuntimeTree(query: string, grammar: CachedGrammar): ParserRuleCont
   }
 }
 
+/**
+ * The static lint result paired with the parse tree it ran over. The tree is
+ * `undefined` when the query is empty or failed to parse — both the empty-query
+ * and parse-failure guard paths. The explain pass uses the tree's presence as
+ * its clean-parse precondition: a half-typed query never reaches the network.
+ */
+interface GrammarLintOutcome {
+  result: LintResult;
+  tree: ParserRuleContext | undefined;
+}
+
 function lintWithGrammar(
   query: string,
   grammar: CachedGrammar,
   context: PPLLintContext | undefined
-): LintResult {
+): GrammarLintOutcome {
   if (!query.trim()) {
-    return { diagnostics: [] };
+    return { result: { diagnostics: [] }, tree: undefined };
   }
 
   const tree = buildRuntimeTree(query, grammar);
   if (!tree) {
-    return { diagnostics: [] };
+    return { result: { diagnostics: [] }, tree: undefined };
   }
 
   const diagnostics = runLint(tree, {
@@ -133,15 +149,69 @@ function lintWithGrammar(
   // prefix prepended (see buildRuntimeTree); subtract its width from line-one
   // columns so squiggles align with the user's text.
   const isPipeFirst = query.trimStart().startsWith('|');
-  return { diagnostics: isPipeFirst ? remapPipeFirstColumns(diagnostics) : diagnostics };
+  return {
+    result: { diagnostics: isPipeFirst ? remapPipeFirstColumns(diagnostics) : diagnostics },
+    tree,
+  };
+}
+
+/**
+ * Layer the explain-backed rules on top of the static result. Best-effort: any
+ * failure (no http client, no applicable rule, network error, non-Calcite plan)
+ * leaves the static markers untouched. Runs only when the tree parsed cleanly,
+ * the source is Calcite, an http client is present, and at least one explain
+ * rule is enabled and applicable — so the `_explain` round-trip is skipped
+ * whenever it could produce nothing.
+ */
+async function layerExplainLint(
+  query: string,
+  staticResult: LintResult,
+  context: PPLLintContext
+): Promise<LintResult> {
+  if (
+    !context.isCalcite ||
+    !context.http ||
+    !hasExplainRules({
+      overrides: context.overrides,
+      dataSourceVersion: context.dataSourceVersion,
+      isCalcite: context.isCalcite,
+    })
+  ) {
+    return staticResult;
+  }
+
+  try {
+    const plan = await explainCache.resolve(context.http as any, query, context.dataSourceId);
+    if (!plan.isCalcite) {
+      return staticResult;
+    }
+    const explainDiagnostics = runExplainLint(plan, {
+      query,
+      overrides: context.overrides,
+      dataSourceVersion: context.dataSourceVersion,
+      isCalcite: context.isCalcite,
+    });
+    if (explainDiagnostics.length === 0) {
+      return staticResult;
+    }
+    return { diagnostics: [...staticResult.diagnostics, ...explainDiagnostics] };
+  } catch {
+    // Keep the static markers only — explain rules are an enhancement.
+    return staticResult;
+  }
 }
 
 /**
  * Runtime-grammar lint bridge. Returns null when the runtime grammar is
  * disabled or not cached (the null triggers the compiled-grammar fallback).
- * Runs on the main thread, mirroring validateRuntimePPLQuery.
+ * Runs on the main thread, mirroring validateRuntimePPLQuery. Async because it
+ * layers the explain-backed rules, which require a network round-trip; the
+ * bridge contract and `resolvePPLLintResult` already await the result, so this
+ * is a non-breaking change for callers.
  */
-export function lintRuntimePPLQuery(request: PPLLintBridgeRequest): LintResult | null {
+export async function lintRuntimePPLQuery(
+  request: PPLLintBridgeRequest
+): Promise<LintResult | null> {
   const { content, context } = request;
   if (!context?.useRuntimeGrammar) {
     return null;
@@ -152,5 +222,12 @@ export function lintRuntimePPLQuery(request: PPLLintBridgeRequest): LintResult |
     return null;
   }
 
-  return lintWithGrammar(content, grammar, context);
+  const { result, tree } = lintWithGrammar(content, grammar, context);
+
+  // The tree's presence is the clean-parse guard: skip explain on empty or
+  // unparseable input so a half-typed query never triggers a round-trip.
+  if (tree) {
+    return layerExplainLint(content, result, context);
+  }
+  return result;
 }
