@@ -11,14 +11,19 @@ import {
   Token,
 } from 'antlr4ng';
 
+import type { CommandSuggestion } from '@osd/monaco';
 import { TokenPosition, getTokenPosition } from '../shared/cursor';
 
 export interface ParserSyntaxError extends TokenPosition {
   message: string;
-  /** Stable machine-readable identity for a recognized diagnostic. */
-  code?: 'UNKNOWN_COMMAND';
+  /**
+   * Stable machine-readable identity for a recognized diagnostic. Reuses
+   * {@link CommandSuggestion}'s `code` (type-only import, erased at runtime) so
+   * the PPL command-typo producer and this base error shape never drift.
+   */
+  code?: CommandSuggestion['code'];
   /** Structured quick-fix the marker builder turns into a Monaco lightbulb. */
-  fix?: { title: string; text: string };
+  fix?: CommandSuggestion['fix'];
 }
 
 export class GeneralErrorListener implements ANTLRErrorListener {

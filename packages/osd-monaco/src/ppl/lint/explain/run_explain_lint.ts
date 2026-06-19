@@ -4,24 +4,41 @@
  */
 
 import { Diagnostic } from '../diagnostic';
-import { BundleRuleOverrides, CatalogEntry } from '../types';
+import { BundleRuleOverrides, CatalogEntry, LintRunContext } from '../types';
 import { getBundledCatalog } from '../catalog';
 import { mergeConfig } from '../lint_runner';
 import { appliesTo, OSD_KNOWN_VERSION } from '../version_filter';
 import { getExplainDetector } from './explain_registry';
 import { ExplainPlan } from './explain_types';
 
-export interface RunExplainLintOptions {
+export interface RunExplainLintOptions
+  extends Pick<LintRunContext, 'overrides' | 'dataSourceVersion' | 'isCalcite'> {
   /** The query text the plan was produced for (sizes the whole-query range). */
   query: string;
   /** The catalog to iterate; defaults to the bundled catalog. */
   catalog?: CatalogEntry[];
-  /** Per-rule overrides resolved on the host (enable/disable + severity). */
-  overrides?: BundleRuleOverrides;
-  dataSourceVersion?: string;
-  /** True when the source is identified as running the Calcite engine. */
-  isCalcite?: boolean;
   knownVersion?: string;
+}
+
+/**
+ * True when a catalog entry would actually run as an explain rule for the given
+ * source: after override-merge it is explain-tagged, enabled, and version/engine
+ * applicable. Shared by `hasExplainRules` (the pre-flight check) and
+ * `runExplainLint` (the resolution loop) so the two filter identically.
+ */
+function isApplicableExplainEntry(
+  localConfig: CatalogEntry,
+  overrides: BundleRuleOverrides | undefined,
+  dataSourceVersion: string | undefined,
+  isCalcite: boolean | undefined,
+  knownVersion: string
+): boolean {
+  const config = mergeConfig(localConfig, overrides?.[localConfig.id]);
+  return (
+    config.needsExplain === true &&
+    config.enabled === true &&
+    appliesTo(config, dataSourceVersion, isCalcite, knownVersion)
+  );
 }
 
 /**
@@ -31,13 +48,7 @@ export interface RunExplainLintOptions {
  * all: when it returns false there is no rule to feed, so the round-trip is
  * skipped.
  */
-export function hasExplainRules(options: {
-  catalog?: CatalogEntry[];
-  overrides?: BundleRuleOverrides;
-  dataSourceVersion?: string;
-  isCalcite?: boolean;
-  knownVersion?: string;
-}): boolean {
+export function hasExplainRules(options: Omit<RunExplainLintOptions, 'query'>): boolean {
   const {
     catalog = getBundledCatalog(),
     overrides,
@@ -46,13 +57,9 @@ export function hasExplainRules(options: {
     knownVersion = OSD_KNOWN_VERSION,
   } = options;
 
-  return catalog.some((localConfig) => {
-    const config = mergeConfig(localConfig, overrides?.[localConfig.id]);
-    if (!config.needsExplain || !config.enabled) {
-      return false;
-    }
-    return appliesTo(config, dataSourceVersion, isCalcite, knownVersion);
-  });
+  return catalog.some((localConfig) =>
+    isApplicableExplainEntry(localConfig, overrides, dataSourceVersion, isCalcite, knownVersion)
+  );
 }
 
 /**
@@ -74,22 +81,16 @@ export function runExplainLint(plan: ExplainPlan, options: RunExplainLintOptions
   const diagnostics: Diagnostic[] = [];
 
   for (const localConfig of catalog) {
+    // Explain-tagged, enabled, and version/engine applicable — the same filter
+    // `hasExplainRules` uses for its pre-flight check (tree rules ran in
+    // `runLint`).
+    if (
+      !isApplicableExplainEntry(localConfig, overrides, dataSourceVersion, isCalcite, knownVersion)
+    ) {
+      continue;
+    }
+
     const config = mergeConfig(localConfig, overrides?.[localConfig.id]);
-
-    // Only explain-backed rules run here; tree rules ran in `runLint`.
-    if (!config.needsExplain) {
-      continue;
-    }
-
-    if (!config.enabled) {
-      continue;
-    }
-
-    // Version + engine filtering, identical to the tree loop.
-    if (!appliesTo(config, dataSourceVersion, isCalcite, knownVersion)) {
-      continue;
-    }
-
     const detector = getExplainDetector(config.detector);
     if (!detector) {
       // eslint-disable-next-line no-console

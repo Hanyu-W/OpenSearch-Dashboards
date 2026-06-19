@@ -146,6 +146,43 @@ export function findAllDescendantsByRule(
 }
 
 /**
+ * Grammar rules that carry a (possibly dotted) field path as their text. Dotted
+ * references parse to a `qualifiedName` (where/eval/by) or a `wcQualifiedName`
+ * (fields projection); both carry the full dotted path as their `getText()`.
+ */
+export const DOTTED_PATH_RULES = ['qualifiedName', 'wcQualifiedName'];
+
+/**
+ * Collect every {@link DOTTED_PATH_RULES} descendant whose text contains a `.`
+ * (i.e. references a subfield), deduped by token start offset. Shared by the
+ * object-subfield rules (`flat-object-subfield`, `enabled-false-object`), which
+ * differ only in the per-root predicate they then apply. Returns [] when those
+ * rule names are absent on the active grammar surface (the descendant search
+ * no-ops via `ruleNameToIndex` -> -1).
+ */
+export function collectDottedPathNodes(
+  ctx: ParserRuleContext,
+  ruleNameToIndex: RuleNameToIndex
+): ParserRuleContext[] {
+  const seen = new Set<number>();
+  const result: ParserRuleContext[] = [];
+  for (const ruleName of DOTTED_PATH_RULES) {
+    for (const node of findAllDescendantsByRule(ctx, ruleNameToIndex, ruleName)) {
+      if (node.getText().indexOf('.') === -1) {
+        continue; // not a subfield reference
+      }
+      const startIndex = node.start?.start ?? -1;
+      if (seen.has(startIndex)) {
+        continue;
+      }
+      seen.add(startIndex);
+      result.push(node);
+    }
+  }
+  return result;
+}
+
+/**
  * Concatenate the terminal token text of a node's direct children.
  */
 export function getTokenText(ctx: ParserRuleContext): string {

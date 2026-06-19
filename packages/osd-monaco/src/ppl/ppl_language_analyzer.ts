@@ -9,9 +9,10 @@ import {
   SimplifiedOpenSearchPPLParser as OpenSearchPPLParser,
 } from '@osd/antlr-grammar';
 import { PPLSyntaxErrorListener, SyntaxError } from './ppl_error_listener';
-import { Diagnostic, DiagnosticRange, LintResult } from './lint/diagnostic';
+import { LintResult } from './lint/diagnostic';
 import { runLint } from './lint/lint_runner';
 import { createCompiledRuleNameToIndex } from './lint/rule_index';
+import { PIPE_FIRST_PREFIX, remapPipeFirstColumns } from './lint/range_utils';
 import { LintRunContext } from './lint/types';
 
 export interface PPLToken {
@@ -27,9 +28,6 @@ export interface PPLValidationResult {
   isValid: boolean;
   errors: SyntaxError[];
 }
-
-/** Synthetic prefix prepended when a query begins with a leading pipe. */
-const PIPE_FIRST_PREFIX = 'source=t ';
 
 export interface PPLCompletionItem {
   label: string;
@@ -191,37 +189,13 @@ export class PPLLanguageAnalyzer {
       });
 
       if (isPipeFirst) {
-        return { diagnostics: this.remapPipeFirstColumns(diagnostics) };
+        return { diagnostics: remapPipeFirstColumns(diagnostics) };
       }
 
       return { diagnostics };
     } catch {
       return { diagnostics: [] };
     }
-  }
-
-  /**
-   * Subtract the synthetic pipe-first prefix length from line-one diagnostic
-   * columns, clamped to a minimum of zero (R13.6). Other lines are unchanged.
-   */
-  private remapPipeFirstColumns(diagnostics: Diagnostic[]): Diagnostic[] {
-    const prefixLength = PIPE_FIRST_PREFIX.length;
-    const shift = (range: DiagnosticRange): DiagnosticRange => ({
-      ...range,
-      startColumn:
-        range.startLine === 1 ? Math.max(0, range.startColumn - prefixLength) : range.startColumn,
-      endColumn:
-        range.endLine === 1 ? Math.max(0, range.endColumn - prefixLength) : range.endColumn,
-    });
-    return diagnostics.map((diagnostic) => ({
-      ...diagnostic,
-      range: shift(diagnostic.range),
-      // An explicit fix range needs the same shift; a default-range fix rides
-      // the already-remapped diagnostic range via the provider fallback.
-      fix: diagnostic.fix?.range
-        ? { ...diagnostic.fix, range: shift(diagnostic.fix.range) }
-        : diagnostic.fix,
-    }));
   }
 
   /**

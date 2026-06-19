@@ -10,7 +10,7 @@ import {
   Token,
   ATNSimulator,
 } from 'antlr4ng';
-import { buildCommandSuggestion } from './command_suggestion';
+import { buildCommandSuggestion, CommandSuggestion } from './command_suggestion';
 
 export interface SyntaxError {
   message: string;
@@ -20,17 +20,16 @@ export interface SyntaxError {
   endColumn?: number;
   /**
    * Stable machine-readable identity for a recognized diagnostic. Absent for
-   * raw ANTLR errors. Currently only `'UNKNOWN_COMMAND'` (command-typo
-   * suggestion); kept as a one-member union, to be promoted to an enum if a
-   * second code appears.
+   * raw ANTLR errors. Reuses {@link CommandSuggestion}'s `code` so the two stay
+   * in lock-step if a second code appears.
    */
-  code?: 'UNKNOWN_COMMAND';
+  code?: CommandSuggestion['code'];
   /**
    * Structured, deterministic correction that drives a Monaco quick-fix
-   * lightbulb. Mirrors the lint path's `Diagnostic.fix`. Absent when there is no
-   * unambiguous rewrite.
+   * lightbulb. Mirrors {@link CommandSuggestion}'s `fix` (and the lint path's
+   * `Diagnostic.fix`). Absent when there is no unambiguous rewrite.
    */
-  fix?: { title: string; text: string };
+  fix?: CommandSuggestion['fix'];
 }
 
 export class PPLSyntaxErrorListener implements ANTLRErrorListener {

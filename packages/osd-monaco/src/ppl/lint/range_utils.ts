@@ -4,7 +4,15 @@
  */
 
 import { ParserRuleContext, Token } from 'antlr4ng';
-import { DiagnosticRange } from './diagnostic';
+import { Diagnostic, DiagnosticRange } from './diagnostic';
+
+/**
+ * Synthetic prefix prepended when a query begins with a leading pipe, so the
+ * grammar (which expects a `source=` first) can parse it. Both lint surfaces
+ * use the same string; the column offset is undone by
+ * {@link remapPipeFirstColumns}.
+ */
+export const PIPE_FIRST_PREFIX = 'source=t ';
 
 /**
  * Build a {@link DiagnosticRange} from a start and stop token.
@@ -98,4 +106,30 @@ export function unquote(raw: string): string {
     }
   }
   return raw;
+}
+
+/**
+ * Subtract the synthetic {@link PIPE_FIRST_PREFIX} length from line-one
+ * diagnostic columns, clamped to a minimum of zero (R13.6). Other lines are
+ * unchanged. Applied by both lint surfaces (the compiled analyzer and the
+ * runtime-bundle path) when a query was parsed with the pipe-first prefix, so
+ * squiggles land on the same column as the user's text. An explicit fix range
+ * gets the same shift; a default-range fix rides the already-remapped
+ * diagnostic range via the provider fallback.
+ */
+export function remapPipeFirstColumns(diagnostics: Diagnostic[]): Diagnostic[] {
+  const prefixLength = PIPE_FIRST_PREFIX.length;
+  const shift = (range: DiagnosticRange): DiagnosticRange => ({
+    ...range,
+    startColumn:
+      range.startLine === 1 ? Math.max(0, range.startColumn - prefixLength) : range.startColumn,
+    endColumn: range.endLine === 1 ? Math.max(0, range.endColumn - prefixLength) : range.endColumn,
+  });
+  return diagnostics.map((diagnostic) => ({
+    ...diagnostic,
+    range: shift(diagnostic.range),
+    fix: diagnostic.fix?.range
+      ? { ...diagnostic.fix, range: shift(diagnostic.fix.range) }
+      : diagnostic.fix,
+  }));
 }

@@ -3,10 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { ParserRuleContext } from 'antlr4ng';
 import { Diagnostic } from '../diagnostic';
 import { Detector } from '../types';
-import { findAllDescendantsByRule } from '../rule_index';
+import { collectDottedPathNodes } from '../rule_index';
 import { rangeFromContext } from '../range_utils';
 
 // Engine ground truth (verified live, OpenSearch 3.7): a field inside an object
@@ -24,8 +23,6 @@ import { rangeFromContext } from '../range_utils';
 // (where/eval/by) or a `wcQualifiedName` (fields projection); both carry the
 // full dotted path as their text.
 
-const FIELD_PATH_RULES = ['qualifiedName', 'wcQualifiedName'];
-
 export const enabledFalseObjectDetector: Detector = (tree, config, context, ruleNameToIndex) => {
   const disabled = context.disabledObjectFields;
   if (!disabled || disabled.size === 0) {
@@ -33,29 +30,13 @@ export const enabledFalseObjectDetector: Detector = (tree, config, context, rule
   }
 
   const diagnostics: Diagnostic[] = [];
-  const seen = new Set<number>();
 
-  const pathNodes: ParserRuleContext[] = [];
-  for (const ruleName of FIELD_PATH_RULES) {
-    pathNodes.push(...findAllDescendantsByRule(tree, ruleNameToIndex, ruleName));
-  }
-
-  for (const node of pathNodes) {
+  for (const node of collectDottedPathNodes(tree, ruleNameToIndex)) {
     const path = node.getText();
-    const dot = path.indexOf('.');
-    if (dot === -1) {
-      continue; // a reference to the object itself is not the silent-null case
-    }
-    const root = path.slice(0, dot);
+    const root = path.slice(0, path.indexOf('.'));
     if (!disabled.has(root)) {
       continue;
     }
-
-    const startIndex = node.start?.start ?? -1;
-    if (seen.has(startIndex)) {
-      continue;
-    }
-    seen.add(startIndex);
 
     diagnostics.push({
       ruleId: config.id,

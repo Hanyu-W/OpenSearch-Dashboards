@@ -30,6 +30,7 @@ import { runLint } from '../lint_runner';
 import { createRuntimeRuleNameToIndex } from '../rule_index';
 import { LintRunContext } from '../types';
 import { Diagnostic } from '../diagnostic';
+import { PIPE_FIRST_PREFIX } from '../range_utils';
 
 // Mirrors ATN_DESERIALIZE_OPTIONS in ppl_grammar_cache.ts.
 const ATN_DESERIALIZE_OPTIONS = {
@@ -37,8 +38,6 @@ const ATN_DESERIALIZE_OPTIONS = {
   verifyATN: true,
   generateRuleBypassTransitions: true,
 };
-
-const PIPE_FIRST_PREFIX = 'source=t ';
 
 /** The fields of the bundle this harness consumes. */
 export interface RawGrammarBundle {

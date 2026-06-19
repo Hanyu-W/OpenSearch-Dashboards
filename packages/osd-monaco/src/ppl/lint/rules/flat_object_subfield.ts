@@ -3,10 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { ParserRuleContext } from 'antlr4ng';
 import { Diagnostic } from '../diagnostic';
 import { Detector } from '../types';
-import { findAllDescendantsByRule } from '../rule_index';
+import { collectDottedPathNodes } from '../rule_index';
 import { rangeFromContext } from '../range_utils';
 
 // Engine ground truth (verified live, OpenSearch 3.7): referencing a subfield of
@@ -24,9 +23,6 @@ import { rangeFromContext } from '../range_utils';
 
 const FLAT_OBJECT_TYPES: ReadonlySet<string> = new Set(['flat_object']);
 
-// Rule names that carry a (possibly dotted) field path as their text.
-const FIELD_PATH_RULES = ['qualifiedName', 'wcQualifiedName'];
-
 export const flatObjectSubfieldDetector: Detector = (tree, config, context, ruleNameToIndex) => {
   const typeMap = context.typeMap;
   if (!typeMap) {
@@ -34,30 +30,14 @@ export const flatObjectSubfieldDetector: Detector = (tree, config, context, rule
   }
 
   const diagnostics: Diagnostic[] = [];
-  const seen = new Set<number>();
 
-  const pathNodes: ParserRuleContext[] = [];
-  for (const ruleName of FIELD_PATH_RULES) {
-    pathNodes.push(...findAllDescendantsByRule(tree, ruleNameToIndex, ruleName));
-  }
-
-  for (const node of pathNodes) {
+  for (const node of collectDottedPathNodes(tree, ruleNameToIndex)) {
     const path = node.getText();
-    const dot = path.indexOf('.');
-    if (dot === -1) {
-      continue; // not a subfield reference
-    }
-    const root = path.slice(0, dot);
+    const root = path.slice(0, path.indexOf('.'));
     const rootType = typeMap.get(root);
     if (rootType === undefined || !FLAT_OBJECT_TYPES.has(rootType)) {
       continue;
     }
-
-    const startIndex = node.start?.start ?? -1;
-    if (seen.has(startIndex)) {
-      continue;
-    }
-    seen.add(startIndex);
 
     diagnostics.push({
       ruleId: config.id,
