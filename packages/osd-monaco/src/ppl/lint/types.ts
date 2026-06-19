@@ -61,24 +61,14 @@ export interface CatalogEntry {
 export type BundleRuleOverrides = Record<string, Partial<CatalogEntry>>;
 
 /**
- * Host-supplied lint context. Mirrors `PPLLintContext` in `lint_bridge.ts`,
- * narrowed to the fields detectors consume. Defined here to avoid the engine
+ * The host-supplied field metadata and settings a lint pass consumes. Shared by
+ * the engine's `LintRunContext` and the bridge's `PPLLintContext` (in
+ * `lint_bridge.ts`) so the two never drift — each extends this base and adds the
+ * fields specific to its layer (engine: grammar surface; bridge: the http
+ * client). Defined here so the bridge can reference it without the engine
  * depending on the bridge module.
  */
-export interface LintRunContext {
-  dataSourceId?: string;
-  dataSourceVersion?: string;
-  /**
-   * Which grammar surface produced the parse tree. The field-slot shape pass
-   * (`field-validation`) branches on this: it defers to the syntax channel on
-   * `compiled-simplified` (where `grok field=body` error-recovers to a syntax
-   * error) and flags on `runtime-bundle` (where the same input is a silent
-   * misparse). Absent for callers that don't set it (unit tests, older callers);
-   * the shape pass then falls back to an implicit zero-structure heuristic.
-   */
-  grammarSurface?: 'compiled-simplified' | 'runtime-bundle';
-  /** Identifies the runtime grammar bundle a tree came from (debugging aid). */
-  grammarHash?: string;
+export interface LintPayloadContext {
   /** True when the data source is identified as running the Calcite engine. */
   isCalcite?: boolean;
   /** Index field names; empty/absent gates Bucket-B rules. */
@@ -100,6 +90,28 @@ export interface LintRunContext {
    * option (see `runLint`).
    */
   overrides?: BundleRuleOverrides;
+}
+
+/**
+ * Host-supplied lint context. Extends {@link LintPayloadContext} with the
+ * engine-only fields the runner threads through. Mirrors `PPLLintContext` in
+ * `lint_bridge.ts` (which extends the same base), narrowed to what detectors
+ * consume. Defined here to avoid the engine depending on the bridge module.
+ */
+export interface LintRunContext extends LintPayloadContext {
+  dataSourceId?: string;
+  dataSourceVersion?: string;
+  /**
+   * Which grammar surface produced the parse tree. The field-slot shape pass
+   * (`field-validation`) branches on this: it defers to the syntax channel on
+   * `compiled-simplified` (where `grok field=body` error-recovers to a syntax
+   * error) and flags on `runtime-bundle` (where the same input is a silent
+   * misparse). Absent for callers that don't set it (unit tests, older callers);
+   * the shape pass then falls back to an implicit zero-structure heuristic.
+   */
+  grammarSurface?: 'compiled-simplified' | 'runtime-bundle';
+  /** Identifies the runtime grammar bundle a tree came from (debugging aid). */
+  grammarHash?: string;
 }
 
 /**

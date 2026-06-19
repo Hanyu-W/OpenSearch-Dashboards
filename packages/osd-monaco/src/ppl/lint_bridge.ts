@@ -6,7 +6,7 @@
 import { monaco } from '../monaco';
 import type { PPLValidationContext } from './validation_provider';
 import type { LintResult } from './lint/diagnostic';
-import type { BundleRuleOverrides } from './lint/types';
+import type { BundleRuleOverrides, LintPayloadContext } from './lint/types';
 
 /**
  * Minimal HTTP client the explain-backed lint pass uses to POST the `_explain`
@@ -26,32 +26,12 @@ export interface PPLLintHttpClient {
 }
 
 /**
- * Host-supplied lint context. Extends the validation context with the
- * field-metadata and settings that field-aware (Bucket B) rules consume.
+ * Host-supplied lint context. Combines the validation context with the
+ * field-metadata and settings that field-aware (Bucket B) rules consume (shared
+ * with the engine's `LintRunContext` via {@link LintPayloadContext}), plus the
+ * http client this bridge path adds.
  */
-export interface PPLLintContext extends PPLValidationContext {
-  /** True when the data source is identified as running the Calcite engine. */
-  isCalcite?: boolean;
-  /** Index field names; empty/absent suppresses Bucket-B rules. */
-  fields?: Set<string>;
-  /** Field name -> esTypes[0]. */
-  typeMap?: Map<string, string>;
-  /**
-   * Names of object fields mapped with `enabled: false`. These are absent from
-   * `_field_caps` (and therefore from `typeMap`), so they are sourced from a
-   * `_mappings` walk. Used by the `enabled-false-object` rule.
-   */
-  disabledObjectFields?: Set<string>;
-  /** Visible index names, for wildcard-source-zero-match. */
-  visibleIndices?: string[];
-  settings?: { allJoinTypesAllowed?: boolean };
-  /**
-   * Per-rule overrides resolved from uiSettings (enable/disable + severity).
-   * Carried verbatim into `LintRunContext.overrides` so the engine merges them
-   * over the bundled catalog. On the runtime (main-thread) path this rides
-   * through automatically; the compiled worker fallback threads it explicitly.
-   */
-  overrides?: BundleRuleOverrides;
+export interface PPLLintContext extends PPLValidationContext, LintPayloadContext {
   /**
    * HTTP client for the explain-backed lint pass. Present only on the runtime
    * (main-thread) bridge path — the compiled worker fallback has no HTTP access,

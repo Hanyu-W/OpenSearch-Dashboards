@@ -3,13 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {
-  LintResult,
-  PPLLintContext,
-  PPLLintBridgeRequest,
-  Diagnostic,
-  DiagnosticRange,
-} from '@osd/monaco';
+import type { LintResult, PPLLintContext, PPLLintBridgeRequest, LintRunContext } from '@osd/monaco';
 // NOTE: these are deep imports into the built output rather than the '@osd/monaco'
 // barrel on purpose. The barrel pulls in monaco-editor's browser ESM (incl. .css
 // side-effect imports), which breaks bare Node resolution, and it is globally
@@ -18,6 +12,7 @@ import type {
 // usable on both the browser thread and under Jest.
 import { runLint } from '@osd/monaco/target/ppl/lint/lint_runner';
 import { createRuntimeRuleNameToIndex } from '@osd/monaco/target/ppl/lint/rule_index';
+import { PIPE_FIRST_PREFIX, remapPipeFirstColumns } from '@osd/monaco/target/ppl/lint/range_utils';
 import {
   hasExplainRules,
   runExplainLint,
@@ -33,32 +28,6 @@ import { GeneralErrorListener } from '../shared/general_error_listerner';
 import { CachedGrammar, pplGrammarCache } from './ppl_grammar_cache';
 import { pickStartRuleIndex, resolveSpaceToken } from './runtime_grammar_utils';
 import { explainCache } from '../../ppl_lint/explain_cache';
-
-const PIPE_FIRST_PREFIX = 'source=t ';
-
-/**
- * Subtract the synthetic pipe-first prefix length from line-one diagnostic
- * columns, clamped to a minimum of zero. Other lines are unchanged. Mirrors
- * `remapPipeFirstColumns` in the compiled path (ppl_language_analyzer.ts) so
- * runtime-grammar squiggles land on the same column as compiled ones — without
- * this, line-one diagnostics are offset by the prefix's 9 columns.
- */
-function remapPipeFirstColumns(diagnostics: Diagnostic[]): Diagnostic[] {
-  const prefixLength = PIPE_FIRST_PREFIX.length;
-  const shift = (range: DiagnosticRange): DiagnosticRange => ({
-    ...range,
-    startColumn:
-      range.startLine === 1 ? Math.max(0, range.startColumn - prefixLength) : range.startColumn,
-    endColumn: range.endLine === 1 ? Math.max(0, range.endColumn - prefixLength) : range.endColumn,
-  });
-  return diagnostics.map((diagnostic) => ({
-    ...diagnostic,
-    range: shift(diagnostic.range),
-    fix: diagnostic.fix?.range
-      ? { ...diagnostic.fix, range: shift(diagnostic.fix.range) }
-      : diagnostic.fix,
-  }));
-}
 
 function buildRuntimeTree(query: string, grammar: CachedGrammar): ParserRuleContext | undefined {
   const isPipeFirst = query.trimStart().startsWith('|');
@@ -148,8 +117,12 @@ function lintWithGrammar(
     dataSourceVersion: context?.dataSourceVersion,
     // Declare the surface so the field-slot shape pass fires here: on the
     // runtime bundle `grok field=body` is a silent misparse (no syntax error).
+    // Cast to LintRunContext for type-compatibility so the spread no longer
+    // needs an `any`: PPLLintContext carries a bridge-only `http`, but runLint
+    // and its detectors are typed against LintRunContext and never read it (the
+    // cast is compile-time only; `http` still rides along harmlessly at runtime).
     context: {
-      ...(context as any),
+      ...(context as LintRunContext),
       grammarSurface: 'runtime-bundle',
       grammarHash: grammar.grammarHash,
     },
