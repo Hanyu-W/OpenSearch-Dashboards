@@ -49,6 +49,7 @@ import {
   calciteSettingsCache,
   buildOverridesFromSettings,
   fetchVisibleIndices,
+  UI_SETTINGS,
 } from '../../../../../../data/public';
 
 type IStandaloneCodeEditor = monaco.editor.IStandaloneCodeEditor;
@@ -374,6 +375,24 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     },
     []
   );
+
+  // Live-revalidate when a PPL lint rule setting changes in Advanced Settings.
+  // Without this, disabling a noisy rule leaves its squiggles up until the next
+  // keystroke fires the debounce (mirrors caller A in data's query_editor.tsx).
+  useEffect(() => {
+    const subscription = services.uiSettings.getUpdate$().subscribe(({ key }) => {
+      if (!key.startsWith(UI_SETTINGS.QUERY_ENHANCEMENTS_PPL_LINT_RULE_PREFIX)) {
+        return;
+      }
+      syncPPLLintContext(editorRef.current, getLintContext());
+      const model = editorRef.current?.getModel();
+      if (model) {
+        void revalidatePPLModel(model);
+      }
+    });
+    return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [services.uiSettings]);
 
   const focusExploreQueryBar = useCallback(() => {
     editorRef.current?.focus();

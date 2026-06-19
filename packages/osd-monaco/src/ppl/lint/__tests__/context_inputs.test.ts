@@ -64,5 +64,18 @@ describe('context-input rules (compiled surface)', () => {
         })
       ).toContain('wildcard-source-zero-match');
     });
+
+    // B4: the runner's context gate must skip a needsContext rule only when ALL
+    // context resources are absent. An empty-mapping index has zero fields but a
+    // real visibleIndices list; the wildcard rule reads visibleIndices, so it
+    // must still fire even though `fields` is empty.
+    it('fires when fields is empty but visibleIndices is populated', () => {
+      expect(
+        ids(zeroMatch, {
+          fields: new Set<string>(),
+          visibleIndices: ['logs-2024', 'logs-2025', 'accounts'],
+        })
+      ).toContain('wildcard-source-zero-match');
+    });
   });
 });

@@ -21,14 +21,21 @@ export function collectDisabledObjectFields(getMappingResponse: unknown): string
     return [];
   }
 
-  const walkProperties = (properties: Record<string, any> | undefined, prefix: string): void => {
+  const walkProperties = (
+    properties: Record<string, unknown> | undefined,
+    prefix: string
+  ): void => {
     if (!properties) {
       return;
     }
-    for (const [name, definition] of Object.entries(properties)) {
-      if (typeof definition !== 'object' || definition === null) {
+    for (const [name, rawDefinition] of Object.entries(properties)) {
+      if (typeof rawDefinition !== 'object' || rawDefinition === null) {
         continue;
       }
+      const definition = rawDefinition as {
+        enabled?: boolean;
+        properties?: Record<string, unknown>;
+      };
       const path = prefix ? `${prefix}.${name}` : name;
       if (definition.enabled === false) {
         names.add(path);
@@ -40,8 +47,10 @@ export function collectDisabledObjectFields(getMappingResponse: unknown): string
   };
 
   // Response shape: { [indexName]: { mappings: { properties: {...} } } }.
-  for (const indexEntry of Object.values(body as Record<string, any>)) {
-    walkProperties(indexEntry?.mappings?.properties, '');
+  for (const indexEntry of Object.values(body as Record<string, unknown>)) {
+    const mappings = (indexEntry as { mappings?: { properties?: Record<string, unknown> } })
+      ?.mappings;
+    walkProperties(mappings?.properties, '');
   }
 
   return [...names];

@@ -9,7 +9,7 @@
 // globally jest.mock()'d, so its value/type exports are unavailable under bare
 // Node resolution and Jest.
 import type { ExplainPlan } from '@osd/monaco/target/ppl/lint/explain/explain_types';
-import { HttpSetup } from '../../../../core/public';
+import type { PPLLintHttpClient } from '@osd/monaco/target/ppl/lint_bridge';
 
 // Hardcoded rather than imported from query_enhancements/common to avoid a
 // cross-plugin import, matching calcite_settings.ts.
@@ -27,12 +27,13 @@ const EMPTY: ExplainPlan = { isCalcite: false, physical: '', logical: '' };
  * (the `{ root: {...} }` v2 shape, an error body) maps to a non-Calcite empty
  * plan, which makes every explain detector no-op.
  */
-function toPlan(res: any): ExplainPlan {
-  if (res?.calcite) {
+function toPlan(res: unknown): ExplainPlan {
+  const calcite = (res as { calcite?: { physical?: string; logical?: string } })?.calcite;
+  if (calcite) {
     return {
       isCalcite: true,
-      physical: res.calcite.physical ?? '',
-      logical: res.calcite.logical ?? '',
+      physical: calcite.physical ?? '',
+      logical: calcite.logical ?? '',
     };
   }
   return EMPTY;
@@ -52,7 +53,11 @@ class ExplainCache {
     return `${dataSourceId ?? '__local__'}::${query}`;
   }
 
-  async resolve(http: HttpSetup, query: string, dataSourceId?: string): Promise<ExplainPlan> {
+  async resolve(
+    http: PPLLintHttpClient,
+    query: string,
+    dataSourceId?: string
+  ): Promise<ExplainPlan> {
     const k = this.key(query, dataSourceId);
     if (this.cache.has(k)) {
       return this.cache.get(k)!;

@@ -66,6 +66,7 @@ jest.mock('../../../../../../data/public', () => {
     attachPPLLintContext: jest.fn(() => jest.fn()),
     attachPPLLintGrammarRefresh: jest.fn(() => jest.fn()),
     syncPPLLintContext: jest.fn(),
+    UI_SETTINGS: { QUERY_ENHANCEMENTS_PPL_LINT_RULE_PREFIX: 'query:enhancements:pplLint:rule:' },
     shouldUseRuntimeGrammar: jest.fn(() => false),
     deriveIsCalcite: jest.fn(() => false),
     collectDisabledObjectFields: jest.fn(() => []),
@@ -148,7 +149,7 @@ jest.mock('@osd/monaco', () => ({
 import { act } from '@testing-library/react';
 import { renderHook } from '@testing-library/react';
 import { useSelector, useDispatch } from 'react-redux';
-import { monaco } from '@osd/monaco';
+import { monaco, revalidatePPLModel } from '@osd/monaco';
 import { useQueryPanelEditor } from './use_query_panel_editor';
 import { useEditorRef } from '../../../../application/hooks';
 import { useDatasetContext } from '../../../../application/context';
@@ -158,6 +159,7 @@ import {
   attachPPLLintContext,
   attachPPLValidationContext,
   buildOverridesFromSettings,
+  syncPPLLintContext,
 } from '../../../../../../data/public';
 import { onEditorRunActionCreator } from '../../../../application/utils/state_management/actions/query_editor';
 import { setEditorMode } from '../../../../application/utils/state_management/slices';
@@ -249,6 +251,10 @@ describe('useQueryPanelEditor', () => {
       },
       datasets: {
         get: jest.fn(() => Promise.resolve(mockDataset)),
+      },
+      uiSettings: {
+        get: jest.fn(),
+        getUpdate$: jest.fn(() => ({ subscribe: jest.fn(() => ({ unsubscribe: jest.fn() })) })),
       },
     };
 
@@ -580,7 +586,10 @@ describe('useQueryPanelEditor', () => {
       // ...while queryString.getQuery() returns a dataset-less query (the
       // transient init window the stale-closure bug fired in).
       mockServices.data.query.queryString.getQuery = jest.fn(() => ({ dataset: undefined }));
-      mockServices.uiSettings = { get: jest.fn(), getUpdate$: jest.fn() };
+      mockServices.uiSettings = {
+        get: jest.fn(),
+        getUpdate$: jest.fn(() => ({ subscribe: jest.fn(() => ({ unsubscribe: jest.fn() })) })),
+      };
     });
 
     const captureLintContext = () => {
@@ -1038,6 +1047,58 @@ describe('useQueryPanelEditor', () => {
 
       // Should not reveal when no visible ranges
       expect(mockEditor.revealLine).not.toHaveBeenCalled();
+    });
+  });
+
+  // B3: changing a PPL lint rule in Advanced Settings must live-revalidate the
+  // explore editor (parity with data's query_editor.tsx), instead of waiting for
+  // the next keystroke to fire the debounce.
+  describe('re-lints on a pplLint rule setting change (B3)', () => {
+    let subscribeCallback: ((event: { key: string }) => void) | undefined;
+
+    beforeEach(() => {
+      subscribeCallback = undefined;
+      mockServices.uiSettings = {
+        get: jest.fn(),
+        getUpdate$: jest.fn(() => ({
+          subscribe: (cb: (event: { key: string }) => void) => {
+            subscribeCallback = cb;
+            return { unsubscribe: jest.fn() };
+          },
+        })),
+      };
+    });
+
+    it('re-syncs the lint context and revalidates when a pplLint:rule:* key changes', () => {
+      const { result } = renderHook(() => useQueryPanelEditor());
+      act(() => {
+        result.current.editorDidMount(mockEditor);
+      });
+      (syncPPLLintContext as jest.Mock).mockClear();
+      (revalidatePPLModel as jest.Mock).mockClear();
+
+      act(() => {
+        subscribeCallback?.({ key: 'query:enhancements:pplLint:rule:head-without-sort' });
+      });
+
+      expect(syncPPLLintContext).toHaveBeenCalledTimes(1);
+      expect(revalidatePPLModel).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores unrelated uiSettings keys', () => {
+      const { result } = renderHook(() => useQueryPanelEditor());
+      act(() => {
+        result.current.editorDidMount(mockEditor);
+      });
+      (syncPPLLintContext as jest.Mock).mockClear();
+      (revalidatePPLModel as jest.Mock).mockClear();
+
+      act(() => {
+        subscribeCallback?.({ key: 'theme:darkMode' });
+      });
+
+      expect(syncPPLLintContext).not.toHaveBeenCalled();
+      expect(revalidatePPLModel).not.toHaveBeenCalled();
     });
   });
 });

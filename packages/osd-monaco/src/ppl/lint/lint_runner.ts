@@ -43,8 +43,14 @@ export function mergeConfig(local: CatalogEntry, override?: Partial<CatalogEntry
   };
 }
 
-function isEmptyFields(context: LintRunContext | undefined): boolean {
-  return !context?.fields || context.fields.size === 0;
+// True only when NO context resource is available — so a rule that needs a
+// different resource (e.g. wildcard-source-zero-match needs visibleIndices,
+// not fields) is not skipped just because the field list is empty. Each
+// detector still runs its own resource self-check.
+function isContextEmpty(context: LintRunContext | undefined): boolean {
+  const noFields = !context?.fields || context.fields.size === 0;
+  const noIndices = !context?.visibleIndices || context.visibleIndices.length === 0;
+  return noFields && noIndices;
 }
 
 /**
@@ -90,7 +96,7 @@ export function runLint(tree: ParserRuleContext, options: RunLintOptions): Diagn
     }
 
     // R8.1, R8.2 — Bucket-B context gating.
-    if (config.needsContext && isEmptyFields(context)) {
+    if (config.needsContext && isContextEmpty(context)) {
       continue;
     }
 

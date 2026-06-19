@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type { HoverFacts } from './hover_facts';
+
 /**
  * Severity of a lint diagnostic. Mirrors the engine-verified failure class:
  * `error` = deterministic engine failure, `warning` = may succeed via fallback,
@@ -48,22 +50,11 @@ export interface DiagnosticFix {
 /**
  * Per-instance facts a detector knows about *this* finding (the actual field,
  * its mapped type, the offending literal, candidate indices, ...). Surfaced in
- * the hover card's "Your query" line. Mirror of {@link HoverFacts} in
- * `hover/hover_registry.ts`; redeclared here so `diagnostic.ts` stays free of a
- * dependency on the hover module. All fields optional — a detector populates
- * only what it knows.
+ * the hover card's "Your query" line. Aliased to the canonical {@link HoverFacts}
+ * (in `lint/hover_facts.ts`) so the two never drift; the alias is kept for
+ * existing importers of `DiagnosticHoverFacts`.
  */
-export interface DiagnosticHoverFacts {
-  field?: string;
-  esType?: string;
-  root?: string;
-  literal?: string;
-  aggName?: string;
-  suggestion?: string;
-  pattern?: string;
-  candidateIndices?: string[];
-  totalIndices?: number;
-}
+export type DiagnosticHoverFacts = HoverFacts;
 
 /**
  * A single linter finding emitted by a detector.

@@ -165,8 +165,8 @@ function suggestField(name: string, known: Iterable<string>): string | undefined
     if (distance < bestDistance) {
       bestDistance = distance;
       best = candidate;
-      if (bestDistance === 1) {
-        break; // Nothing closer is worth finding for a suggestion.
+      if (bestDistance === 0) {
+        break; // Identical after case-normalization; nothing can be closer.
       }
     }
   }
@@ -224,7 +224,12 @@ function detectUnknownFields(
       // join alias). Still descend into children — alias-qualified refs appear
       // in downstream pipeline stages outside the alternate-source regions.
       if (prefix !== null && joinAliases.has(prefix)) {
-        stack.push(...(node.children ?? []));
+        // Push children reversed so they pop (LIFO) in source order — the first
+        // duplicate of a field is then flagged, not the last (B6).
+        const aliasChildren = node.children ?? [];
+        for (let i = aliasChildren.length - 1; i >= 0; i--) {
+          stack.push(aliasChildren[i]);
+        }
         continue;
       }
       // Dot-qualified references: validate only the leaf for join contexts is
@@ -255,7 +260,12 @@ function detectUnknownFields(
         });
       }
     }
-    stack.push(...(node.children ?? []));
+    // Push children reversed so they pop (LIFO) in source order, so the first
+    // occurrence of a duplicate field is the one flagged (B6).
+    const children = node.children ?? [];
+    for (let i = children.length - 1; i >= 0; i--) {
+      stack.push(children[i]);
+    }
   }
 
   return diagnostics;

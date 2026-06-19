@@ -16,7 +16,13 @@ import type { BundleRuleOverrides } from './lint/types';
  * `HttpFetchOptions` shape; the return is left loose so the caller shapes it.
  */
 export interface PPLLintHttpClient {
-  post: (path: string, options?: { body?: any; query?: Record<string, any> }) => Promise<any>;
+  post: (
+    path: string,
+    options?: {
+      body?: BodyInit | null;
+      query?: Record<string, string | number | boolean | undefined>;
+    }
+  ) => Promise<unknown>;
 }
 
 /**

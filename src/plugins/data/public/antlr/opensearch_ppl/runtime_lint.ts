@@ -101,9 +101,19 @@ function buildRuntimeTree(query: string, grammar: CachedGrammar): ParserRuleCont
 
   try {
     const tree = parser.parse(startRuleIndex);
+    // The error listener is the clean-parse precondition the explain layer
+    // relies on (mirrors runtime_validation.ts): a half-typed query must not
+    // reach the network. ANTLR recovers rather than throwing, so a non-null
+    // tree comes back even for `source=accounts |`; treat any collected syntax
+    // error as a failed parse.
+    if (errorListener.errors.length > 0) {
+      return undefined;
+    }
     return tree ?? undefined;
   } catch {
-    // Even on a parse exception, the error-recovery tree may be available.
+    // parse() threw before producing a tree (e.g. an internal ATN error);
+    // treat as unparseable. Normal ANTLR syntax errors are recovered above and
+    // caught by the errorListener check.
     return undefined;
   }
 }
@@ -181,7 +191,7 @@ async function layerExplainLint(
   }
 
   try {
-    const plan = await explainCache.resolve(context.http as any, query, context.dataSourceId);
+    const plan = await explainCache.resolve(context.http, query, context.dataSourceId);
     if (!plan.isCalcite) {
       return staticResult;
     }
@@ -195,8 +205,12 @@ async function layerExplainLint(
       return staticResult;
     }
     return { diagnostics: [...staticResult.diagnostics, ...explainDiagnostics] };
-  } catch {
-    // Keep the static markers only — explain rules are an enhancement.
+  } catch (e) {
+    // Keep the static markers only — explain rules are an enhancement. No live
+    // throw path reaches here today (explainCache.resolve and runExplainLint are
+    // each isolated), so this is defensive; warn for parity with lint_runner.
+    // eslint-disable-next-line no-console
+    console.warn('[ppl-lint] explain layering failed and was skipped', e);
     return staticResult;
   }
 }

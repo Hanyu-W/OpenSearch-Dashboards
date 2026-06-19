@@ -311,5 +311,22 @@ describe('lintRuntimePPLQuery', () => {
       // head-without-sort still fires; the explain failure is swallowed.
       expect(result!.diagnostics.map((d) => d.ruleId)).toContain('head-without-sort');
     });
+
+    // B5: ANTLR recovers from a syntax error and still returns a (partial) tree,
+    // so without honoring the error listener the explain layer would POST on a
+    // half-typed query. A query with a trailing pipe is a syntax error; the
+    // clean-parse precondition must keep _explain off the network.
+    it('does not call explain on a syntactically-invalid (half-typed) query', async () => {
+      jest.spyOn(pplGrammarCache, 'getCachedGrammar').mockReturnValue(buildRuntimeGrammar());
+      const http = { post: jest.fn().mockResolvedValue(scriptFilterPlan) } as any;
+
+      await lintRuntimePPLQuery({
+        content: 'source=accounts | ',
+        context: { ...baseContext, http, dataSourceId: 'ds-explain-7' },
+        model: {} as any,
+      });
+
+      expect(http.post).not.toHaveBeenCalled();
+    });
   });
 });

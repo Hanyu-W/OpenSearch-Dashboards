@@ -7,9 +7,10 @@ import { AppliesTo, CatalogEntry } from './types';
 import { LintSeverity } from './diagnostic';
 import rawCatalog from './rules_catalog.json';
 
-// TRACKING: OSD#<number> — set `invalid-capture-group-name` maxVersion when
-// opensearch-project/sql#4549 ships (engine accepts underscore/hyphen group
-// names). Until then maxVersion is left open. See requirements R7.11/R14.
+// TRACKING (opensearch-project/sql#4549): set `invalid-capture-group-name`
+// maxVersion to the first engine release that accepts underscore/hyphen group
+// names once that issue ships. Until then maxVersion is left open. See
+// requirements R7.11/R14.
 
 const VALID_SEVERITIES: ReadonlySet<string> = new Set<LintSeverity>(['error', 'warning', 'info']);
 

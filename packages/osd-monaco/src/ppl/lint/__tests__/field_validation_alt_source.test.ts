@@ -112,4 +112,24 @@ describe('field-validation alternate-source suppression (compiled surface)', () 
       ]);
     });
   });
+
+  // B2: suggestField must prefer a distance-0 (case-only) match over a
+  // distance-1 one seen earlier in the field set — otherwise the quick-fix
+  // rewrites the user's case-typo into the *wrong* field.
+  describe('suggestion prefers an exact case-insensitive match (B2)', () => {
+    // `ages` (distance 1 from `AGE`) is listed before `age` (distance 0) so the
+    // old `break` at distance 1 would have returned `ages`.
+    const caseCtx: LintRunContext = { fields: new Set<string>(['ages', 'age']) };
+    const caseDiags = (code: string): string[] =>
+      analyzer
+        .lint(code, caseCtx)
+        .diagnostics.filter((d) => d.ruleId === 'field-validation')
+        .map((d) => d.message);
+
+    it('suggests the exact-but-for-case field, not a distance-1 neighbor', () => {
+      expect(caseDiags('search accounts | where AGE > 30')).toEqual([
+        'Unknown field "AGE". Did you mean "age"?',
+      ]);
+    });
+  });
 });

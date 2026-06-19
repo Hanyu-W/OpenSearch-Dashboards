@@ -171,6 +171,9 @@ export function suggestCommand(typed: string, candidates: Iterable<string>): str
     if (distance < bestDistance) {
       bestDistance = distance;
       best = candidate;
+      // Safe to stop at 1 here (unlike suggestField, which must stop at 0):
+      // callers only invoke this for a token already known NOT to be a valid
+      // command, so distance 0 never occurs and no closer match can be missed.
       if (bestDistance === 1) {
         break;
       }

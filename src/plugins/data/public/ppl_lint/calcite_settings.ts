@@ -5,7 +5,7 @@
 
 import { HttpSetup } from '../../../../core/public';
 
-const CALCITE_SETTINGS_PATH = '/api/enhancements/ppl/calciteSettings';
+const CALCITE_SETTINGS_PATH = '/api/enhancements/ppl/calcite_settings';
 
 export interface CalciteSettings {
   isCalcite: boolean;
@@ -35,9 +35,9 @@ class CalciteSettingsCache {
       .get(CALCITE_SETTINGS_PATH, {
         query: dataSourceId ? { dataSourceId } : {},
       })
-      .then((res: any) => ({
-        isCalcite: (res.calciteEnabled ?? true) as boolean,
-        allJoinTypesAllowed: (res.allJoinTypesAllowed ?? false) as boolean,
+      .then((res: { calciteEnabled?: boolean; allJoinTypesAllowed?: boolean }) => ({
+        isCalcite: res.calciteEnabled ?? true,
+        allJoinTypesAllowed: res.allJoinTypesAllowed ?? false,
       }))
       .catch(() => SAFE_DEFAULTS)
       .then((settings: CalciteSettings) => {
