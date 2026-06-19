@@ -30,6 +30,17 @@ import { pplGrammarCache, CachedGrammar } from '../ppl_grammar_cache';
 import { findCursorTokenIndex } from '../../shared/cursor';
 import { GeneralErrorListener } from '../../shared/general_error_listerner';
 import { quotesRegex } from '../../shared/constants';
+import {
+  resolveSpaceToken,
+  tokenTypeBySymbolic,
+  getRuleIndex as ruleIndex,
+  pickStartRuleIndex as pickRuntimeStartRuleIndex,
+} from '../runtime_grammar_utils';
+
+// Re-exported so the autocomplete test (and any future caller) keeps importing
+// the space-token resolver from this module. The implementation now lives in
+// runtime_grammar_utils so autocomplete, validation, and lint never disagree.
+export { resolveSpaceToken };
 
 interface KeywordSuggestionDetails {
   importance: string;
@@ -284,26 +295,6 @@ export function isRuntimeNoisySuggestion(sk: KeywordSuggestion): boolean {
 }
 
 /**
- * Resolve the whitespace token type from the grammar.
- * Tries WHITESPACE, SPACE, and WS in order (backend vs compiled naming).
- */
-export function resolveSpaceToken(grammar: CachedGrammar): number {
-  const dict = grammar.tokenDictionary as any;
-  const v = dict?.WHITESPACE ?? dict?.SPACE;
-  if (typeof v === 'number' && v > Token.INVALID_TYPE) return v;
-
-  // Fallback for bundles that omit tokenDictionary or use symbolic names only.
-  const WHITESPACE = tokenTypeBySymbolic(grammar, 'WHITESPACE');
-  if (WHITESPACE > Token.INVALID_TYPE) return WHITESPACE;
-  const SPACE = tokenTypeBySymbolic(grammar, 'SPACE');
-  if (SPACE > Token.INVALID_TYPE) return SPACE;
-  const WS = tokenTypeBySymbolic(grammar, 'WS');
-  if (WS > Token.INVALID_TYPE) return WS;
-
-  return Token.INVALID_TYPE;
-}
-
-/**
  * Filter backend ignoredTokens to keep only non-literal token IDs,
  * ensuring keywords/operators are never accidentally suppressed.
  */
@@ -319,14 +310,6 @@ export function getSafeRuntimeIgnoredTokens(grammar: CachedGrammar): Set<number>
   }
 
   return safe;
-}
-
-function ruleIndex(grammar: CachedGrammar, name: string): number {
-  return grammar.runtimeRuleNameToIndex.get(name) ?? INVALID_RULE_INDEX;
-}
-
-function tokenTypeBySymbolic(grammar: CachedGrammar, symName: string): number {
-  return grammar.runtimeSymbolicNameToTokenType.get(symName) ?? Token.INVALID_TYPE;
 }
 
 /**
@@ -360,28 +343,16 @@ class RuntimeCompletionContext extends ParserRuleContext {
 }
 
 /**
- * Pick the start rule for C3/parsing based on query shape.
- * Pipe-first queries (`|...`) use `commands` (or backend-provided pipeStartRuleIndex)
- * so pipeline commands become reachable. Normal queries use the root rule.
- * `commands` is preferred over `subPipeline` because the leading `|` is stripped
- * before lexing, and `commands` expects input after the pipe.
+ * Pick the start rule for C3/parsing based on query shape. Delegates to the
+ * shared {@link pickRuntimeStartRuleIndex} (in runtime_grammar_utils) with the
+ * `subPipeline` fallback enabled: unlike validation/lint, autocomplete always
+ * wants `subPipeline` as a last resort when a grammar lacks both
+ * `pipeStartRuleIndex` and `commands`, so it can still offer pipeline
+ * completions. (The shared helper defaults that fallback off for the other two
+ * surfaces.)
  */
 export function pickStartRuleIndex(query: string, grammar: CachedGrammar): number {
-  const trimmed = query.trimStart();
-  if (trimmed.startsWith('|')) {
-    // Prefer backend-declared pipe start rule if available
-    const pipeStart = grammar.pipeStartRuleIndex;
-    if (typeof pipeStart === 'number' && pipeStart >= 0) return pipeStart;
-
-    // Fallback: resolve by rule name.
-    // Prefer `commands` first — it expects input after the pipe (strip-compatible).
-    // `subPipeline` may expect the leading pipe token itself, so it's secondary.
-    const commands = grammar.parserRuleNames.indexOf('commands');
-    if (commands >= 0) return commands;
-    const subPipeline = grammar.parserRuleNames.indexOf('subPipeline');
-    if (subPipeline >= 0) return subPipeline;
-  }
-  return grammar.startRuleIndex ?? 0;
+  return pickRuntimeStartRuleIndex(query, grammar, /* includeSubPipelineFallback */ true);
 }
 
 /**
