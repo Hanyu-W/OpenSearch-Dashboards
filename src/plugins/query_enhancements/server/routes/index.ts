@@ -54,6 +54,33 @@ export async function resolveOpenSearchClient(
 }
 
 /**
+ * Resolve the OpenSearch client for a request, supporting Multi-Data-Source:
+ * the MDS-scoped client when `dataSourceId` is set, else the current-user
+ * client. Returns `{ error }` (a ready-to-return 400 response) when a
+ * `dataSourceId` is supplied but the data source plugin is unavailable, or
+ * `{ client }` otherwise. Centralizes the guard + ternary the PPL proxy routes
+ * (`ppl_calcite_settings`, `ppl_explain`, the bundle route) each repeated.
+ */
+export async function resolveOpenSearchClient(
+  context: RequestHandlerContext,
+  dataSourceId: string | undefined,
+  res: OpenSearchDashboardsResponseFactory
+): Promise<{ error: IOpenSearchDashboardsResponse } | { client: any }> {
+  if (dataSourceId && !context.dataSource?.opensearch?.getClient) {
+    return {
+      error: res.custom({
+        statusCode: 400,
+        body: 'dataSourceId is not supported because data source plugin is unavailable',
+      }),
+    };
+  }
+  const client = dataSourceId
+    ? await context.dataSource.opensearch.getClient(dataSourceId)
+    : context.core.opensearch.client.asCurrentUser;
+  return { client };
+}
+
+/**
  * @experimental
  *
  * This method creates a function that will setup the routes for a search strategy by encapsulating the
@@ -159,16 +186,11 @@ export function definePPLBundleRoute(logger: Logger, router: IRouter) {
     async (context, req, res): Promise<IOpenSearchDashboardsResponse<any | ResponseError>> => {
       try {
         const { dataSourceId } = req.query;
-        if (dataSourceId && !context.dataSource?.opensearch?.getClient) {
-          return res.custom({
-            statusCode: 400,
-            body: 'dataSourceId is not supported because data source plugin is unavailable',
-          });
+        const resolved = await resolveOpenSearchClient(context, dataSourceId, res);
+        if ('error' in resolved) {
+          return resolved.error;
         }
-        const opensearchClient = dataSourceId
-          ? await context.dataSource.opensearch.getClient(dataSourceId)
-          : context.core.opensearch.client.asCurrentUser;
-        const result = await opensearchClient.transport.request({
+        const result = await resolved.client.transport.request({
           method: 'GET',
           path: URI.PPL_BUNDLE,
         });

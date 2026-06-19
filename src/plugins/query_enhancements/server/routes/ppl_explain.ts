@@ -38,7 +38,7 @@ export function definePPLExplainRoute(logger: Logger, router: IRouter) {
           return res.custom({ statusCode: 400, body: DATASOURCE_UNAVAILABLE_MESSAGE });
         }
 
-        const result = await client.transport.request({
+        const result = await resolved.client.transport.request({
           method: 'POST',
           path: `${URI.PPL}/_explain`,
           body: { query: req.body.query },
