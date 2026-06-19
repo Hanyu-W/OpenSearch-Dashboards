@@ -58,20 +58,29 @@ jest.mock('../../../../application/hooks', () => ({
 jest.mock('../../../../application/context');
 jest.mock('../../../../../../data/public', () => {
   const actual = jest.createMockFromModule<any>('../../../../../../data/public');
+  const overrides = { 'some-rule': { enabled: false } };
   return {
     ...actual,
-    attachPPLValidationContext: jest.fn(() => jest.fn()),
-    attachPPLGrammarRefresh: jest.fn(() => jest.fn()),
+    attachPPLContexts: jest.fn(),
+    cleanupPPLContexts: jest.fn(),
     syncPPLValidationContext: jest.fn(),
-    attachPPLLintContext: jest.fn(() => jest.fn()),
-    attachPPLLintGrammarRefresh: jest.fn(() => jest.fn()),
     syncPPLLintContext: jest.fn(),
+    // Mirrors the real buildPPLLintContext closely enough for the host tests:
+    // derives dataSourceId/version from the dataset arg and carries overrides
+    // from uiSettings. The full behavior is covered in lint_context_builder.test.ts.
+    buildPPLLintContext: jest.fn((dataset, _lintFields, services) => ({
+      useRuntimeGrammar: false,
+      dataSourceId: dataset?.dataSource?.id,
+      dataSourceVersion: dataset?.dataSource?.version,
+      overrides: services.uiSettings ? overrides : undefined,
+      http: services.http,
+    })),
     UI_SETTINGS: { QUERY_ENHANCEMENTS_PPL_LINT_RULE_PREFIX: 'query:enhancements:pplLint:rule:' },
     shouldUseRuntimeGrammar: jest.fn(() => false),
     deriveIsCalcite: jest.fn(() => false),
-    collectDisabledObjectFields: jest.fn(() => []),
-    buildOverridesFromSettings: jest.fn(() => ({ 'some-rule': { enabled: false } })),
+    buildOverridesFromSettings: jest.fn(() => overrides),
     fetchVisibleIndices: jest.fn(() => Promise.resolve([])),
+    fetchDisabledObjectFields: jest.fn(() => Promise.resolve(undefined)),
     calciteSettingsCache: {
       getCached: jest.fn(() => undefined),
       resolve: jest.fn(() => Promise.resolve({ isCalcite: false, allJoinTypesAllowed: false })),
@@ -156,9 +165,8 @@ import { useDatasetContext } from '../../../../application/context';
 import { useOpenSearchDashboards } from '../../../../../../opensearch_dashboards_react/public';
 import {
   getEffectiveLanguageForAutoComplete,
-  attachPPLLintContext,
-  attachPPLValidationContext,
-  buildOverridesFromSettings,
+  attachPPLContexts,
+  buildPPLLintContext,
   syncPPLLintContext,
 } from '../../../../../../data/public';
 import { onEditorRunActionCreator } from '../../../../application/utils/state_management/actions/query_editor';
@@ -592,37 +600,43 @@ describe('useQueryPanelEditor', () => {
       };
     });
 
-    const captureLintContext = () => {
+    // attachPPLContexts(editor, refs, getValidationContext, getLintContext, ...):
+    // arg index 2 is the validation getter, index 3 is the lint getter.
+    const captureContexts = () => {
       const { result } = renderHook(() => useQueryPanelEditor());
       act(() => {
         result.current.editorDidMount(mockEditor);
       });
-      // attachPPLLintContext(editor, getLintContext) — second arg is the getter.
-      const calls = (attachPPLLintContext as jest.Mock).mock.calls;
-      return calls[calls.length - 1][1] as () => any;
+      const calls = (attachPPLContexts as jest.Mock).mock.calls;
+      const lastCall = calls[calls.length - 1];
+      return {
+        getValidationContext: lastCall[2] as () => any,
+        getLintContext: lastCall[3] as () => any,
+      };
     };
 
     it('getLintContext reads dataSourceId from the dataset, not queryString', () => {
-      const getLintContext = captureLintContext();
-      const ctx = getLintContext();
+      const ctx = captureContexts().getLintContext();
       expect(ctx.dataSourceId).toBe('mds-1');
       expect(ctx.dataSourceVersion).toBe('3.8.0');
     });
 
+    it('getLintContext delegates to buildPPLLintContext with the live dataset', () => {
+      captureContexts().getLintContext();
+      // The live dataset (from datasetRef), not the dataset-less queryString.getQuery().
+      expect(buildPPLLintContext).toHaveBeenCalledWith(
+        mdsDataset,
+        expect.any(Object),
+        mockServices
+      );
+    });
+
     it('getValidationContext reads dataSourceId from the dataset, not queryString', () => {
-      const { result } = renderHook(() => useQueryPanelEditor());
-      act(() => {
-        result.current.editorDidMount(mockEditor);
-      });
-      const calls = (attachPPLValidationContext as jest.Mock).mock.calls;
-      const getValidationContext = calls[calls.length - 1][1] as () => any;
-      expect(getValidationContext().dataSourceId).toBe('mds-1');
+      expect(captureContexts().getValidationContext().dataSourceId).toBe('mds-1');
     });
 
     it('getLintContext includes overrides built from uiSettings', () => {
-      const getLintContext = captureLintContext();
-      const ctx = getLintContext();
-      expect(buildOverridesFromSettings).toHaveBeenCalledWith(mockServices.uiSettings);
+      const ctx = captureContexts().getLintContext();
       expect(ctx.overrides).toEqual({ 'some-rule': { enabled: false } });
     });
   });

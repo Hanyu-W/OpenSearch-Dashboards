@@ -36,19 +36,20 @@ import { EditorMode } from '../../../../application/utils/state_management/types
 import { useMultiQueryDecorations } from './use_multi_query_decorations';
 import { getAutocompleteContext } from '../../../../application/utils/multi_query_utils';
 import {
-  attachPPLValidationContext,
-  attachPPLGrammarRefresh,
   syncPPLValidationContext,
-  attachPPLLintContext,
-  attachPPLLintGrammarRefresh,
   syncPPLLintContext,
+  attachPPLContexts,
+  cleanupPPLContexts,
+  PPLDetachRefs,
+  buildPPLLintContext,
+  LintFieldsCache,
   pplGrammarCache,
   shouldUseRuntimeGrammar,
   deriveIsCalcite,
-  collectDisabledObjectFields,
   calciteSettingsCache,
   buildOverridesFromSettings,
   fetchVisibleIndices,
+  fetchDisabledObjectFields,
   UI_SETTINGS,
 } from '../../../../../../data/public';
 
@@ -128,19 +129,17 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
   // ref keeps those closures reading the latest dataset (mirrors caller A's
   // queryRef pattern) instead of a transiently dataset-less queryString.getQuery().
   const datasetRef = useRef(dataset);
-  const detachValidationContextRef = useRef<(() => void) | undefined>();
-  const detachGrammarRefreshRef = useRef<(() => void) | undefined>();
-  const detachLintContextRef = useRef<(() => void) | undefined>();
-  const detachLintGrammarRefreshRef = useRef<(() => void) | undefined>();
+  // The four PPL validation + lint detach callbacks, bundled so attach/cleanup
+  // can thread them as one unit (see attachPPLContexts / cleanupPPLContexts).
+  const detachRefs = useRef<PPLDetachRefs>({
+    validationContext: { current: undefined },
+    grammarRefresh: { current: undefined },
+    lintContext: { current: undefined },
+    lintGrammarRefresh: { current: undefined },
+  });
   // Cache of derived field metadata per dataset id, populated asynchronously.
   // Field-aware lint rules self-suppress until this resolves.
-  const lintFieldsRef = useRef<{
-    datasetId?: string;
-    fields?: Set<string>;
-    typeMap?: Map<string, string>;
-    disabledObjectFields?: Set<string>;
-    visibleIndices?: string[];
-  }>({});
+  const lintFieldsRef = useRef<LintFieldsCache>({});
 
   const getValidationContext = useCallback((): PPLValidationContext => {
     const ds = datasetRef.current;
@@ -153,33 +152,13 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     };
   }, []);
 
-  const getLintContext = useCallback((): PPLLintContext => {
-    const ds = datasetRef.current;
-    const dsId = ds?.dataSource?.id;
-    const dsVersion = ds?.dataSource?.version;
-    const cached = lintFieldsRef.current;
-    // Only feed cached field metadata to the lint rules when it belongs to the
-    // dataset the query currently targets. After a dataset switch the async
-    // field load for the new dataset has not resolved yet, so the cache still
-    // holds the previous dataset's fields — using them would make field-aware
-    // rules fire against the wrong index. When they don't match, omit them so
-    // those rules self-suppress until the new load resolves.
-    const cacheMatchesDataset = cached.datasetId === ds?.id;
-    const calcite = calciteSettingsCache.getCached(dsId);
-    return {
-      useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
-      dataSourceId: dsId,
-      dataSourceVersion: dsVersion,
-      isCalcite: calcite?.isCalcite ?? deriveIsCalcite(dsVersion),
-      settings: { allJoinTypesAllowed: calcite?.allJoinTypesAllowed ?? false },
-      fields: cacheMatchesDataset ? cached.fields : undefined,
-      typeMap: cacheMatchesDataset ? cached.typeMap : undefined,
-      disabledObjectFields: cacheMatchesDataset ? cached.disabledObjectFields : undefined,
-      visibleIndices: cacheMatchesDataset ? cached.visibleIndices : undefined,
-      overrides: buildOverridesFromSettings(services.uiSettings),
-      http: services.http,
-    };
-  }, [services.uiSettings, services.http]);
+  const getLintContext = useCallback(
+    (): PPLLintContext => buildPPLLintContext(datasetRef.current, lintFieldsRef.current, services),
+    // Only services.uiSettings/http are read off `services` inside
+    // buildPPLLintContext; the rest of `services` is irrelevant to the context.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [services.uiSettings, services.http]
+  );
 
   const switchEditorMode = useLanguageSwitch();
 
@@ -256,37 +235,6 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
       }
     };
 
-    // Best-effort fetch of object fields mapped `enabled: false`. The attribute
-    // is stripped by `_field_caps` (so it never appears in `indexPattern.fields`)
-    // and must be read from `_mappings`. Rather than a dedicated endpoint, this
-    // calls the existing read-only DSL mapping route (which proxies
-    // `indices.getMapping`) and walks the response client-side. Returns undefined
-    // on any failure so the `enabled-false-object` rule self-suppresses rather
-    // than false-firing.
-    const loadDisabledObjectFields = async (indexPattern: {
-      title?: string;
-      dataSourceRef?: { id?: string };
-    }): Promise<Set<string> | undefined> => {
-      const pattern = indexPattern.title;
-      if (!pattern || !services.http) {
-        return undefined;
-      }
-      try {
-        const DSL_MAPPING_URL = '/api/directquery/dsl/indices.getFieldMapping';
-        const mdsId = indexPattern.dataSourceRef?.id;
-        const url = mdsId
-          ? `${DSL_MAPPING_URL}/dataSourceMDSId=${encodeURIComponent(mdsId)}`
-          : DSL_MAPPING_URL;
-        const resp = await services.http.get(url, {
-          query: { index: pattern },
-        });
-        const fields = collectDisabledObjectFields(resp);
-        return fields.length > 0 ? new Set(fields) : undefined;
-      } catch {
-        return undefined;
-      }
-    };
-
     const loadFields = async () => {
       if (!datasetId) {
         // No dataset selected: drop any cached fields so field-aware rules
@@ -320,7 +268,9 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
         // concurrently with the disabled-object-fields walk so both gate the
         // same single-phase context update below.
         const [disabledObjectFields, visibleIndices] = await Promise.all([
-          loadDisabledObjectFields(indexPattern),
+          services.http
+            ? fetchDisabledObjectFields(services.http, indexPattern)
+            : Promise.resolve(undefined),
           services.http ? fetchVisibleIndices(services.http, dsId) : Promise.resolve([]),
         ]);
         if (cancelled) {
@@ -362,19 +312,7 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
   ]);
 
   // Cleanup validation + lint context on unmount
-  useEffect(
-    () => () => {
-      detachValidationContextRef.current?.();
-      detachValidationContextRef.current = undefined;
-      detachGrammarRefreshRef.current?.();
-      detachGrammarRefreshRef.current = undefined;
-      detachLintContextRef.current?.();
-      detachLintContextRef.current = undefined;
-      detachLintGrammarRefreshRef.current?.();
-      detachLintGrammarRefreshRef.current = undefined;
-    },
-    []
-  );
+  useEffect(() => () => cleanupPPLContexts(detachRefs.current), []);
 
   // Live-revalidate when a PPL lint rule setting changes in Advanced Settings.
   // Without this, disabling a noisy rule leaves its squiggles up until the next
@@ -546,25 +484,14 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     (editor: IStandaloneCodeEditor) => {
       setEditorRef(editor);
 
-      // Attach PPL runtime validation context
-      detachValidationContextRef.current?.();
-      detachGrammarRefreshRef.current?.();
-      detachValidationContextRef.current = attachPPLValidationContext(editor, getValidationContext);
-      detachGrammarRefreshRef.current = attachPPLGrammarRefresh(
+      // Attach the PPL runtime validation + lint contexts (field-aware lint
+      // rules self-suppress without field metadata, which the dataset effect
+      // loads) so lint behaves here just as it does in the data plugin's query
+      // editor. Shared with that editor via attachPPLContexts.
+      attachPPLContexts(
         editor,
+        detachRefs.current,
         getValidationContext,
-        (listener) => pplGrammarCache.subscribeToGrammarUpdates(listener),
-        revalidatePPLModel
-      );
-
-      // Attach PPL lint context so field-aware lint rules (which self-suppress
-      // without field metadata) run here just as they do in the data plugin's
-      // query editor. The field metadata itself is loaded by the dataset effect.
-      detachLintContextRef.current?.();
-      detachLintGrammarRefreshRef.current?.();
-      detachLintContextRef.current = attachPPLLintContext(editor, getLintContext);
-      detachLintGrammarRefreshRef.current = attachPPLLintGrammarRefresh(
-        editor,
         getLintContext,
         (listener) => pplGrammarCache.subscribeToGrammarUpdates(listener),
         revalidatePPLModel

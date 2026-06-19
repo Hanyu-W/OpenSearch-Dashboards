@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { collectDisabledObjectFields } from './disabled_object_fields';
+import { HttpSetup } from '../../../../core/public';
+import { collectDisabledObjectFields, fetchDisabledObjectFields } from './disabled_object_fields';
 
 describe('collectDisabledObjectFields', () => {
   it('collects top-level enabled:false objects', () => {
@@ -87,5 +88,54 @@ describe('collectDisabledObjectFields', () => {
     expect(collectDisabledObjectFields(null)).toEqual([]);
     expect(collectDisabledObjectFields('nope')).toEqual([]);
     expect(collectDisabledObjectFields({ idx: {} })).toEqual([]);
+  });
+});
+
+describe('fetchDisabledObjectFields', () => {
+  const mappingResponse = {
+    idx: { mappings: { properties: { raw: { enabled: false } } } },
+  };
+
+  const makeHttp = (get: jest.Mock): HttpSetup => (({ get } as unknown) as HttpSetup);
+
+  it('hits the DSL mapping route without an MDS id and returns the disabled set', async () => {
+    const get = jest.fn(() => Promise.resolve(mappingResponse));
+    const result = await fetchDisabledObjectFields(makeHttp(get), { title: 'logs-*' });
+    expect(get).toHaveBeenCalledWith('/api/directquery/dsl/indices.getFieldMapping', {
+      query: { index: 'logs-*' },
+    });
+    expect(result).toEqual(new Set(['raw']));
+  });
+
+  it('appends an encoded dataSourceMDSId segment when a data source ref is present', async () => {
+    const get = jest.fn(() => Promise.resolve(mappingResponse));
+    await fetchDisabledObjectFields(makeHttp(get), {
+      title: 'logs-*',
+      dataSourceRef: { id: 'mds/1' },
+    });
+    expect(get).toHaveBeenCalledWith(
+      '/api/directquery/dsl/indices.getFieldMapping/dataSourceMDSId=mds%2F1',
+      {
+        query: { index: 'logs-*' },
+      }
+    );
+  });
+
+  it('returns undefined when no disabled fields are found', async () => {
+    const get = jest.fn(() =>
+      Promise.resolve({ idx: { mappings: { properties: { a: { type: 'text' } } } } })
+    );
+    expect(await fetchDisabledObjectFields(makeHttp(get), { title: 'logs-*' })).toBeUndefined();
+  });
+
+  it('returns undefined without a title (cannot query)', async () => {
+    const get = jest.fn();
+    expect(await fetchDisabledObjectFields(makeHttp(get), {})).toBeUndefined();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('returns undefined on a network failure', async () => {
+    const get = jest.fn(() => Promise.reject(new Error('boom')));
+    expect(await fetchDisabledObjectFields(makeHttp(get), { title: 'logs-*' })).toBeUndefined();
   });
 });

@@ -3,7 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { clearPPLLintContext, monaco, PPLLintContext, setPPLLintContext } from '@osd/monaco';
+import {
+  clearPPLLintContext,
+  monaco,
+  PPLLintContext,
+  PPLValidationContext,
+  setPPLLintContext,
+} from '@osd/monaco';
+import { MutableRefObject } from 'react';
+import { attachPPLGrammarRefresh, attachPPLValidationContext } from './validation_context';
 
 function applyLintContext(
   model: monaco.editor.ITextModel | null | undefined,
@@ -69,4 +77,72 @@ export function attachPPLLintGrammarRefresh(
     setPPLLintContext(model, context);
     void revalidateModel(model);
   });
+}
+
+type DetachRef = MutableRefObject<(() => void) | undefined>;
+
+/**
+ * The four detach callbacks an editor host holds for the PPL validation + lint
+ * lifecycle. Packaged together so {@link attachPPLContexts} and
+ * {@link cleanupPPLContexts} thread them as one unit, keeping the two PPL editor
+ * hosts (data's `query_editor.tsx`, explore's `use_query_panel_editor.ts`) in
+ * lock-step by construction.
+ */
+export interface PPLDetachRefs {
+  validationContext: DetachRef;
+  grammarRefresh: DetachRef;
+  lintContext: DetachRef;
+  lintGrammarRefresh: DetachRef;
+}
+
+/**
+ * Attach (or re-attach) the PPL validation + lint contexts and their grammar-
+ * refresh listeners to an editor, detaching any previous ones first. Stores the
+ * new detach callbacks back into `refs`. Shared by both editor hosts — the
+ * keybinding / line-count / initial-revalidate wiring stays per-caller.
+ */
+export function attachPPLContexts(
+  editor: monaco.editor.IStandaloneCodeEditor,
+  refs: PPLDetachRefs,
+  getValidationContext: () => PPLValidationContext,
+  getLintContext: () => PPLLintContext,
+  subscribeToGrammarUpdates: (
+    listener: (event: { dataSourceId?: string; grammarHash: string }) => void
+  ) => () => void,
+  revalidateModel: (model: monaco.editor.ITextModel) => Promise<void> | void
+): void {
+  refs.validationContext.current?.();
+  refs.grammarRefresh.current?.();
+  refs.validationContext.current = attachPPLValidationContext(editor, getValidationContext);
+  refs.grammarRefresh.current = attachPPLGrammarRefresh(
+    editor,
+    getValidationContext,
+    subscribeToGrammarUpdates,
+    revalidateModel
+  );
+
+  refs.lintContext.current?.();
+  refs.lintGrammarRefresh.current?.();
+  refs.lintContext.current = attachPPLLintContext(editor, getLintContext);
+  refs.lintGrammarRefresh.current = attachPPLLintGrammarRefresh(
+    editor,
+    getLintContext,
+    subscribeToGrammarUpdates,
+    revalidateModel
+  );
+}
+
+/**
+ * Detach all PPL validation + lint contexts and clear the refs. Called from each
+ * host's unmount cleanup effect.
+ */
+export function cleanupPPLContexts(refs: PPLDetachRefs): void {
+  refs.validationContext.current?.();
+  refs.validationContext.current = undefined;
+  refs.grammarRefresh.current?.();
+  refs.grammarRefresh.current = undefined;
+  refs.lintContext.current?.();
+  refs.lintContext.current = undefined;
+  refs.lintGrammarRefresh.current?.();
+  refs.lintGrammarRefresh.current = undefined;
 }

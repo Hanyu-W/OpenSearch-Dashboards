@@ -42,18 +42,16 @@ import {
   pplGrammarCache,
   shouldUseRuntimeGrammar,
 } from '../../antlr/opensearch_ppl/ppl_grammar_cache';
+import { syncPPLValidationContext } from './validation_context';
 import {
-  attachPPLGrammarRefresh,
-  attachPPLValidationContext,
-  syncPPLValidationContext,
-} from './validation_context';
-import {
-  attachPPLLintContext,
-  attachPPLLintGrammarRefresh,
   syncPPLLintContext,
+  attachPPLContexts,
+  cleanupPPLContexts,
+  PPLDetachRefs,
 } from './lint_context';
 import { buildOverridesFromSettings } from '../../ppl_lint/lint_overrides';
-import { collectDisabledObjectFields } from '../../ppl_lint/disabled_object_fields';
+import { buildPPLLintContext, LintFieldsCache } from '../../ppl_lint/lint_context_builder';
+import { fetchDisabledObjectFields } from '../../ppl_lint/disabled_object_fields';
 import { calciteSettingsCache } from '../../ppl_lint/calcite_settings';
 import { fetchVisibleIndices } from '../../ppl_lint/visible_indices';
 
@@ -94,18 +92,16 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
   const [currentAppId, setCurrentAppId] = useState<string>(''); // Add app ID state
 
   const inputRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
-  const detachValidationContextRef = useRef<(() => void) | undefined>();
-  const detachGrammarRefreshRef = useRef<(() => void) | undefined>();
-  const detachLintContextRef = useRef<(() => void) | undefined>();
-  const detachLintGrammarRefreshRef = useRef<(() => void) | undefined>();
+  // The four PPL validation + lint detach callbacks, bundled so attach/cleanup
+  // can thread them as one unit (see attachPPLContexts / cleanupPPLContexts).
+  const detachRefs = useRef<PPLDetachRefs>({
+    validationContext: { current: undefined },
+    grammarRefresh: { current: undefined },
+    lintContext: { current: undefined },
+    lintGrammarRefresh: { current: undefined },
+  });
   // Cache of derived field metadata per dataset id, populated asynchronously.
-  const lintFieldsRef = useRef<{
-    datasetId?: string;
-    fields?: Set<string>;
-    typeMap?: Map<string, string>;
-    disabledObjectFields?: Set<string>;
-    visibleIndices?: string[];
-  }>({});
+  const lintFieldsRef = useRef<LintFieldsCache>({});
   const headerRef = useRef<HTMLDivElement>(null);
   const bannerRef = useRef<HTMLDivElement>(null);
   const bottomPanelRef = useRef<HTMLDivElement>(null);
@@ -153,46 +149,10 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     };
   };
 
-  const getLintContext = (): PPLLintContext => {
-    const dsId = queryRef.current.dataset?.dataSource?.id;
-    const dsVersion = queryRef.current.dataset?.dataSource?.version;
-    const cached = lintFieldsRef.current;
-    // Only feed cached field metadata to the lint rules when it belongs to the
-    // dataset the query currently targets. After a dataset switch the async
-    // field load for the new dataset has not resolved yet, so the cache still
-    // holds the previous dataset's fields — using them would make field-aware
-    // rules fire against the wrong index. When they don't match, omit them so
-    // those rules self-suppress until the new load resolves.
-    const cacheMatchesDataset = cached.datasetId === queryRef.current.dataset?.id;
-    const calcite = calciteSettingsCache.getCached(dsId);
-    return {
-      useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
-      dataSourceId: dsId,
-      dataSourceVersion: dsVersion,
-      isCalcite: calcite?.isCalcite ?? deriveIsCalcite(dsVersion),
-      settings: { allJoinTypesAllowed: calcite?.allJoinTypesAllowed ?? false },
-      fields: cacheMatchesDataset ? cached.fields : undefined,
-      typeMap: cacheMatchesDataset ? cached.typeMap : undefined,
-      disabledObjectFields: cacheMatchesDataset ? cached.disabledObjectFields : undefined,
-      visibleIndices: cacheMatchesDataset ? cached.visibleIndices : undefined,
-      overrides: buildOverridesFromSettings(services.uiSettings),
-      http: services.http,
-    };
-  };
+  const getLintContext = (): PPLLintContext =>
+    buildPPLLintContext(queryRef.current.dataset, lintFieldsRef.current, services);
 
-  useEffect(
-    () => () => {
-      detachValidationContextRef.current?.();
-      detachValidationContextRef.current = undefined;
-      detachGrammarRefreshRef.current?.();
-      detachGrammarRefreshRef.current = undefined;
-      detachLintContextRef.current?.();
-      detachLintContextRef.current = undefined;
-      detachLintGrammarRefreshRef.current?.();
-      detachLintGrammarRefreshRef.current = undefined;
-    },
-    []
-  );
+  useEffect(() => () => cleanupPPLContexts(detachRefs.current), []);
 
   useEffect(() => {
     const subscription = services.application?.currentAppId$?.subscribe?.((appId) => {
@@ -246,37 +206,6 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
       }
     };
 
-    // Best-effort fetch of object fields mapped `enabled: false`. The attribute
-    // is stripped by `_field_caps` (so it never appears in `indexPattern.fields`)
-    // and must be read from `_mappings`. Rather than a dedicated endpoint, this
-    // calls the existing read-only DSL mapping route (which proxies
-    // `indices.getMapping`) and walks the response client-side. Returns undefined
-    // on any failure so the `enabled-false-object` rule self-suppresses rather
-    // than false-firing.
-    const loadDisabledObjectFields = async (indexPattern: {
-      title?: string;
-      dataSourceRef?: { id?: string };
-    }): Promise<Set<string> | undefined> => {
-      const pattern = indexPattern.title;
-      if (!pattern || !services.http) {
-        return undefined;
-      }
-      try {
-        const DSL_MAPPING_URL = '/api/directquery/dsl/indices.getFieldMapping';
-        const mdsId = indexPattern.dataSourceRef?.id;
-        const url = mdsId
-          ? `${DSL_MAPPING_URL}/dataSourceMDSId=${encodeURIComponent(mdsId)}`
-          : DSL_MAPPING_URL;
-        const resp = await services.http.get(url, {
-          query: { index: pattern },
-        });
-        const fields = collectDisabledObjectFields(resp);
-        return fields.length > 0 ? new Set(fields) : undefined;
-      } catch {
-        return undefined;
-      }
-    };
-
     const loadFields = async () => {
       if (!datasetId) {
         // No dataset selected: drop any cached fields so field-aware rules
@@ -312,7 +241,9 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
         // concurrently so the two loads stay in step — both gate the same
         // single-phase context update below.
         const [disabledObjectFields, visibleIndices] = await Promise.all([
-          loadDisabledObjectFields(indexPattern),
+          services.http
+            ? fetchDisabledObjectFields(services.http, indexPattern)
+            : Promise.resolve(undefined),
           services.http ? fetchVisibleIndices(services.http, dsId) : Promise.resolve([]),
         ]);
         if (cancelled) {
@@ -592,20 +523,10 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     editorDidMount: (editor: monaco.editor.IStandaloneCodeEditor) => {
       setLineCount(editor.getModel()?.getLineCount());
       inputRef.current = editor;
-      detachValidationContextRef.current?.();
-      detachGrammarRefreshRef.current?.();
-      detachValidationContextRef.current = attachPPLValidationContext(editor, getValidationContext);
-      detachGrammarRefreshRef.current = attachPPLGrammarRefresh(
+      attachPPLContexts(
         editor,
+        detachRefs.current,
         getValidationContext,
-        (listener) => pplGrammarCache.subscribeToGrammarUpdates(listener),
-        revalidatePPLModel
-      );
-      detachLintContextRef.current?.();
-      detachLintGrammarRefreshRef.current?.();
-      detachLintContextRef.current = attachPPLLintContext(editor, getLintContext);
-      detachLintGrammarRefreshRef.current = attachPPLLintGrammarRefresh(
-        editor,
         getLintContext,
         (listener) => pplGrammarCache.subscribeToGrammarUpdates(listener),
         revalidatePPLModel
@@ -676,20 +597,10 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     },
     editorDidMount: (editor: monaco.editor.IStandaloneCodeEditor) => {
       inputRef.current = editor;
-      detachValidationContextRef.current?.();
-      detachGrammarRefreshRef.current?.();
-      detachValidationContextRef.current = attachPPLValidationContext(editor, getValidationContext);
-      detachGrammarRefreshRef.current = attachPPLGrammarRefresh(
+      attachPPLContexts(
         editor,
+        detachRefs.current,
         getValidationContext,
-        (listener) => pplGrammarCache.subscribeToGrammarUpdates(listener),
-        revalidatePPLModel
-      );
-      detachLintContextRef.current?.();
-      detachLintGrammarRefreshRef.current?.();
-      detachLintContextRef.current = attachPPLLintContext(editor, getLintContext);
-      detachLintGrammarRefreshRef.current = attachPPLLintGrammarRefresh(
-        editor,
         getLintContext,
         (listener) => pplGrammarCache.subscribeToGrammarUpdates(listener),
         revalidatePPLModel
