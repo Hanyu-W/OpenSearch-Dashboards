@@ -9,6 +9,11 @@ import {
   SimplifiedOpenSearchPPLParser as OpenSearchPPLParser,
 } from '@osd/antlr-grammar';
 import { PPLSyntaxErrorListener, SyntaxError } from './ppl_error_listener';
+import { LintResult } from './lint/diagnostic';
+import { runLint } from './lint/lint_runner';
+import { createCompiledRuleNameToIndex } from './lint/rule_index';
+import { PIPE_FIRST_PREFIX, remapPipeFirstColumns } from './lint/range_utils';
+import { LintRunContext } from './lint/types';
 
 export interface PPLToken {
   type: string;
@@ -151,6 +156,45 @@ export class PPLLanguageAnalyzer {
           },
         ],
       };
+    }
+  }
+
+  /**
+   * Lint PPL code using the compiled grammar surface.
+   *
+   * Builds the parser's error-recovery tree (no syntax-clean gate) so the
+   * linter contributes diagnostics even on partially-broken queries and never
+   * competes with the syntax-error path. Pipe-first queries get a synthetic
+   * source prefix; line-one diagnostic columns are remapped afterward.
+   * Any hard throw degrades to an empty diagnostic set (R11.3).
+   */
+  lint(code: string, context?: LintRunContext): LintResult {
+    try {
+      const trimmed = code.trimStart();
+      const isPipeFirst = trimmed.startsWith('|');
+      const effectiveCode = isPipeFirst ? PIPE_FIRST_PREFIX + code : code;
+
+      const { tokenStream } = this.createLexerAndTokenStream(effectiveCode);
+      const { parser } = this.createParserWithErrorHandling(tokenStream);
+
+      // The standard generated parser builds parse trees by default.
+      const tree = parser.root();
+
+      const diagnostics = runLint(tree, {
+        ruleNameToIndex: createCompiledRuleNameToIndex(),
+        dataSourceVersion: context?.dataSourceVersion,
+        // Declare the surface so the field-slot shape pass defers here (on the
+        // simplified grammar `grok field=body` is already a syntax error).
+        context: { ...context, grammarSurface: 'compiled-simplified' },
+      });
+
+      if (isPipeFirst) {
+        return { diagnostics: remapPipeFirstColumns(diagnostics) };
+      }
+
+      return { diagnostics };
+    } catch {
+      return { diagnostics: [] };
     }
   }
 

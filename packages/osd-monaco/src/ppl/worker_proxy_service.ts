@@ -4,6 +4,8 @@
  */
 
 import { PPLValidationResult, PPLToken } from './ppl_language_analyzer';
+import { LintResult } from './lint/diagnostic';
+import { BundleRuleOverrides } from './lint/types';
 import { getWorker } from '../monaco_environment';
 import { WorkerLabels } from '../worker_config';
 
@@ -71,6 +73,19 @@ export class PPLWorkerProxyService {
     }
 
     return this.sendMessage('validate', [content]);
+  }
+
+  /**
+   * Lint PPL content using the compiled grammar and get lint diagnostics.
+   * `overrides` is the host's resolved per-rule config; it is structured-cloned
+   * across `postMessage` (a plain `Record`, so it clones cleanly).
+   */
+  public async lint(content: string, overrides?: BundleRuleOverrides): Promise<LintResult> {
+    if (!this.worker) {
+      throw new Error('PPL Worker Proxy Service has not been setup!');
+    }
+
+    return this.sendMessage('lint', [content, overrides]);
   }
 
   /**
