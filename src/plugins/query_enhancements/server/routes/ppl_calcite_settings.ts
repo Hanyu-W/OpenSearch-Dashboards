@@ -35,7 +35,7 @@ export function definePPLCalciteSettingsRoute(logger: Logger, router: IRouter) {
           return res.custom({ statusCode: 400, body: DATASOURCE_UNAVAILABLE_MESSAGE });
         }
 
-        const result = await resolved.client.transport.request({
+        const result = await client.transport.request({
           method: 'GET',
           path: CALCITE_SETTINGS_PATH,
         });
