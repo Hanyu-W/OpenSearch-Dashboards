@@ -51,14 +51,8 @@ export function validateCatalogEntry(value: unknown): CatalogEntry | null {
     return null;
   }
 
-  if (candidate.runtimeOnly !== undefined && typeof candidate.runtimeOnly !== 'boolean') {
-    return null;
-  }
-  if (candidate.needsContext !== undefined && typeof candidate.needsContext !== 'boolean') {
-    return null;
-  }
-  if (candidate.needsExplain !== undefined && typeof candidate.needsExplain !== 'boolean') {
-    return null;
+  for (const key of ['runtimeOnly', 'needsContext', 'needsExplain'] as const) {
+    if (candidate[key] !== undefined && typeof candidate[key] !== 'boolean') return null;
   }
 
   return {

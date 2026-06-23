@@ -60,15 +60,11 @@ export function definePPLCalciteSettingsRoute(logger: Logger, router: IRouter) {
           },
         });
       } catch (err) {
-        const status = (err as { statusCode?: number; meta?: { statusCode?: number } })?.statusCode;
-        const metaStatus = (err as { meta?: { statusCode?: number } })?.meta?.statusCode;
+        const e = err as { statusCode?: number; meta?: { statusCode?: number } };
+        const status = e?.statusCode ?? e?.meta?.statusCode;
         const message = err instanceof Error ? err.message : String(err);
-        // Fail open: a missing/failed cluster-settings read must not block the
-        // editor. Calcite is assumed enabled (the engine default) so lint rules
-        // still run. Surface auth/permission failures at warn so an operator can
-        // see them; everything else stays at debug.
-        if (status === 401 || status === 403 || metaStatus === 401 || metaStatus === 403) {
-          logger.warn(`PPL calcite settings unauthorized (${status ?? metaStatus}): ${message}`);
+        if (status === 401 || status === 403) {
+          logger.warn(`PPL calcite settings unauthorized (${status}): ${message}`);
         } else {
           logger.debug(`PPL calcite settings error: ${message}`);
         }

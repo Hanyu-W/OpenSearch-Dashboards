@@ -102,7 +102,7 @@ export async function resolvePPLLintResult(
         model,
         context: state.contexts.get(model),
       });
-      if (runtimeResult !== null && runtimeResult !== undefined) {
+      if (runtimeResult != null) {
         return runtimeResult;
       }
     } catch {

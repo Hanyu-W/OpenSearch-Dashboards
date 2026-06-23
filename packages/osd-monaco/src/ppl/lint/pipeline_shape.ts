@@ -93,9 +93,9 @@ function collectCreatedFields(
     stack.push(...children);
   }
 
-  const fieldExprIdx = ruleNameToIndex('fieldExpression');
   const evalClauseIdx = ruleNameToIndex('evalClause');
   if (evalClauseIdx !== -1) {
+    const fieldExprIdx = ruleNameToIndex('fieldExpression');
     const evalStack: ParseTree[] = [stage.node];
     while (evalStack.length > 0) {
       const node = evalStack.pop()!;

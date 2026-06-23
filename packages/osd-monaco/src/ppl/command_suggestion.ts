@@ -209,7 +209,7 @@ export function buildCommandSuggestion<S extends Token, T extends ATNSimulator>(
   }
 
   const validCommands = commandCandidatesFromATN(recognizer);
-  if (!validCommands || validCommands.size === 0) {
+  if (!validCommands) {
     return undefined;
   }
 
@@ -229,7 +229,7 @@ export function buildCommandSuggestion<S extends Token, T extends ATNSimulator>(
       ? validCommands
       : undefined;
 
-  if (!candidates || candidates.size === 0) {
+  if (!candidates) {
     return undefined;
   }
 

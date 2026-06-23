@@ -41,12 +41,7 @@ function getState(): FixRegistryState {
     globalScope[FIX_REGISTRY_KEY] = { byModel: new WeakMap(), syntaxByModel: new WeakMap() };
   }
 
-  const state = globalScope[FIX_REGISTRY_KEY]!;
-  if (!state.syntaxByModel) {
-    state.syntaxByModel = new WeakMap();
-  }
-
-  return state;
+  return globalScope[FIX_REGISTRY_KEY]!;
 }
 
 /**

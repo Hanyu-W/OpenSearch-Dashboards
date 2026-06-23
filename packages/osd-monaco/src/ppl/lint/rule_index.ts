@@ -52,10 +52,6 @@ export function createRuntimeRuleNameToIndex(
   return (name: string) => runtimeRuleNameToIndex.get(name) ?? -1;
 }
 
-export function isParserRuleContext(node: ParseTree | null | undefined): node is ParserRuleContext {
-  return isRuleNode(node);
-}
-
 export function findChildByRule(
   ctx: ParserRuleContext,
   ruleNameToIndex: RuleNameToIndex,

@@ -14,26 +14,17 @@ import { LintResult } from '../lint/diagnostic';
 import { BundleRuleOverrides } from '../lint/types';
 
 class PPLWorkerImpl {
-  private analyzer: PPLLanguageAnalyzer;
+  private analyzer: PPLLanguageAnalyzer = getPPLLanguageAnalyzer();
 
   async tokenize(content: string): Promise<PPLToken[]> {
-    if (!this.analyzer) {
-      this.analyzer = getPPLLanguageAnalyzer();
-    }
     return this.analyzer.tokenize(content);
   }
 
   async validate(content: string): Promise<PPLValidationResult> {
-    if (!this.analyzer) {
-      this.analyzer = getPPLLanguageAnalyzer();
-    }
     return this.analyzer.validate(content);
   }
 
   async lint(content: string, overrides?: BundleRuleOverrides): Promise<LintResult> {
-    if (!this.analyzer) {
-      this.analyzer = getPPLLanguageAnalyzer();
-    }
     return this.analyzer.lint(content, overrides ? { overrides } : undefined);
   }
 }

@@ -44,12 +44,7 @@ function escapeInline(text: string): string {
 
 function code(text: string): string {
   const runs = text.match(/`+/g);
-  let longestRun = 0;
-  if (runs) {
-    for (const run of runs) {
-      longestRun = Math.max(longestRun, run.length);
-    }
-  }
+  const longestRun = runs ? Math.max(...runs.map((r) => r.length)) : 0;
   const fence = '`'.repeat(longestRun + 1);
   const pad = longestRun > 0 ? ' ' : '';
   return `${fence}${pad}${text}${pad}${fence}`;

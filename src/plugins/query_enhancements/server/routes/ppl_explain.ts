@@ -8,16 +8,6 @@ import { IRouter, Logger } from '../../../../core/server';
 import { API, URI } from '../../common';
 import { coerceStatusCode, DATASOURCE_UNAVAILABLE_MESSAGE, resolveOpenSearchClient } from '.';
 
-/**
- * Defines the PPL explain proxy route. Forwards a query to OpenSearch
- * `POST /_plugins/_ppl/_explain`, which plans the query without executing it and
- * returns the Calcite physical plan. The explain-backed lint rules read that
- * plan to flag pushdown anti-patterns. Modeled on `definePPLBundleRoute`.
- *
- * The response is the unwrapped transport body (`result.body ?? result`), which
- * matches `definePPLBundleRoute`. The client parser must validate the plan shape
- * before reading it rather than assume a fixed envelope.
- */
 export function definePPLExplainRoute(logger: Logger, router: IRouter) {
   router.post(
     {
