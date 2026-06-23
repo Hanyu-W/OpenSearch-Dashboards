@@ -13,13 +13,10 @@ export interface PipelineStage {
 }
 
 export interface PipelineShape {
-  /** Command stages in pipe (source) order. */
   stages: PipelineStage[];
-  /** Field names created upstream in the pipeline. */
   createdFields: Set<string>;
 }
 
-// Command rule names recognized as pipeline stages, mapped to a short label.
 const COMMAND_RULE_NAMES = [
   'searchCommand',
   'whereCommand',
@@ -68,16 +65,11 @@ function buildIndexToCommandName(ruleNameToIndex: RuleNameToIndex): Map<number, 
   return map;
 }
 
-/**
- * Collect created field names from a single command node. Best-effort: it scans
- * for `... AS <name>` patterns and known LHS positions.
- */
 function collectCreatedFields(
   stage: PipelineStage,
   ruleNameToIndex: RuleNameToIndex,
   out: Set<string>
 ): void {
-  // Walk descendants looking for an `AS` terminal followed by a name node.
   const stack: ParseTree[] = [stage.node];
   while (stack.length > 0) {
     const node = stack.pop()!;
@@ -101,7 +93,6 @@ function collectCreatedFields(
     stack.push(...children);
   }
 
-  // eval LHS names: evalClause's first fieldExpression child.
   const fieldExprIdx = ruleNameToIndex('fieldExpression');
   const evalClauseIdx = ruleNameToIndex('evalClause');
   if (evalClauseIdx !== -1) {
@@ -127,10 +118,6 @@ function collectCreatedFields(
   }
 }
 
-/**
- * Pre-order DFS that visits parse-tree nodes in source order and collects the
- * pipeline command stages plus the set of field names created upstream.
- */
 export function buildPipelineShape(
   tree: ParserRuleContext,
   ruleNameToIndex: RuleNameToIndex
@@ -139,7 +126,6 @@ export function buildPipelineShape(
   const stages: PipelineStage[] = [];
   const createdFields = new Set<string>();
 
-  // Pre-order traversal preserving child order.
   const visit = (node: ParseTree): void => {
     if (isRuleNode(node)) {
       const commandName = indexToCommand.get(node.ruleIndex);
@@ -162,21 +148,8 @@ export function buildPipelineShape(
 }
 
 /**
- * Collect the parse-tree nodes whose internal field references belong to a
- * *different* source than the outer pipeline's index. Field-validation prunes
- * these subtrees entirely so it never flags a legitimate alternate-source
- * reference as an unknown field. Covers:
- *  - `lookup` (whole command — its columns come from the lookup table)
- *  - `append [source=... | ...]` (only when it embeds its own `searchCommand`;
- *    an `append [| where f=1]` with no inner source runs against the outer
- *    index and is left to be validated)
- *  - `subSearch` (scalar / IN / EXISTS subqueries *and* a join's right side —
- *    `tableOrSubqueryClause` wraps a `subSearch`)
- *  - `unionDataset` (runtime-grammar-only; a no-op on the compiled surface
- *    where `ruleNameToIndex` returns -1 and the descendant scan yields nothing)
- *
- * Each membership test in the caller is O(1) (`Set.has`); building the set is a
- * handful of descendant scans over the tree.
+ * Subtrees whose field references belong to a different source (lookup, append
+ * with inner source, subSearch, unionDataset). Pruned during field-validation.
  */
 export function collectAlternateSourceSubtrees(
   tree: ParserRuleContext,

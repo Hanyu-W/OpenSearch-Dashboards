@@ -6,20 +6,9 @@
 import { ParserRuleContext, Token } from 'antlr4ng';
 import { Diagnostic, DiagnosticRange } from './diagnostic';
 
-/**
- * Synthetic prefix prepended when a query begins with a leading pipe, so the
- * grammar (which expects a `source=` first) can parse it. Both lint surfaces
- * use the same string; the column offset is undone by
- * {@link remapPipeFirstColumns}.
- */
+/** Prefix prepended to pipe-first queries so the grammar can parse them. */
 export const PIPE_FIRST_PREFIX = 'source=t ';
 
-/**
- * Build a {@link DiagnosticRange} from a start and stop token.
- *
- * ANTLR tokens expose `line` (1-based) and `column` (0-based). `endColumn` is
- * exclusive: it is the stop token's column plus the token text length.
- */
 export function rangeFromTokens(start: Token, stop: Token): DiagnosticRange {
   const startLine = start.line;
   const startColumn = start.column;
@@ -29,11 +18,6 @@ export function rangeFromTokens(start: Token, stop: Token): DiagnosticRange {
   return { startLine, startColumn, endLine, endColumn };
 }
 
-/**
- * Build a {@link DiagnosticRange} spanning the full extent of a parser rule
- * context. Falls back to a 1:0 single-character range when token positions are
- * unavailable.
- */
 export function rangeFromContext(ctx: ParserRuleContext): DiagnosticRange {
   const start = ctx.start;
   const stop = ctx.stop ?? ctx.start;
@@ -43,18 +27,12 @@ export function rangeFromContext(ctx: ParserRuleContext): DiagnosticRange {
   return rangeFromTokens(start, stop);
 }
 
-/**
- * Build a {@link DiagnosticRange} for a substring within a single-line token's
- * text, given a 0-based offset into the token text and a length. Used to point
- * a diagnostic at a specific capture-group name inside a regex string literal.
- */
 export function rangeWithinToken(
   token: Token,
   offsetInText: number,
   length: number
 ): DiagnosticRange {
   const text = token.text ?? '';
-  // Count newlines before the offset to compute the line within the token.
   const before = text.slice(0, offsetInText);
   const newlineCount = (before.match(/\n/g) ?? []).length;
   const startLine = token.line + newlineCount;
@@ -73,13 +51,7 @@ export function rangeWithinToken(
   };
 }
 
-/**
- * Build a {@link DiagnosticRange} spanning the entire query text. Explain-backed
- * diagnostics have no source position (the plan text carries none), so they
- * cover the whole query. Computed from the text — rather than a sentinel like
- * `endColumn: Infinity` — so Monaco receives a concrete, in-bounds range.
- * `endColumn` is exclusive, matching the {@link DiagnosticRange} convention.
- */
+/** Range spanning the entire query text. Used for diagnostics with no position info. */
 export function wholeQueryRange(query: string): DiagnosticRange {
   const lines = query.split('\n');
   const endLine = Math.max(1, lines.length);
@@ -92,11 +64,6 @@ export function wholeQueryRange(query: string): DiagnosticRange {
   };
 }
 
-/**
- * Strip a single layer of matching surrounding quotes (single or double) from a
- * string-literal token's raw text. Returns the input unchanged when it is not
- * quoted.
- */
 export function unquote(raw: string): string {
   if (raw.length >= 2) {
     const first = raw[0];
@@ -108,15 +75,7 @@ export function unquote(raw: string): string {
   return raw;
 }
 
-/**
- * Subtract the synthetic {@link PIPE_FIRST_PREFIX} length from line-one
- * diagnostic columns, clamped to a minimum of zero (R13.6). Other lines are
- * unchanged. Applied by both lint surfaces (the compiled analyzer and the
- * runtime-bundle path) when a query was parsed with the pipe-first prefix, so
- * squiggles land on the same column as the user's text. An explicit fix range
- * gets the same shift; a default-range fix rides the already-remapped
- * diagnostic range via the provider fallback.
- */
+/** Subtract the pipe-first prefix length from line-one columns. */
 export function remapPipeFirstColumns(diagnostics: Diagnostic[]): Diagnostic[] {
   const prefixLength = PIPE_FIRST_PREFIX.length;
   const shift = (range: DiagnosticRange): DiagnosticRange => ({

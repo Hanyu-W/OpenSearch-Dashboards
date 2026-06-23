@@ -8,18 +8,8 @@ import { LINT_MARKER_SOURCE, SYNTAX_MARKER_SOURCE } from './diagnostic_to_marker
 import { getModelFix, getModelSyntaxFix, markerFixKey } from './fix_registry';
 
 /**
- * Code-action provider that surfaces quick-fixes for PPL markers on two
- * channels: lint diagnostics (`ppl-lint`, owner PPL_LINT) and syntax errors
- * (`ppl-syntax`, owner PPL_WORKER — e.g. the command-typo suggestion). For each
- * marker with an associated fix it returns a quick-fix code action with a
- * workspace edit (R10.2). Markers from any other source are ignored (R10.1).
- *
- * The fix payload is NOT read off the marker: Monaco's MarkerService rebuilds
- * each marker from a fixed field list when `setModelMarkers` is called, dropping
- * any custom property, so a fix hung off the marker never survives to here.
- * Instead each lifecycle records fixes in a side table keyed by the marker
- * fields the service preserves (position + message); we re-associate them here,
- * reading the table that matches the marker's source.
+ * Quick-fix provider for PPL lint and syntax markers. Reads fixes from a side
+ * table (Monaco's MarkerService drops custom marker properties on rebuild).
  */
 export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
   provideCodeActions(
@@ -44,9 +34,6 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
         continue;
       }
 
-      // Use the fix's own range when it targets a span different from the
-      // squiggle (e.g. deleting one character before the underlined name);
-      // otherwise replace the marker's range.
       const editRange = fix.range ?? {
         startLineNumber: marker.startLineNumber,
         startColumn: marker.startColumn,

@@ -6,26 +6,15 @@
 import { RuleHoverContent, FailureClass } from './engine_outcomes';
 import { HoverFacts } from './hover_registry';
 
-/**
- * Pure Markdown renderer for the lint hover card body (no Monaco import). Each
- * section renders only when its data is present, so a bare rule degrades to just
- * the message — never throws, never blank.
- */
-
 export type SeverityLabel = 'Error' | 'Warning' | 'Info';
 
 export interface HoverCardInput {
   ruleId: string;
   severityLabel: SeverityLabel;
-  /** The marker's short message — always shown as the card lead. */
   message: string;
-  /** code.target — the specific doc link from the catalog (Part A). */
   docUrl?: string;
-  /** Static per-rule content from engine_outcomes, when present. */
   content?: RuleHoverContent;
-  /** Per-instance facts from the detector, when present. */
   facts?: HoverFacts;
-  /** Quick-fix preview text (the replacement), when a DiagnosticFix exists. */
   fixText?: string;
 }
 
@@ -35,9 +24,6 @@ const SEVERITY_GLYPH: Record<SeverityLabel, string> = {
   Info: 'ℹ️', // ℹ️
 };
 
-// How each runtime outcome class reads in the "Why <severity>" line. Decodes the
-// severity into the consequence the user actually faces — the silent classes are
-// the ones users most often under-rate.
 const FAILURE_CLASS_EXPLAINER: Record<FailureClass, string> = {
   'silent-null':
     'the query succeeds (HTTP 200) but a value resolves to null and propagates silently — nothing signals that anything went wrong.',
@@ -52,23 +38,10 @@ const FAILURE_CLASS_EXPLAINER: Record<FailureClass, string> = {
     'the query runs and may return data, but the command can behave differently than intended on this input — this is a heads-up, not a guaranteed outcome.',
 };
 
-/**
- * Escape the Markdown-significant characters we may inline verbatim. Covers the
- * inline-context specials: code/emphasis (`` ` `` `*` `_`), links (`[` `]`),
- * autolink/HTML (`<` `>`), strikethrough (`~`), and table cells (`|`). `(`/`)`
- * `#` `-` are only significant at line-start, and every inline string here is
- * prefixed (e.g. `**Label** — `), so they are left alone to keep prose readable.
- */
 function escapeInline(text: string): string {
   return text.replace(/([\\`*_[\]<>~|])/g, '\\$1');
 }
 
-/**
- * Render a value as inline code. When the value itself contains backticks, fence
- * it with a longer run of backticks (and pad with a space, per CommonMark §6.3)
- * so the literal backticks survive verbatim rather than being substituted for a
- * lookalike glyph.
- */
 function code(text: string): string {
   const runs = text.match(/`+/g);
   let longestRun = 0;
@@ -82,21 +55,11 @@ function code(text: string): string {
   return `${fence}${pad}${text}${pad}${fence}`;
 }
 
-/**
- * Make a URL safe to drop into a Markdown link target. An unescaped `)` would
- * close the `[text](url)` form early; percent-encoding parens keeps the link
- * intact and is decoded transparently by the browser.
- */
 function encodeLinkTarget(url: string): string {
   return url.replace(/\(/g, '%28').replace(/\)/g, '%29');
 }
 
-/**
- * Build the "Your query" line from per-instance facts. Returns undefined when
- * there is nothing instance-specific worth showing.
- */
 function renderFactsLine(facts: HoverFacts): string | undefined {
-  // Wildcard zero-match: enumerate near candidates so the user is unstuck.
   if (facts.pattern !== undefined) {
     const head =
       facts.totalIndices !== undefined
@@ -108,14 +71,9 @@ function renderFactsLine(facts: HoverFacts): string | undefined {
     return head;
   }
 
-  // Field/type-centric rules.
   if (facts.field !== undefined) {
     const parts: string[] = [];
     if (facts.root !== undefined) {
-      // The field is a subfield of `root`; here `esType` describes the *root*
-      // object's mapping, not the subfield (the subfield has no mapping of its
-      // own). Attribute the type to the root so the card never claims the
-      // subfield "is mapped as <type>".
       parts.push(
         facts.esType !== undefined
           ? `${code(facts.field)} lives inside ${code(facts.root)}, mapped as ${code(
@@ -140,7 +98,6 @@ function renderFactsLine(facts: HoverFacts): string | undefined {
     return parts.join(' ');
   }
 
-  // Bare literal (e.g. the actual zero divisor).
   if (facts.literal !== undefined) {
     return `Offending value: ${code(facts.literal)}.`;
   }
@@ -148,22 +105,15 @@ function renderFactsLine(facts: HoverFacts): string | undefined {
   return undefined;
 }
 
-/**
- * Render the full hover card to a Markdown string. The provider wraps the result
- * in `{ value, isTrusted: false }` and hands it to Monaco.
- */
 export function renderHoverCard(input: HoverCardInput): string {
   const { ruleId, severityLabel, message, docUrl, content, facts, fixText } = input;
   const lines: string[] = [];
 
-  // Header: glyph · ruleId · severity.
   lines.push(`${SEVERITY_GLYPH[severityLabel]} **${escapeInline(ruleId)}** · ${severityLabel}`);
 
-  // Lead: the short message (always present).
   lines.push('');
   lines.push(escapeInline(message));
 
-  // Engine behavior — the highest-value line.
   if (content) {
     const verified = content.verifiedVersion
       ? ` _(verified on OpenSearch ${escapeInline(content.verifiedVersion)})_`
@@ -172,7 +122,6 @@ export function renderHoverCard(input: HoverCardInput): string {
     lines.push(`**Engine behavior** — ${escapeInline(content.engineBehavior)}${verified}`);
   }
 
-  // Your query — per-instance facts.
   if (facts) {
     const factsLine = renderFactsLine(facts);
     if (factsLine) {
@@ -181,7 +130,6 @@ export function renderHoverCard(input: HoverCardInput): string {
     }
   }
 
-  // Why <severity> — decode the runtime outcome class.
   if (content) {
     lines.push('');
     lines.push(
@@ -189,17 +137,11 @@ export function renderHoverCard(input: HoverCardInput): string {
     );
   }
 
-  // Suggested fix preview.
   if (fixText !== undefined) {
     lines.push('');
     lines.push(`**Suggested fix** → ${code(fixText)}`);
   }
 
-  // Escape hatch — only when present (never for error severity, by data rule).
-  // For engine-throw rules the query genuinely would not run, so the only reason
-  // to dismiss the warning is that the linter is being conservative: label it a
-  // "Possible false positive". For the runs-anyway classes it really is "Safe to
-  // ignore". This keeps the line from contradicting the "Why <severity>" line.
   if (content?.safeToIgnoreWhen) {
     const label =
       content.failureClass === 'engine-throw' ? 'Possible false positive' : 'Safe to ignore';
@@ -207,7 +149,6 @@ export function renderHoverCard(input: HoverCardInput): string {
     lines.push(`**${label}** — ${escapeInline(content.safeToIgnoreWhen)}`);
   }
 
-  // Learn more — the specific doc link.
   if (docUrl) {
     lines.push('');
     lines.push(`[Learn more →](${encodeLinkTarget(docUrl)})`);

@@ -7,10 +7,7 @@ import { AppliesTo, CatalogEntry } from './types';
 import { LintSeverity } from './diagnostic';
 import rawCatalog from './rules_catalog.json';
 
-// TRACKING (opensearch-project/sql#4549): set `invalid-capture-group-name`
-// maxVersion to the first engine release that accepts underscore/hyphen group
-// names once that issue ships. Until then maxVersion is left open. See
-// requirements R7.11/R14.
+// TRACKING (opensearch-project/sql#4549): set maxVersion once that issue ships.
 
 const VALID_SEVERITIES: ReadonlySet<string> = new Set<LintSeverity>(['error', 'warning', 'info']);
 
@@ -35,10 +32,6 @@ function isValidAppliesTo(value: unknown): value is AppliesTo {
   return true;
 }
 
-/**
- * Validate a single catalog entry against the schema. Returns the typed entry
- * when valid, or null when malformed.
- */
 export function validateCatalogEntry(value: unknown): CatalogEntry | null {
   if (typeof value !== 'object' || value === null) {
     return null;
@@ -82,10 +75,6 @@ export function validateCatalogEntry(value: unknown): CatalogEntry | null {
   };
 }
 
-/**
- * Load and validate a catalog. Malformed entries are dropped and logged; the
- * remaining valid entries are returned. Never throws to the editor (R4.3-R4.5).
- */
 export function loadCatalog(entries: unknown): CatalogEntry[] {
   if (!Array.isArray(entries)) {
     // eslint-disable-next-line no-console
@@ -108,14 +97,9 @@ export function loadCatalog(entries: unknown): CatalogEntry[] {
 
 let bundledCatalog: CatalogEntry[] | undefined;
 
-/**
- * Get the bundled rule catalog, loaded synchronously from the bundle with no
- * network request (R4.2). Computed once and reused.
- */
 export function getBundledCatalog(): CatalogEntry[] {
   if (!bundledCatalog) {
-    // Under some module interop settings a JSON array import is wrapped in a
-    // `default` property; normalize both shapes.
+    // Normalize the JSON import: some bundlers wrap it in a `default` property.
     const source = Array.isArray(rawCatalog)
       ? rawCatalog
       : (rawCatalog as { default?: unknown }).default;

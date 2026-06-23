@@ -27,46 +27,27 @@ import { clearModelHoverFacts, HoverFacts, setModelHoverFacts } from './lint/hov
 
 const PPL_LANGUAGE_ID = ID;
 const OWNER = 'PPL_WORKER';
-// LINT_OWNER is defined in hover_provider.ts (its single source) and imported
-// here, so the marker owner the lint lifecycle writes under and the owner the
-// hover provider queries can never drift apart.
 const LINT_DEBOUNCE_MS = 500;
 const lintDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-// Monotonic per-model lint counter. Each lint pass claims a generation before
-// dispatching its async worker call and only applies its markers if it is still
-// the latest pass. This makes lint results "last-request-wins" rather than
-// "last-response-wins", so an earlier pass whose response arrives late (e.g. the
-// context-less lint fired on model creation, before the editor attaches the
-// per-model context) can never overwrite a newer pass's markers.
+// Monotonic per-model counter: only the latest lint pass applies its markers.
 const lintGenerations = new Map<string, number>();
 
-// PPL worker proxy service for worker-based syntax highlighting
 const pplWorkerProxyService = new PPLWorkerProxyService();
 
-// PPL analyzer for synchronous tokenization (lazy initialization)
 let pplAnalyzer: ReturnType<typeof getPPLLanguageAnalyzer> | undefined;
 
-/**
- * Map PPL Language Analyzer tokens to Monaco editor token classes
- * Based on ANTLR-generated token types from OpenSearchPPLLexer
- */
 const mapPPLTokenToMonacoTokenType = (tokenType: string): string => {
   const type = tokenType.toUpperCase();
 
-  // Use optimized Set lookups from constants
   for (const [monacoType, tokenSet] of Object.entries(PPL_TOKEN_SETS)) {
     if (tokenSet.has(type)) {
       return monacoType;
     }
   }
 
-  // Default case
   return 'identifier';
 };
 
-/**
- * Create Monaco language configuration for PPL
- */
 const createPPLLanguageConfiguration = (): monaco.languages.LanguageConfiguration => ({
   comments: {
     lineComment: '//',
@@ -93,9 +74,6 @@ const createPPLLanguageConfiguration = (): monaco.languages.LanguageConfiguratio
   ],
 });
 
-/**
- * Set up synchronous tokenization for PPL
- */
 const setupPPLTokenization = () => {
   monaco.languages.setTokensProvider(PPL_LANGUAGE_ID, {
     getInitialState: () => {
@@ -106,13 +84,10 @@ const setupPPLTokenization = () => {
       return state;
     },
     tokenize: (line: string, state: any) => {
-      // Use PPL Language Analyzer for accurate tokenization
       const tokens: monaco.languages.IToken[] = [];
 
       try {
-        // Only process if line contains potential PPL content
         if (line.trim()) {
-          // Lazy initialize the PPL analyzer only when needed
           if (!pplAnalyzer) {
             pplAnalyzer = getPPLLanguageAnalyzer();
           }
@@ -127,8 +102,8 @@ const setupPPLTokenization = () => {
             });
           }
         }
-      } catch (error) {
-        // If ANTLR fails, return empty tokens
+      } catch {
+        // best-effort tokenization
       }
 
       return {
@@ -139,13 +114,8 @@ const setupPPLTokenization = () => {
   });
 };
 
-/**
- * Process syntax highlighting for PPL models
- */
 const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
-  // Only process if the model is still set to PPL language
   if (model.getLanguageId() !== PPL_LANGUAGE_ID) {
-    // Clear any existing PPL markers if language changed
     monaco.editor.setModelMarkers(model, OWNER, []);
     clearModelSyntaxFixes(model);
     return;
@@ -154,7 +124,6 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
   try {
     const content = model.getValue();
 
-    // Ensure worker is set up before validation - always call setup as it has internal check
     pplWorkerProxyService.setup();
 
     const validationResult = (await resolvePPLValidationResult(
@@ -164,17 +133,9 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
     )) as PPLValidationResult;
 
     if (validationResult.errors.length > 0) {
-      // A command-typo error carries a structured `fix`; collect those into the
-      // syntax-fix side table (keyed by the marker fields Monaco preserves) so
-      // the code-action provider can offer a one-click lightbulb. The fix is not
-      // hung off the marker because Monaco's MarkerService rebuilds markers from
-      // a fixed field list and drops custom properties — same constraint the
-      // lint path handles via setModelFixes.
       const syntaxFixes = new Map<string, MarkerFix>();
 
-      // Convert errors to Monaco markers
       const markers: monaco.editor.IMarkerData[] = validationResult.errors.map((error) => {
-        // Map SyntaxError properties to Monaco marker properties
         const startLineNumber = error.line || 1;
         const endLineNumber = error.endLine || error.line || startLineNumber;
         const startColumn = (error.column || 0) + 1; // Monaco is 1-based, ANTLR is 0-based
@@ -193,10 +154,7 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
           startColumn: safeStartColumn,
           endLineNumber: safeEndLine,
           endColumn: safeEndColumn,
-          // Tag the channel so the code-action provider can serve syntax fixes
-          // without touching lint markers.
           source: SYNTAX_MARKER_SOURCE,
-          // Add error code for better categorization
           code: {
             value: 'View Documentation',
             target: monaco.Uri.parse(docLink.url),
@@ -213,12 +171,11 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
       setModelSyntaxFixes(model, syntaxFixes);
       monaco.editor.setModelMarkers(model, OWNER, markers);
     } else {
-      // Clear markers and any stale syntax fixes if no errors
       clearModelSyntaxFixes(model);
       monaco.editor.setModelMarkers(model, OWNER, []);
     }
-  } catch (error) {
-    // Silent error handling - continue without worker-based highlighting
+  } catch {
+    // best-effort syntax highlighting
   }
 };
 
@@ -227,16 +184,7 @@ export const revalidatePPLModel = async (model: monaco.editor.IModel) => {
   processLintHighlighting(model);
 };
 
-/**
- * Process lint diagnostics for PPL models under the dedicated `PPL_LINT` marker
- * owner. Fire-and-forget: it never blocks or delays syntax-marker production
- * (R11.4) and never touches `PPL_WORKER` markers (R11.2). Gated by the
- * QUERY_ENHANCEMENTS_PPL_LINT setting (R1).
- */
 const processLintHighlighting = (model: monaco.editor.IModel): void => {
-  // Claim this pass's generation up front — even the early-return branches below
-  // count, so a synchronous "clear markers" pass invalidates an in-flight async
-  // response that would otherwise re-add stale markers after the clear.
   const generation = (lintGenerations.get(model.id) ?? 0) + 1;
   lintGenerations.set(model.id, generation);
 
@@ -258,8 +206,6 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
 
   pplWorkerProxyService.setup();
 
-  // The compiled fallback runs in a web worker with no uiSettings client, so
-  // read the per-model overrides here on the main thread and forward them.
   const overrides = getPPLLintContext(model)?.overrides;
 
   void resolvePPLLintResult(
@@ -268,8 +214,6 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
     async (query) => (await pplWorkerProxyService.lint(query, overrides)) as LintResult
   )
     .then((lintResult: LintResult) => {
-      // Drop a response that a newer lint pass has superseded (stale context or
-      // stale content), so out-of-order worker responses can't clobber markers.
       if (
         lintGenerations.get(model.id) !== generation ||
         model.isDisposed() ||
@@ -281,11 +225,8 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
         return;
       }
       const markers = lintResult.diagnostics.map(diagnosticToMarker);
-      // Monaco's MarkerService rebuilds each marker from a fixed field list and
-      // drops the custom `fix` / `hoverFacts` properties, so they would never
-      // reach the code-action or hover providers. Capture each into a side table
-      // keyed by the fields the service preserves, then strip them off the
-      // marker before handing it over.
+      // Extract fix/hoverFacts into side tables before passing markers to Monaco
+      // (MarkerService drops custom properties on rebuild).
       const fixes = new Map<string, MarkerFix>();
       const hoverFacts = new Map<string, HoverFacts>();
       for (const marker of markers) {
@@ -307,15 +248,9 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
       setModelHoverFacts(model, hoverFacts);
       monaco.editor.setModelMarkers(model, LINT_OWNER, markers);
     })
-    .catch(() => {
-      // Lint is best-effort: never disrupt the editor on failure (R11.3).
-    });
+    .catch(() => {});
 };
 
-/**
- * Debounced wrapper for keystroke-driven lint. Restarts a 500ms trailing-edge
- * timer per model; only the last keystroke in a burst triggers actual lint work.
- */
 const scheduleLintHighlighting = (model: monaco.editor.IModel): void => {
   const existing = lintDebounceTimers.get(model.id);
   if (existing !== undefined) {
@@ -328,9 +263,6 @@ const scheduleLintHighlighting = (model: monaco.editor.IModel): void => {
   lintDebounceTimers.set(model.id, handle);
 };
 
-/**
- * Set up PPL document range formatting provider
- */
 const setupPPLFormatter = () => {
   monaco.languages.registerDocumentRangeFormattingEditProvider(
     PPL_LANGUAGE_ID,
@@ -338,14 +270,10 @@ const setupPPLFormatter = () => {
   );
 };
 
-/**
- * Set up syntax highlighting using PPL worker
- */
 const setupPPLSyntaxHighlighting = () => {
   const disposables: monaco.IDisposable[] = [];
 
   const handleModel = (model: monaco.editor.IModel) => {
-    // Set up content change listener
     disposables.push(
       model.onDidChangeContent(async () => {
         if (model.getLanguageId() === PPL_LANGUAGE_ID) {
@@ -355,7 +283,6 @@ const setupPPLSyntaxHighlighting = () => {
       })
     );
 
-    // Set up language change listener
     disposables.push(
       model.onDidChangeLanguage(async () => {
         if (model.getLanguageId() === PPL_LANGUAGE_ID) {
@@ -371,17 +298,14 @@ const setupPPLSyntaxHighlighting = () => {
       })
     );
 
-    // Process immediately if already PPL
     if (model.getLanguageId() === PPL_LANGUAGE_ID) {
       processSyntaxHighlighting(model);
       processLintHighlighting(model);
     }
   };
 
-  // Listen for new models
   disposables.push(monaco.editor.onDidCreateModel(handleModel));
 
-  // Listen for model disposal to clear markers
   disposables.push(
     monaco.editor.onWillDisposeModel((model) => {
       const pending = lintDebounceTimers.get(model.id);
@@ -398,10 +322,8 @@ const setupPPLSyntaxHighlighting = () => {
     })
   );
 
-  // Handle existing models
   monaco.editor.getModels().forEach(handleModel);
 
-  // Return cleanup function
   return () => {
     lintDebounceTimers.forEach(clearTimeout);
     lintDebounceTimers.clear();
@@ -410,11 +332,7 @@ const setupPPLSyntaxHighlighting = () => {
   };
 };
 
-/**
- * Register PPL language support with Monaco Editor
- */
 export const registerPPLLanguage = () => {
-  // Register the PPL language
   monaco.languages.register({
     id: PPL_LANGUAGE_ID,
     extensions: ['.ppl'],
@@ -422,26 +340,19 @@ export const registerPPLLanguage = () => {
     mimetypes: ['application/ppl', 'text/ppl'],
   });
 
-  // Set language configuration
   monaco.languages.setLanguageConfiguration(PPL_LANGUAGE_ID, createPPLLanguageConfiguration());
 
-  // Set up synchronous tokenization
   setupPPLTokenization();
 
-  // Set up PPL formatter
   setupPPLFormatter();
 
-  // Set up syntax highlighting with worker
   const disposeSyntaxHighlighting = setupPPLSyntaxHighlighting();
 
-  // Register the lint quick-fix code-action provider
   const codeActionDisposable = monaco.languages.registerCodeActionProvider(
     PPL_LANGUAGE_ID,
     pplLintCodeActionProvider
   );
 
-  // Register the lint hover provider (the rich "view more" card). It reads
-  // markers + the side tables lazily on hover, so it adds no per-lint cost.
   const hoverDisposable = monaco.languages.registerHoverProvider(
     PPL_LANGUAGE_ID,
     pplLintHoverProvider
@@ -456,5 +367,4 @@ export const registerPPLLanguage = () => {
   };
 };
 
-// Auto-register PPL language support
 registerPPLLanguage();
