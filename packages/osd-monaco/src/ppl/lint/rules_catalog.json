@@ -127,7 +127,7 @@
     "detector": "flat-object-subfield",
     "enabled": true,
     "severity": "error",
-    "message": "Subfield of a flat_object field is not queryable.",
+    "message": "flat_object fields cannot be referenced in a PPL query.",
     "docUrl": "https://docs.opensearch.org/latest/mappings/supported-field-types/flat-object/#limitations",
     "appliesTo": {},
     "needsContext": true

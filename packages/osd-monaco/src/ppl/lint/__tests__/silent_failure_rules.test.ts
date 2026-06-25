@@ -104,14 +104,42 @@ describe('PPL silent-failure lint rules (compiled surface)', () => {
       );
     });
 
-    it('does not flag a reference to the flat_object root itself', () => {
-      expect(ids('search otel | fields attributes', ctx)).not.toContain('flat-object-subfield');
+    // Live-verified 2026-06-25 (3.8, Calcite on): a bare flat_object root is
+    // ALSO rejected ("Field [attributes] not found"), and field-validation stays
+    // silent on it (the root is present in _field_caps), so this rule must catch
+    // it. See ppl-flat-object-engine-behavior.md.
+    it('flags a bare reference to the flat_object root itself', () => {
+      expect(ids('search otel | fields attributes', ctx)).toContain('flat-object-subfield');
+    });
+
+    it('flags a bare flat_object root in a stats grouping', () => {
+      expect(ids('search otel | stats count() by attributes', ctx)).toContain(
+        'flat-object-subfield'
+      );
+    });
+
+    it('does not flag a non-flat_object field', () => {
+      expect(ids('search accounts | fields balance', ctx)).not.toContain('flat-object-subfield');
+    });
+
+    it('does not flag a dotted reference whose root is not a flat_object', () => {
+      // `firstname` is text, not flat_object — a dotted access is some other
+      // rule's concern, not this one's.
+      expect(ids('search accounts | fields firstname.raw', ctx)).not.toContain(
+        'flat-object-subfield'
+      );
     });
 
     it('self-suppresses without a typeMap', () => {
       expect(ids('search otel | fields attributes.http.method', { fields })).not.toContain(
         'flat-object-subfield'
       );
+    });
+
+    it('emits no quick-fix (no valid PPL rewrite target exists)', () => {
+      expect(
+        diag('search otel | fields attributes.http.method', 'flat-object-subfield')?.fix
+      ).toBeUndefined();
     });
   });
 
