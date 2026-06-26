@@ -16,7 +16,12 @@ import { UI_SETTINGS } from '../../data/common';
 // `severity` fields of each entry in @osd/monaco's rules_catalog.json; the
 // registered default must match the catalog so "reset to default" and the
 // sparse-storage diff in buildOverridesFromSettings agree on the baseline.
-const PPL_LINT_RULE_DEFAULTS: ReadonlyArray<{
+//
+// Exported so the catalog↔defaults parity test (Option 1, Layer A) can assert
+// this list stays 1:1 with the shipped catalog — the recurring "added a rule but
+// forgot to register its toggle key" footgun. See
+// `__tests__/catalog_defaults_parity.test.ts`.
+export const PPL_LINT_RULE_DEFAULTS: ReadonlyArray<{
   id: string;
   enabled: boolean;
   severity: 'error' | 'warning' | 'info';
