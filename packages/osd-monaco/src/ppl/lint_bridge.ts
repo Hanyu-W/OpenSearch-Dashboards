@@ -23,6 +23,18 @@ export interface PPLLintHttpClient {
       query?: Record<string, string | number | boolean | undefined>;
     }
   ) => Promise<unknown>;
+  /**
+   * GET — used by the AI quick-fix to probe `assist/languages` for a configured
+   * PPL agent before any generate round-trip. Optional so existing callers that
+   * only construct the explain client (`post` only) still satisfy the type;
+   * core's `HttpSetup` provides both.
+   */
+  get?: (
+    path: string,
+    options?: {
+      query?: Record<string, string | number | boolean | undefined>;
+    }
+  ) => Promise<unknown>;
 }
 
 /**
@@ -40,6 +52,18 @@ export interface PPLLintContext extends PPLValidationContext, LintPayloadContext
    * the worker `postMessage` boundary.
    */
   http?: PPLLintHttpClient;
+  /**
+   * The active dataset's title — the index the AI quick-fix's generate route
+   * requires (`/api/enhancements/assist/generate` takes `index`). Set from
+   * `dataset.title` at the `buildPPLLintContext` call site. Absent suppresses the
+   * AI fix action. Bridge-path only (the worker fallback offers no AI fix).
+   */
+  datasetTitle?: string;
+  /**
+   * The global `ENABLE_AI_FEATURES` uiSetting. When false the AI quick-fix
+   * action is hidden entirely, matching every other Query-Assist surface.
+   */
+  enableAIFeatures?: boolean;
 }
 
 export interface PPLLintBridgeRequest {

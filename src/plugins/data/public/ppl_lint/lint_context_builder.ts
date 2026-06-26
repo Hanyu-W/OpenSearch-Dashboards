@@ -5,7 +5,7 @@
 
 import { IUiSettingsClient } from 'opensearch-dashboards/public';
 import { PPLLintContext } from '@osd/monaco';
-import { HttpSetup } from '../../../../core/public';
+import { ENABLE_AI_FEATURES, HttpSetup } from '../../../../core/public';
 import {
   deriveIsCalcite,
   shouldUseRuntimeGrammar,
@@ -31,6 +31,8 @@ export interface LintFieldsCache {
  * dataset shape (a `Dataset` or a `Query['dataset']`) satisfies it. */
 interface LintContextDataset {
   id?: string;
+  /** Human-readable dataset name; the index the AI quick-fix generate route needs. */
+  title?: string;
   dataSource?: { id?: string; version?: string };
 }
 
@@ -67,5 +69,11 @@ export function buildPPLLintContext(
     visibleIndices: cacheMatchesDataset ? lintFields.visibleIndices : undefined,
     overrides: buildOverridesFromSettings(services.uiSettings),
     http: services.http,
+    // The index + AI gate the AI quick-fix ("Ask Olly to fix") command reads via
+    // getPPLLintContext(model). datasetTitle is the dataset name the generate
+    // route takes as `index`; enableAIFeatures hides the action entirely when
+    // AI features are off. Both ride the runtime bridge path only.
+    datasetTitle: dataset?.title,
+    enableAIFeatures: services.uiSettings.get(ENABLE_AI_FEATURES, true) !== false,
   };
 }

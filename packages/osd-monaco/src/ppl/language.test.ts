@@ -21,6 +21,8 @@ jest.mock('../monaco', () => ({
       onWillDisposeModel: jest.fn(),
       getModels: () => [],
       defineTheme: jest.fn(),
+      // registerPPLLanguage now also registers the AI quick-fix command.
+      registerCommand: jest.fn(() => ({ dispose: jest.fn() })),
     },
     languages: {
       register: jest.fn(),
