@@ -74,6 +74,6 @@ export function buildPPLLintContext(
     // route takes as `index`; enableAIFeatures hides the action entirely when
     // AI features are off. Both ride the runtime bridge path only.
     datasetTitle: dataset?.title,
-    enableAIFeatures: services.uiSettings.get(ENABLE_AI_FEATURES, true) !== false,
+    enableAIFeatures: Boolean(services.uiSettings.get(ENABLE_AI_FEATURES, true)),
   };
 }
