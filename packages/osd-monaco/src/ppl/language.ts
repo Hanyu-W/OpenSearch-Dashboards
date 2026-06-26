@@ -14,6 +14,7 @@ import { getPPLLintContext, isPPLLintEnabled, resolvePPLLintResult } from './lin
 import { LintResult } from './lint/diagnostic';
 import { diagnosticToMarker, SYNTAX_MARKER_SOURCE } from './lint/diagnostic_to_marker';
 import { pplLintCodeActionProvider } from './lint/code_action_provider';
+import { registerAiFixCommand } from './lint/ai_fix/ai_fix_command';
 import {
   clearModelFixes,
   clearModelSyntaxFixes,
@@ -442,6 +443,11 @@ export const registerPPLLanguage = () => {
     pplLintCodeActionProvider
   );
 
+  // Register the AI ("Ask Olly to fix") quick-fix command the provider's
+  // isAI action dispatches. The handler does the LLM round-trip after the
+  // click and applies the re-validated result as undo-aware editor text.
+  const aiFixCommandDisposable = registerAiFixCommand();
+
   // Register the lint hover provider (the rich "view more" card). It reads
   // markers + the side tables lazily on hover, so it adds no per-lint cost.
   const hoverDisposable = monaco.languages.registerHoverProvider(
@@ -453,6 +459,7 @@ export const registerPPLLanguage = () => {
     dispose: () => {
       disposeSyntaxHighlighting();
       codeActionDisposable.dispose();
+      aiFixCommandDisposable.dispose();
       hoverDisposable.dispose();
     },
   };

@@ -6,6 +6,25 @@
 import { monaco } from '../../monaco';
 import { LINT_MARKER_SOURCE, SYNTAX_MARKER_SOURCE } from './diagnostic_to_marker';
 import { getModelFix, getModelSyntaxFix, markerFixKey } from './fix_registry';
+import { getPPLLintContext } from '../lint_bridge';
+import { isAiFixableRule } from './ai_fix/ai_fixable_rules';
+import { AI_FIX_COMMAND_ID } from './ai_fix/ai_fix_command_id';
+
+/**
+ * The ruleId rides on a marker's `code`: the plain-string form (rule with no doc
+ * link) or `code.value` (object form, with a link). Mirrors `ruleIdOf` in the
+ * hover provider so the two read the marker identically.
+ */
+function ruleIdOf(marker: monaco.editor.IMarkerData): string | undefined {
+  const code = (marker as { code?: string | { value?: string } }).code;
+  if (typeof code === 'string') {
+    return code;
+  }
+  if (code && typeof code === 'object' && typeof code.value === 'string') {
+    return code.value;
+  }
+  return undefined;
+}
 
 /**
  * Code-action provider that surfaces quick-fixes for PPL markers on two
@@ -29,6 +48,15 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
   ): monaco.languages.ProviderResult<monaco.languages.CodeActionList> {
     const actions: monaco.languages.CodeAction[] = [];
 
+    // The AI quick-fix is offered only when AI features are on AND the active
+    // dataset's index (datasetTitle) is known — both read from the per-model
+    // lint context. Computed once per provider call. The live agent-probe is
+    // deferred to the command handler (it is async and may degrade to a no-op
+    // when no ML-Commons agent is configured), so the lightbulb appears
+    // instantly and only does the round-trip after the user clicks.
+    const lintCtx = getPPLLintContext(model);
+    const aiFixAvailable = lintCtx?.enableAIFeatures !== false && !!lintCtx?.datasetTitle;
+
     for (const marker of context.markers) {
       const key = markerFixKey(marker);
       let fix;
@@ -38,6 +66,34 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
         fix = getModelSyntaxFix(model, key);
       } else {
         continue;
+      }
+
+      // Deterministic-first: a lint marker with no deterministic fix but an
+      // AI-fixable ruleId gets an "✨ Ask Olly to fix" action that dispatches a
+      // command (async LLM round-trip after the click), distinct from the
+      // synchronous edit-carrying quick-fixes below. Never offered on the syntax
+      // channel and never when a deterministic fix already exists for the marker.
+      if (marker.source === LINT_MARKER_SOURCE && !fix && aiFixAvailable) {
+        const ruleId = ruleIdOf(marker);
+        if (isAiFixableRule(ruleId)) {
+          actions.push({
+            title: '✨ Ask Olly to fix this',
+            diagnostics: [marker],
+            kind: 'quickfix',
+            isAI: true,
+            command: {
+              id: AI_FIX_COMMAND_ID,
+              title: 'Ask Olly to fix this',
+              arguments: [
+                {
+                  modelUri: model.uri.toString(),
+                  ruleId,
+                  message: marker.message,
+                },
+              ],
+            },
+          } as monaco.languages.CodeAction);
+        }
       }
 
       if (!fix) {

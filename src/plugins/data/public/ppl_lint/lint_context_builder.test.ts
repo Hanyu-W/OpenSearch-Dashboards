@@ -29,13 +29,15 @@ const mockBuildOverrides = buildOverridesFromSettings as jest.Mock;
 const mockDeriveIsCalcite = deriveIsCalcite as jest.Mock;
 const mockShouldUseRuntimeGrammar = shouldUseRuntimeGrammar as jest.Mock;
 
+const mockUiSettingsGet = jest.fn();
 const services = {
-  uiSettings: {} as IUiSettingsClient,
+  uiSettings: ({ get: mockUiSettingsGet } as unknown) as IUiSettingsClient,
   http: {} as HttpSetup,
 };
 
 const dataset = {
   id: 'dataset-1',
+  title: 'accounts',
   dataSource: { id: 'mds-1', version: '3.8.0' },
 };
 
@@ -54,6 +56,8 @@ describe('buildPPLLintContext', () => {
     mockDeriveIsCalcite.mockReturnValue(undefined);
     mockBuildOverrides.mockReturnValue({ 'some-rule': { enabled: false } });
     mockGetCached.mockReturnValue(undefined);
+    // ENABLE_AI_FEATURES defaults to true; the builder reads it via uiSettings.get.
+    mockUiSettingsGet.mockReturnValue(true);
   });
 
   it('derives dataSourceId/version from the dataset and carries http + overrides', () => {
@@ -63,6 +67,18 @@ describe('buildPPLLintContext', () => {
     expect(ctx.http).toBe(services.http);
     expect(ctx.overrides).toEqual({ 'some-rule': { enabled: false } });
     expect(mockBuildOverrides).toHaveBeenCalledWith(services.uiSettings);
+  });
+
+  it('carries datasetTitle and the AI-features flag for the AI quick-fix', () => {
+    const ctx = buildPPLLintContext(dataset, fullCache, services);
+    expect(ctx.datasetTitle).toBe('accounts');
+    expect(ctx.enableAIFeatures).toBe(true);
+  });
+
+  it('reports enableAIFeatures false when the uiSetting is off', () => {
+    mockUiSettingsGet.mockReturnValue(false);
+    const ctx = buildPPLLintContext(dataset, fullCache, services);
+    expect(ctx.enableAIFeatures).toBe(false);
   });
 
   it('feeds cached field metadata when the cache matches the active dataset', () => {
@@ -104,5 +120,7 @@ describe('buildPPLLintContext', () => {
     expect(ctx.dataSourceId).toBeUndefined();
     expect(ctx.dataSourceVersion).toBeUndefined();
     expect(ctx.fields).toBeUndefined();
+    // No dataset → no index for the AI fix; the action self-suppresses.
+    expect(ctx.datasetTitle).toBeUndefined();
   });
 });
