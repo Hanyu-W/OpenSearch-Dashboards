@@ -44,6 +44,25 @@ export const LINT_MARKER_SOURCE = 'ppl-lint';
  */
 export const SYNTAX_MARKER_SOURCE = 'ppl-syntax';
 
+/**
+ * Read the ruleId off a marker's `code` — the inverse of what
+ * {@link diagnosticToMarker} writes. The ruleId rides on `code` either as the
+ * plain-string form (a rule with no doc link) or as `code.value` (the object
+ * form, with a link). Structurally typed so it accepts both `IMarker` and
+ * `IMarkerData` (each carries the same `code?` field); shared by the
+ * code-action and hover providers so the two decode markers identically.
+ */
+export function ruleIdOf(marker: { code?: string | { value?: string } }): string | undefined {
+  const { code } = marker;
+  if (typeof code === 'string') {
+    return code;
+  }
+  if (code && typeof code === 'object' && typeof code.value === 'string') {
+    return code.value;
+  }
+  return undefined;
+}
+
 function toMarkerSeverity(severity: LintSeverity): monaco.MarkerSeverity {
   switch (severity) {
     case 'error':
