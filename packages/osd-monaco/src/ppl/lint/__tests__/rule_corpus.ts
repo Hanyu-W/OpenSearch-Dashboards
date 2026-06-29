@@ -77,6 +77,27 @@ const CTX_JOINS_RESTRICTED: LintRunContext = {
   fields: FIELDS,
   settings: { allJoinTypesAllowed: false },
 };
+// enabled-false-object reads `disabledObjectFields` (object fields mapped
+// enabled:false — absent from _field_caps, so sourced separately); self-suppress
+// without it. `raw` is the object root here, matching silent_failure_rules.test.
+const CTX_DISABLED_OBJ: LintRunContext = {
+  fields: FIELDS,
+  typeMap: TYPE_MAP,
+  disabledObjectFields: new Set(['raw']),
+};
+// wildcard-source-zero-match reads `visibleIndices`; a non-empty list is "we
+// know what's visible", so a wildcard matching none of them fires.
+const CTX_VISIBLE_INDICES: LintRunContext = {
+  fields: FIELDS,
+  visibleIndices: ['accounts', 'logs-2024', 'logs-2025'],
+};
+// Calcite-gated, runtime-only rules (replace/dedup) need isCalcite + a version
+// at/above their minVersion to fire on the runtime surface.
+const CTX_CALCITE_34: LintRunContext = {
+  fields: FIELDS,
+  isCalcite: true,
+  dataSourceVersion: '3.4.0',
+};
 
 export const RULE_CORPUS: RuleCorpus[] = [
   {
@@ -229,6 +250,184 @@ export const RULE_CORPUS: RuleCorpus[] = [
         ppl: 'source=a | union [ source=b ]',
         context: { fields: FIELDS, isCalcite: false, dataSourceVersion: '3.7.0' },
         note: 'suppressed off Calcite',
+      },
+    ],
+  },
+  {
+    // field-validation is intentionally NOT in this corpus: on the compiled
+    // simplified grammar the `source` fromClause keyword is itself flagged as an
+    // unknown field (a known compiled-surface quirk not fixed on this branch), so
+    // every source-first snippet trips it on compiled and the cross-surface
+    // "negatives stay silent everywhere" invariant can't hold. It is allowlisted
+    // in rule_corpus.test.ts (UNCHECKABLE_OFFLINE) with that reason; its real
+    // behavior is covered by the analyzer/field-validation suites and the live
+    // oracle (Layer C).
+    ruleId: 'flat-object-subfield',
+    surfaces: ['compiled', 'runtime'],
+    positives: [
+      {
+        ppl: 'source=accounts | fields attributes.http.method',
+        context: CTX_WITH_TYPES,
+        note: 'subfield of a flat_object field (unqueryable in PPL)',
+      },
+      {
+        ppl: 'source=accounts | fields attributes',
+        context: CTX_WITH_TYPES,
+        note: 'bare flat_object root is also unqueryable',
+      },
+    ],
+    negatives: [
+      {
+        ppl: 'source=accounts | fields balance',
+        context: CTX_WITH_TYPES,
+        note: 'a non-flat_object field',
+      },
+      {
+        ppl: 'source=accounts | fields attributes.http.method',
+        context: CTX_FIELDS_ONLY,
+        note: 'self-suppress without a typeMap',
+      },
+    ],
+  },
+  {
+    ruleId: 'enabled-false-object',
+    surfaces: ['compiled', 'runtime'],
+    positives: [
+      {
+        ppl: 'source=accounts | fields raw.k.deep',
+        context: CTX_DISABLED_OBJ,
+        note: 'field inside an enabled:false object (resolves to null)',
+      },
+    ],
+    negatives: [
+      {
+        ppl: 'source=accounts | fields raw',
+        context: CTX_DISABLED_OBJ,
+        note: 'the object root itself is not flagged',
+      },
+      {
+        ppl: 'source=accounts | fields raw.k.deep',
+        context: CTX_WITH_TYPES,
+        note: 'self-suppress without the disabledObjectFields set',
+      },
+    ],
+  },
+  {
+    ruleId: 'expand-on-non-array',
+    surfaces: ['compiled', 'runtime'],
+    positives: [
+      {
+        ppl: 'source=accounts | expand firstname',
+        context: CTX_WITH_TYPES,
+        note: 'expand on a text (non-array) field',
+      },
+    ],
+    negatives: [
+      {
+        ppl: 'source=accounts | expand raw',
+        context: CTX_WITH_TYPES,
+        note: 'expand on an object (array-like) field is allowed',
+      },
+      {
+        ppl: 'source=accounts | expand firstname',
+        context: CTX_FIELDS_ONLY,
+        note: 'self-suppress without a typeMap',
+      },
+    ],
+  },
+  {
+    // Runtime-only: on the compiled surface the wildcard source pattern does not
+    // reach the tableSource shape the detector keys on, so it no-ops there.
+    ruleId: 'wildcard-source-zero-match',
+    surfaces: ['runtime'],
+    positives: [
+      {
+        ppl: 'source=nope-* | head 1',
+        context: CTX_VISIBLE_INDICES,
+        note: 'wildcard pattern matching none of the visible indices',
+      },
+    ],
+    negatives: [
+      {
+        ppl: 'source=logs-* | head 1',
+        context: CTX_VISIBLE_INDICES,
+        note: 'wildcard pattern matching at least one visible index',
+      },
+      {
+        ppl: 'source=nope-* | head 1',
+        context: CTX_FIELDS_ONLY,
+        note: 'self-suppress without a visible-index list',
+      },
+    ],
+  },
+  {
+    ruleId: 'dedup-consecutive-unsupported',
+    surfaces: ['compiled', 'runtime'],
+    positives: [
+      {
+        ppl: 'source=accounts | dedup state consecutive=true',
+        context: CTX_CALCITE_34,
+        note: 'dedup consecutive=true relies on Calcite fallback',
+      },
+    ],
+    negatives: [
+      {
+        ppl: 'source=accounts | dedup state consecutive=false',
+        context: CTX_CALCITE_34,
+        note: 'consecutive=false is natively supported',
+      },
+      {
+        ppl: 'source=accounts | dedup state consecutive=true',
+        context: { fields: FIELDS, isCalcite: false, dataSourceVersion: '3.4.0' },
+        note: 'suppressed off Calcite',
+      },
+    ],
+  },
+  {
+    // Runtime-only + Calcite-gated: `replacePair` is absent on the compiled
+    // surface, so the detector no-ops there (mirrors union-min-datasets).
+    ruleId: 'replace-wildcard-asymmetry',
+    surfaces: ['runtime'],
+    positives: [
+      {
+        ppl: 'source=accounts | replace "a*b*" with "c*" in state',
+        context: CTX_CALCITE_34,
+        note: 'asymmetric wildcard counts (2 in pattern, 1 in replacement)',
+      },
+    ],
+    negatives: [
+      {
+        ppl: 'source=accounts | replace "a*b*" with "c*d*" in state',
+        context: CTX_CALCITE_34,
+        note: 'symmetric wildcard counts',
+      },
+      {
+        ppl: 'source=accounts | replace "a*b*" with "c*" in state',
+        context: { fields: FIELDS, isCalcite: false, dataSourceVersion: '3.4.0' },
+        note: 'suppressed off Calcite',
+      },
+    ],
+  },
+  {
+    ruleId: 'unsupported-window-function-in-eventstats',
+    surfaces: ['compiled', 'runtime'],
+    positives: [
+      {
+        ppl: 'source=accounts | eventstats rank() as r by state',
+        context: CTX_FIELDS_ONLY,
+        note: 'rank is not a supported window function (only row_number is)',
+      },
+    ],
+    negatives: [
+      {
+        ppl: 'source=accounts | eventstats row_number() as r by state',
+        context: CTX_FIELDS_ONLY,
+        note: 'row_number is supported',
+      },
+      {
+        ppl: 'source=accounts | eventstats avg(balance) as a by state',
+        context: CTX_FIELDS_ONLY,
+        note: 'a plain aggregate is not a window function',
       },
     ],
   },

@@ -9,6 +9,7 @@ import * as antlr from 'antlr4ng';
 import { SimplifiedOpenSearchPPLLexer, SimplifiedOpenSearchPPLParser } from '@osd/antlr-grammar';
 import { runLint } from '../lint_runner';
 import { createCompiledRuleNameToIndex } from '../rule_index';
+import { getBundledCatalog } from '../catalog';
 import { LintRunContext } from '../types';
 import {
   deserializeGrammar,
@@ -78,14 +79,43 @@ describe('PPL lint rule corpus (Option 1, Layer B)', () => {
     );
   }
 
-  // Sanity: the corpus must cover every rule that can fire on the parse tree
-  // (i.e. every non-explain catalog rule). Explain-backed rules read an
-  // `_explain` plan, not the tree, so they are out of this layer's scope and
-  // covered by the engine oracle (Layer C) instead.
-  it('covers a stable, known set of rule ids', () => {
-    const covered = RULE_CORPUS.map((c) => c.ruleId).sort();
-    expect(covered).toEqual([...covered].sort()); // no accidental dupes break ordering
-    expect(new Set(covered).size).toBe(covered.length);
+  // Self-enforcing coverage: the corpus must exercise EVERY rule that can fire on
+  // the parse tree — i.e. every non-explain catalog rule — minus an explicit,
+  // reasoned allowlist. Explain-backed rules read an `_explain` plan, not the
+  // tree, so they are out of this layer's scope (covered by the engine oracle,
+  // Layer C). Deriving `expected` from the catalog turns the footgun "add a
+  // detector + catalog entry, forget the corpus row" into a hard CI failure.
+  //
+  // Rules that genuinely cannot be exercised by this offline suite. Each MUST
+  // carry a reason; a growing list is a smell.
+  //   - multisearch-min-subsearch: the bundled grammar fixture predates the
+  //     command and parses it as a bare identifier, so no surface here can
+  //     trigger it (the runtime positive is covered by the live oracle, Layer C).
+  //   - field-validation: on the compiled simplified grammar the `source`
+  //     fromClause keyword is itself flagged as an unknown field (a known
+  //     sub-3.6/compiled quirk not yet fixed on this branch), so EVERY
+  //     source-first snippet — positive or negative — raises field-validation on
+  //     the compiled surface. The cross-surface "negatives stay silent
+  //     everywhere" invariant therefore can't hold for it here; its real
+  //     behavior is covered by analyzer/field-validation suites on the runtime
+  //     surface and by the live oracle (Layer C).
+  const UNCHECKABLE_OFFLINE = new Set<string>(['multisearch-min-subsearch', 'field-validation']);
+
+  it('covers every non-explain catalog rule (or explicitly allowlists it)', () => {
+    const expected = getBundledCatalog()
+      .filter((r) => !r.needsExplain)
+      .map((r) => r.id)
+      .filter((id) => !UNCHECKABLE_OFFLINE.has(id))
+      .sort();
+    const covered = RULE_CORPUS.map((c) => c.ruleId)
+      .filter((id) => !UNCHECKABLE_OFFLINE.has(id))
+      .sort();
+    expect(covered).toEqual(expected); // a missing OR orphan corpus row fails here
+    expect(new Set(covered).size).toBe(covered.length); // keep the dedupe guard
+    // The allowlist must stay minimal + intentional — flag silent growth.
+    expect([...UNCHECKABLE_OFFLINE].sort()).toEqual(
+      ['field-validation', 'multisearch-min-subsearch'].sort()
+    );
   });
 
   for (const rule of RULE_CORPUS) {

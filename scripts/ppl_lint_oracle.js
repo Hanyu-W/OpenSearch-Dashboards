@@ -37,9 +37,14 @@
  *                             (agg-on-text), zero-count-while-control-positive
  *                             (type-mismatch). Independent corroboration of C'.
  *
- * Honest by construction: a rule reports AGREE only when its sub-layer(s)
- * positively confirm the premise on this engine; otherwise DRIFT (with the
- * observed verdicts) so the rule author can re-check `appliesTo`/`severity`.
+ * Honest by construction, three verdicts so the printed result matches what was
+ * actually observed:
+ *   AGREE        — a sub-layer positively confirmed the premise on this engine.
+ *   DRIFT        — an applicable sub-layer MISMATCHED; re-check the rule's
+ *                  `appliesTo`/`severity` (the only state that exits non-zero).
+ *   INCONCLUSIVE — no applicable sub-layer could run here (e.g. a Calcite-only
+ *                  plan signature on a v2 engine, or no plan returned); neither
+ *                  agreement nor drift, so it never fails CI.
  *
  *   node scripts/ppl_lint_oracle.js [host] [index]
  *
@@ -131,9 +136,14 @@ const allNullColumn = (r) => {
   const rows = rowsOf(r);
   return !!rows && rows.length > 0 && rows.every((row) => row.every((v) => v === null));
 };
-const noNullColumn = (r) => {
+// The control for an all-null trigger must merely DIFFER from all-null, i.e.
+// have at least one non-null cell. Requiring zero nulls (the old noNullColumn)
+// falsely failed the control whenever the divisor field is itself sometimes
+// null — the verdict was then decided by incidental data nullity, not rule
+// behavior. "Not all-null" is exactly the documented C" signal.
+const notAllNullColumn = (r) => {
   const rows = rowsOf(r);
-  return !!rows && rows.length > 0 && rows.every((row) => row.every((v) => v !== null));
+  return !!rows && rows.length > 0 && !rows.every((row) => row.every((v) => v === null));
 };
 const firstCell = (r) => {
   const rows = rowsOf(r);
@@ -172,9 +182,10 @@ const PROBES = [
     // control divides by 1. Version-robust: matches the `, 0)` / `,0)` divisor.
     planTriggerSignature: /(DIVIDE\([^)]*,\s*0\))|(\/\([^)]*,\s*0\))/,
     planControlAbsent: /(DIVIDE\([^)]*,\s*0\))|(\/\([^)]*,\s*0\))/,
-    // C": the computed column is ALL NULL on the trigger, never null on control.
+    // C": the computed column is ALL NULL on the trigger; the control merely
+    // differs from all-null (at least one non-null cell).
     valueTrigger: allNullColumn,
-    valueControl: noNullColumn,
+    valueControl: notAllNullColumn,
   },
   {
     rule: 'agg-on-text',
@@ -224,9 +235,19 @@ function pad(s, n) {
   return String(s).padEnd(n);
 }
 
+// Compute the verdict for one probe. Three states, so the printed verdict
+// matches the header contract ("AGREE only when a sub-layer positively
+// confirms"):
+//   - failed=true (some applicable layer MISMATCHED)        → DRIFT  (exit 1)
+//   - else confirmed=true (≥1 applicable layer VERIFIED)    → AGREE
+//   - else (every applicable layer deferred / inconclusive) → INCONCLUSIVE
+// INCONCLUSIVE is neither agreement nor drift: a Calcite-only signature on a v2
+// engine, or an engine that returns no plan, cannot confirm the premise here —
+// reporting DRIFT there would be a false failure, reporting AGREE a false pass.
 async function evaluate(p) {
   const notes = [];
-  let agree = true;
+  let failed = false; // some applicable layer MISMATCHED → DRIFT
+  let confirmed = false; // some applicable layer POSITIVELY verified → eligible for AGREE
 
   // Layer C — result-frame loud/ok divergence.
   if (p.layers.includes('C')) {
@@ -236,7 +257,8 @@ async function evaluate(p) {
     notes.push(
       `C[result-frame]: trigger=${verdict(t)} control=${verdict(c)} → ${ok ? 'confirms' : 'NO'}`
     );
-    agree = agree && ok;
+    if (ok) confirmed = true;
+    else failed = true;
   }
 
   // Layer C' — plan-structure oracle via _explain. Handles both the Calcite and
@@ -247,17 +269,17 @@ async function evaluate(p) {
     const tp = planText(te);
     const cp = planText(ce);
     const fmt = planFormat(te);
-    const hasPlan = tp.trim().length > 0;
-    if (!hasPlan) {
-      notes.push(`C'[plan]: no plan returned → cannot confirm via plan`);
-      agree = false;
-    } else if (p.cprimeCalciteOnly && fmt !== 'calcite') {
+    if (p.cprimeCalciteOnly && fmt !== 'calcite') {
       // The plan signature only exists in the Calcite format; on the v2 engine
-      // this layer is not applicable, so defer to C" rather than report a false
-      // mismatch. (The premise itself is still checked by the value layer.)
+      // this layer is NOT APPLICABLE — defer rather than report a false
+      // mismatch. Checked BEFORE the no-plan case so a v2 engine never reports a
+      // false DRIFT here; the premise is still checked by any C" layer.
       notes.push(
-        `C'[plan]: signature is Calcite-only; engine returned '${fmt}' plan → deferring to C"`
+        `C'[plan]: signature is Calcite-only; engine returned '${fmt}' plan → n/a, deferring`
       );
+    } else if (tp.trim().length === 0) {
+      // Inability to fetch a plan is inconclusive, not drift — do NOT set failed.
+      notes.push(`C'[plan]: no plan returned → cannot confirm via plan`);
     } else {
       let ok = true;
       if (p.planTriggerSignature) ok = ok && p.planTriggerSignature.test(tp);
@@ -267,7 +289,8 @@ async function evaluate(p) {
       notes.push(
         `C'[plan,${fmt}]: structural signature ${ok ? 'matched' : 'MISMATCH'} on this version`
       );
-      agree = agree && ok;
+      if (ok) confirmed = true;
+      else failed = true;
     }
   }
 
@@ -277,12 +300,15 @@ async function evaluate(p) {
     const c = await runQuery(p.control);
     const ok = (!p.valueTrigger || p.valueTrigger(t)) && (!p.valueControl || p.valueControl(c));
     notes.push(`C"[value]: assertion ${ok ? 'held' : 'FAILED'} (trigger vs control frame)`);
-    agree = agree && ok;
+    if (ok) confirmed = true;
+    else failed = true;
   }
 
   // Order family with only a plan layer is informational about determinism too:
   // run twice and report if the frame ever diverges (a positive proof of the
-  // nondeterminism premise that no single run can give).
+  // nondeterminism premise that no single run can give). Informational ONLY —
+  // a stable pair is explicitly NOT a positive confirmation, so it must never
+  // feed `confirmed` (that would be fake agreement).
   if (p.family === 'order') {
     const a = await runQuery(p.trigger);
     const b = await runQuery(p.trigger);
@@ -293,7 +319,10 @@ async function evaluate(p) {
     }
   }
 
-  return { agree, notes };
+  let verdictLabel = 'INCONCLUSIVE';
+  if (failed) verdictLabel = 'DRIFT';
+  else if (confirmed) verdictLabel = 'AGREE';
+  return { verdictLabel, notes };
 }
 
 (async () => {
@@ -310,22 +339,33 @@ async function evaluate(p) {
 
   let agreeCount = 0;
   const drift = [];
+  const inconclusive = [];
 
   for (const p of PROBES) {
-    const { agree, notes } = await evaluate(p);
-    if (agree) agreeCount++;
-    else drift.push(p.rule);
-    console.log(
-      `${pad(p.rule, 30)} ${pad(`[${p.layers.join('+')}]`, 16)} ${agree ? 'AGREE' : 'DRIFT'}`
-    );
+    const { verdictLabel, notes } = await evaluate(p);
+    if (verdictLabel === 'AGREE') agreeCount++;
+    else if (verdictLabel === 'DRIFT') drift.push(p.rule);
+    else inconclusive.push(p.rule);
+    console.log(`${pad(p.rule, 30)} ${pad(`[${p.layers.join('+')}]`, 16)} ${verdictLabel}`);
     for (const n of notes) console.log(`    ${n}`);
   }
 
   console.log('');
   console.log('-'.repeat(72));
   console.log(
-    `machine-checkable rules: ${agreeCount}/${PROBES.length} agree on engine ${version}.`
+    `machine-checkable rules: ${agreeCount}/${PROBES.length} confirmed on engine ${version}` +
+      `${inconclusive.length > 0 ? ` (${inconclusive.length} inconclusive)` : ''}.`
   );
+  if (inconclusive.length > 0) {
+    console.log('');
+    console.log('INCONCLUSIVE — no applicable sub-layer could confirm these on this engine');
+    console.log('(e.g. a Calcite-only plan signature on a v2 engine). NOT drift, NOT agreement:');
+    for (const r of inconclusive) {
+      console.log(
+        `  •  ${r}: premise not checkable here; run against a matching engine to confirm.`
+      );
+    }
+  }
   if (drift.length > 0) {
     console.log('');
     console.log('DRIFT REPORT — these rule premises did NOT confirm on this engine:');
@@ -335,6 +375,9 @@ async function evaluate(p) {
       console.log(`      rules_catalog.json; the engine behavior the rule assumes may`);
       console.log(`      have changed. Drift is informational — never an auto-edit.`);
     }
+    // Exit non-zero ONLY on positive drift, never on inconclusive (which is the
+    // expected state for a cross-version/cross-engine signature that can't run
+    // here — failing on it would be a false CI signal).
     process.exitCode = 1;
   }
 })();
