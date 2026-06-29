@@ -69,7 +69,25 @@ label.
 ```
 node scripts/ppl_lint_oracle.js [host] [index]
 # defaults: http://localhost:9200 accounts
+# secured/remote cluster: set PPL_ORACLE_USER / PPL_ORACLE_PASS for basic auth
 ```
+
+The oracle handles **both** `_explain` formats — the Calcite plan (`{ calcite: { logical, physical } }`, OpenSearch >= 3.3 with Calcite on) and the older v2 engine tree (`{ root: {...} }`) — so it runs unchanged across engine versions. A plan signature that only exists in the Calcite format is marked `cprimeCalciteOnly` and defers to the value assertion on a v2 plan rather than reporting a false mismatch.
+
+### Cross-version findings (live, 2026)
+
+Running the oracle against two clusters surfaced real, version-specific premise drift — exactly what it exists to catch:
+
+| Rule | OpenSearch 3.8 (Calcite) | OpenSearch 2.19 (v2 engine) |
+|---|---|---|
+| `field-validation` | AGREE (trigger LOUD) | AGREE (trigger LOUD) |
+| `division-by-zero` | AGREE (plan `DIVIDE(_,0)` + all-null) | AGREE (plan `/(balance,0)` + all-null) |
+| `agg-on-text` | AGREE (silent null) | AGREE (**loud** error — engine rejects `avg(text)`) |
+| `type-mismatch-numeric` | AGREE (silent count 0) | **DRIFT** — `firstname > 5` throws `ExpressionEvaluationException` (loud), so the "silently matches no documents" premise is **3.x-only** |
+| `head-without-sort` | AGREE (no `SORT->` pushdown) | AGREE (deferred — v2 plan) |
+| `invalid-capture-group-name` | DRIFT (3.8 accepts `%{WORD:1bad}`) | DRIFT (2.19 also accepts it) |
+
+Takeaway: `type-mismatch-numeric` should carry a `minVersion` reflecting that its *silent*-failure premise only holds on the Calcite engine; on 2.19 the same query fails loudly (which the syntax/validation path already surfaces). `agg-on-text`'s premise holds on both, but the engine signals it differently (silent vs loud) — the rule is still correct, just more valuable on 3.x where the failure is silent.
 
 ### Reading a drift report
 

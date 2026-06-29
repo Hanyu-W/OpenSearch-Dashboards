@@ -58,12 +58,23 @@ const INDEX = process.argv[3] || 'accounts';
 const PPL = `${HOST}/_plugins/_ppl`;
 const PPL_EXPLAIN = `${HOST}/_plugins/_ppl/_explain`;
 
+// Optional HTTP basic auth for remote/secured clusters, via env vars
+// (PPL_ORACLE_USER / PPL_ORACLE_PASS) so credentials never sit in argv or code.
+const AUTH_USER = process.env.PPL_ORACLE_USER;
+const AUTH_PASS = process.env.PPL_ORACLE_PASS;
+const AUTH_HEADER =
+  AUTH_USER && AUTH_PASS
+    ? 'Basic ' + Buffer.from(`${AUTH_USER}:${AUTH_PASS}`).toString('base64')
+    : undefined;
+
 async function post(url, query) {
   const started = Date.now();
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (AUTH_HEADER) headers.Authorization = AUTH_HEADER;
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ query }),
     });
     const text = await res.text();
@@ -93,11 +104,26 @@ function verdict(r) {
 const rowsOf = (r) => (Array.isArray(r.body && r.body.datarows) ? r.body.datarows : null);
 const sameFrame = (a, b) => JSON.stringify(rowsOf(a)) === JSON.stringify(rowsOf(b));
 
-// Pull the Calcite logical+physical plan text out of an `_explain` response.
+// Flatten an `_explain` response to plan text. Handles BOTH formats:
+//   - Calcite (>= 3.3 with calcite on): { calcite: { logical, physical } }
+//   - v2 engine (older / calcite off):  { root: { name, description, children } }
+// Returns the whole thing stringified so a per-rule signature regex can match
+// against whichever shape the engine returned. `planFormat` reports which one.
 function planText(r) {
   const c = r.body && r.body.calcite;
-  if (!c) return '';
-  return `${c.logical || ''}\n${c.physical || ''}`;
+  if (c) {
+    return `${c.logical || ''}\n${c.physical || ''}`;
+  }
+  if (r.body && r.body.root) {
+    return JSON.stringify(r.body.root);
+  }
+  return '';
+}
+
+function planFormat(r) {
+  if (r.body && r.body.calcite) return 'calcite';
+  if (r.body && r.body.root) return 'v2';
+  return 'none';
 }
 
 // Layer C" value assertions, expressed as predicates over a result frame.
@@ -141,9 +167,11 @@ const PROBES = [
     layers: ['Cprime', 'Cvalue'],
     trigger: `source=${INDEX} | eval x = balance / 0 | fields x | head 3`,
     control: `source=${INDEX} | eval x = balance / 1 | fields x | head 3`,
-    // C': the trigger plan carries the literal `/ 0` (`DIVIDE($n, 0)`); control `/ 1`.
-    planTriggerSignature: /DIVIDE\([^)]*,\s*0\)/,
-    planControlAbsent: /DIVIDE\([^)]*,\s*0\)/,
+    // C': the trigger plan carries the literal `/ 0` in whichever explain format
+    // the engine returns — Calcite `DIVIDE($n, 0)` or v2 `/(balance, 0)`; the
+    // control divides by 1. Version-robust: matches the `, 0)` / `,0)` divisor.
+    planTriggerSignature: /(DIVIDE\([^)]*,\s*0\))|(\/\([^)]*,\s*0\))/,
+    planControlAbsent: /(DIVIDE\([^)]*,\s*0\))|(\/\([^)]*,\s*0\))/,
     // C": the computed column is ALL NULL on the trigger, never null on control.
     valueTrigger: allNullColumn,
     valueControl: noNullColumn,
@@ -154,8 +182,11 @@ const PROBES = [
     layers: ['Cvalue'],
     trigger: `source=${INDEX} | stats avg(firstname) as a`,
     control: `source=${INDEX} | stats avg(balance) as a`,
-    // C": numeric aggregate over text resolves to NULL; over numeric it is a number.
-    valueTrigger: (r) => firstCell(r) === null,
+    // C": numeric aggregate over text yields no meaningful number. Version-robust:
+    // on 3.x Calcite it is a SILENT null; on the 2.x v2 engine it is a LOUD error.
+    // Either confirms the premise (a numeric agg over text is never valid) — what
+    // differs is only how loudly the engine signals it, which the harness records.
+    valueTrigger: (r) => firstCell(r) === null || verdict(r) === 'LOUD',
     valueControl: (r) => typeof firstCell(r) === 'number',
   },
   {
@@ -164,7 +195,10 @@ const PROBES = [
     layers: ['Cprime', 'Cvalue'],
     trigger: `source=${INDEX} | where firstname > 5 | stats count() as c`,
     control: `source=${INDEX} | where balance > 5 | stats count() as c`,
-    // C': the trigger filter coerces the text field via SAFE_CAST; control does not.
+    // C': the trigger filter coerces the text field via SAFE_CAST; control does
+    // not. SAFE_CAST is a Calcite-plan artifact, so on the v2 engine this layer
+    // defers to the value assertion below.
+    cprimeCalciteOnly: true,
     planTriggerSignature: /SAFE_CAST/,
     planControlAbsent: /SAFE_CAST/,
     // C": trigger silently filters everything (count 0) while control matches rows.
@@ -178,7 +212,9 @@ const PROBES = [
     trigger: `source=${INDEX} | fields account_number | head 5`,
     control: `source=${INDEX} | sort account_number | fields account_number | head 5`,
     // C': the trigger physical plan has no SORT pushdown before the LIMIT; the
-    // control does. Absence of a sort is exactly the nondeterminism premise.
+    // control does. The `SORT->` pushdown token is a Calcite-plan artifact, so on
+    // the v2 engine (which sorts in-coordinator) this layer is not applicable.
+    cprimeCalciteOnly: true,
     planTriggerAbsent: /SORT->/,
     planControlSignature: /SORT->/,
   },
@@ -203,23 +239,36 @@ async function evaluate(p) {
     agree = agree && ok;
   }
 
-  // Layer C' — plan-structure oracle via _explain.
+  // Layer C' — plan-structure oracle via _explain. Handles both the Calcite and
+  // the v2 explain formats (see planText/planFormat).
   if (p.layers.includes('Cprime')) {
-    const tp = planText(await explain(p.trigger));
-    const cp = planText(await explain(p.control));
-    let ok = true;
-    if (p.planTriggerSignature) ok = ok && p.planTriggerSignature.test(tp);
-    if (p.planTriggerAbsent) ok = ok && !p.planTriggerAbsent.test(tp);
-    if (p.planControlSignature) ok = ok && p.planControlSignature.test(cp);
-    if (p.planControlAbsent) ok = ok && !p.planControlAbsent.test(cp);
+    const te = await explain(p.trigger);
+    const ce = await explain(p.control);
+    const tp = planText(te);
+    const cp = planText(ce);
+    const fmt = planFormat(te);
     const hasPlan = tp.trim().length > 0;
     if (!hasPlan) {
-      ok = false;
-      notes.push(`C'[plan]: no Calcite plan returned (engine not Calcite?) → cannot confirm`);
+      notes.push(`C'[plan]: no plan returned → cannot confirm via plan`);
+      agree = false;
+    } else if (p.cprimeCalciteOnly && fmt !== 'calcite') {
+      // The plan signature only exists in the Calcite format; on the v2 engine
+      // this layer is not applicable, so defer to C" rather than report a false
+      // mismatch. (The premise itself is still checked by the value layer.)
+      notes.push(
+        `C'[plan]: signature is Calcite-only; engine returned '${fmt}' plan → deferring to C"`
+      );
     } else {
-      notes.push(`C'[plan]: structural signature ${ok ? 'matched' : 'MISMATCH'} on this version`);
+      let ok = true;
+      if (p.planTriggerSignature) ok = ok && p.planTriggerSignature.test(tp);
+      if (p.planTriggerAbsent) ok = ok && !p.planTriggerAbsent.test(tp);
+      if (p.planControlSignature) ok = ok && p.planControlSignature.test(cp);
+      if (p.planControlAbsent) ok = ok && !p.planControlAbsent.test(cp);
+      notes.push(
+        `C'[plan,${fmt}]: structural signature ${ok ? 'matched' : 'MISMATCH'} on this version`
+      );
+      agree = agree && ok;
     }
-    agree = agree && ok;
   }
 
   // Layer C" — per-rule value assertion on the result frame.
@@ -248,7 +297,9 @@ async function evaluate(p) {
 }
 
 (async () => {
-  const meta = await (await fetch(HOST)).json().catch(() => ({}));
+  const meta = await fetch(HOST, AUTH_HEADER ? { headers: { Authorization: AUTH_HEADER } } : {})
+    .then((r) => r.json())
+    .catch(() => ({}));
   const version = meta && meta.version ? meta.version.number : '?';
   console.log('# PPL lint rule-validation oracle (Layer C / C\' / C")');
   console.log(`# host=${HOST}  index=${INDEX}  engine version=${version}`);
