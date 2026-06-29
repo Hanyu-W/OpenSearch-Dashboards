@@ -12,9 +12,12 @@
  *   1. preconditions — AI features on, an index (datasetTitle) is known;
  *   2. agent probe   — GET assist/languages must list PPL (graceful no-op when
  *      no agent is configured: the local SQL cluster has no ML-Commons);
- *   3. generate      — POST the redacted, length-capped fix prompt;
+ *   3. generate      — POST the length-capped fix prompt (the query is sent
+ *      verbatim, gated on the same ENABLE_AI_FEATURES consent as Query-Assist;
+ *      see build_fix_prompt for the egress posture);
  *   4. re-validate   — parse-clean + diagnostic cleared + no new diagnostic +
- *      pipeline-shape preserved + token overlap (see validate_candidate_fix);
+ *      pipeline-shape preserved + token overlap, all against the raw original so
+ *      the prompt and the validator agree (see validate_candidate_fix);
  *   5. return the accepted text for the caller to apply via pushEditOperations.
  *
  * The agent's output is untrusted (ARCC AIQi): it is only ever returned as a
@@ -22,6 +25,7 @@
  * call, and applied as editor text — never executed.
  */
 
+import { PPLLintHttpClient } from '../../lint_bridge';
 import { buildFixPrompt } from './build_fix_prompt';
 import {
   validateCandidateFix,
@@ -30,25 +34,13 @@ import {
 } from './validate_candidate_fix';
 
 /**
- * Minimal HTTP surface — structurally compatible with the bridge's
- * `PPLLintHttpClient` (whose `get` is optional) and with core's `HttpSetup`
- * (which provides both). `get` is optional here too; a client without it is
- * treated as "no agent reachable" (the probe returns false), so the AI fix
- * degrades gracefully rather than failing to type-check at the call site.
+ * HTTP surface for the AI fix. An alias of the bridge's {@link PPLLintHttpClient}
+ * (whose `get` is optional and `post` required) rather than a parallel shape — it
+ * is exactly what `getPPLLintContext(model).http` returns and is satisfied by
+ * core's `HttpSetup`. A client without `get` is treated as "no agent reachable"
+ * (the probe returns false), so the AI fix degrades gracefully.
  */
-export interface AiFixHttpClient {
-  get?: (
-    path: string,
-    options?: { query?: Record<string, string | number | boolean | undefined> }
-  ) => Promise<unknown>;
-  post: (
-    path: string,
-    options?: {
-      body?: BodyInit | null;
-      query?: Record<string, string | number | boolean | undefined>;
-    }
-  ) => Promise<unknown>;
-}
+export type AiFixHttpClient = PPLLintHttpClient;
 
 export interface RunAiFixRequest {
   /** The full query text to repair. */
@@ -87,7 +79,8 @@ async function pplAgentAvailable(deps: RunAiFixDeps, dataSourceId?: string): Pro
     const res = (await deps.http.get(deps.languagesPath, {
       query: { dataSourceId },
     })) as { configuredLanguages?: string[] } | undefined;
-    return Array.isArray(res?.configuredLanguages) && res!.configuredLanguages.includes(LANGUAGE);
+    const langs = res?.configuredLanguages;
+    return Array.isArray(langs) && langs.includes(LANGUAGE);
   } catch {
     return false;
   }

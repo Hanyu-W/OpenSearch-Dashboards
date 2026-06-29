@@ -45,9 +45,7 @@ import {
   LintFieldsCache,
   pplGrammarCache,
   shouldUseRuntimeGrammar,
-  deriveIsCalcite,
   calciteSettingsCache,
-  buildOverridesFromSettings,
   fetchVisibleIndices,
   fetchDisabledObjectFields,
   UI_SETTINGS,
@@ -212,24 +210,17 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
   useEffect(() => {
     const datasetId = dataset?.id;
     const dsId = dataset?.dataSource?.id;
-    const dsVersion = dataset?.dataSource?.version;
     let cancelled = false;
 
     const syncLint = () => {
-      const calcite = calciteSettingsCache.getCached(dsId);
-      syncPPLLintContext(editorRef.current, {
-        useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
-        dataSourceId: dsId,
-        dataSourceVersion: dsVersion,
-        isCalcite: calcite?.isCalcite ?? deriveIsCalcite(dsVersion),
-        settings: { allJoinTypesAllowed: calcite?.allJoinTypesAllowed ?? false },
-        fields: lintFieldsRef.current.fields,
-        typeMap: lintFieldsRef.current.typeMap,
-        disabledObjectFields: lintFieldsRef.current.disabledObjectFields,
-        visibleIndices: lintFieldsRef.current.visibleIndices,
-        overrides: buildOverridesFromSettings(services.uiSettings),
-        http: services.http,
-      });
+      // Single context constructor: buildPPLLintContext (via getLintContext) is
+      // the only place a PPLLintContext is assembled, so datasetTitle /
+      // enableAIFeatures cannot be dropped here (they were absent from the old
+      // hand-rolled inline object, which left the AI quick-fix lightbulb hidden
+      // after every dataset load). It reads the same refs (lintFieldsRef /
+      // datasetRef) that loadFields updates synchronously before this call, and
+      // applies the cacheMatchesDataset guard the inline object lacked.
+      syncPPLLintContext(editorRef.current, getLintContext());
       const model = editorRef.current?.getModel();
       if (model) {
         void revalidatePPLModel(model);
@@ -302,6 +293,10 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     return () => {
       cancelled = true;
     };
+    // syncLint now calls the memoized getLintContext(); it reads only the
+    // refs/services already covered by the deps below, so it is intentionally
+    // omitted (same pattern as the settings-change effect).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     dataset?.id,
     dataset?.dataSource?.id,

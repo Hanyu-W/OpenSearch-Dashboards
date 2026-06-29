@@ -66,14 +66,20 @@ jest.mock('../../../../../../data/public', () => {
     syncPPLValidationContext: jest.fn(),
     syncPPLLintContext: jest.fn(),
     // Mirrors the real buildPPLLintContext closely enough for the host tests:
-    // derives dataSourceId/version from the dataset arg and carries overrides
-    // from uiSettings. The full behavior is covered in lint_context_builder.test.ts.
+    // derives dataSourceId/version from the dataset arg, carries overrides from
+    // uiSettings, and — critically for the AI quick-fix — the datasetTitle and
+    // enableAIFeatures fields. Only buildPPLLintContext sets those, so routing
+    // syncLint through it (not a hand-rolled inline object) is what keeps them
+    // on the stored context. The full behavior is covered in
+    // lint_context_builder.test.ts.
     buildPPLLintContext: jest.fn((dataset, _lintFields, services) => ({
       useRuntimeGrammar: false,
       dataSourceId: dataset?.dataSource?.id,
       dataSourceVersion: dataset?.dataSource?.version,
       overrides: services.uiSettings ? overrides : undefined,
       http: services.http,
+      datasetTitle: dataset?.title,
+      enableAIFeatures: true,
     })),
     UI_SETTINGS: { QUERY_ENHANCEMENTS_PPL_LINT_RULES: 'query:enhancements:pplLint:rules' },
     shouldUseRuntimeGrammar: jest.fn(() => false),
@@ -638,6 +644,33 @@ describe('useQueryPanelEditor', () => {
     it('getLintContext includes overrides built from uiSettings', () => {
       const ctx = captureContexts().getLintContext();
       expect(ctx.overrides).toEqual({ 'some-rule': { enabled: false } });
+    });
+
+    // Regression for the lightbulb-never-shows bug: the field-load effect's
+    // syncLint used to push a hand-rolled inline context that omitted
+    // datasetTitle/enableAIFeatures, so the AI quick-fix gate
+    // (enableAIFeatures !== false && !!datasetTitle) was always false after a
+    // dataset load. syncLint now routes through getLintContext/buildPPLLintContext,
+    // so the stored context must carry those AI fields.
+    it('getLintContext (used by syncLint) carries datasetTitle and enableAIFeatures (AI fix gate)', () => {
+      const ctx = captureContexts().getLintContext();
+      expect(ctx.datasetTitle).toBe('MDS Dataset');
+      expect(ctx.enableAIFeatures).toBe(true);
+    });
+
+    it('syncLint pushes a context carrying datasetTitle and enableAIFeatures', async () => {
+      // Drive the field-load effect's deterministic calcite-resolve branch
+      // (`if (services.http) calciteSettingsCache.resolve(...).then(syncLint)`).
+      mockServices.http = {};
+      renderHook(() => useQueryPanelEditor());
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const calls = (syncPPLLintContext as jest.Mock).mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      const lastCtx = calls[calls.length - 1][1];
+      expect(lastCtx.datasetTitle).toBe('MDS Dataset');
+      expect(lastCtx.enableAIFeatures).toBe(true);
     });
   });
 

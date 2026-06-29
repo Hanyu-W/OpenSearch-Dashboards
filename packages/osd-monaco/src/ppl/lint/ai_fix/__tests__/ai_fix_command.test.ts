@@ -14,9 +14,15 @@ jest.mock('../../../../monaco', () => ({
   },
 }));
 
-import { handleAiFixCommand, AiFixCommandArgs } from '../ai_fix_command';
+import {
+  handleAiFixCommand,
+  compiledLintFacts,
+  summarizeOutcome,
+  AiFixCommandArgs,
+} from '../ai_fix_command';
 import { AiFixHttpClient } from '../run_ai_fix';
 import { CandidateLintFacts } from '../validate_candidate_fix';
+import { LintRunContext } from '../../types';
 
 const ORIGINAL = 'source=accounts | where age = "thirty"';
 const FIXED = 'source=accounts | where age = 30';
@@ -97,5 +103,78 @@ describe('handleAiFixCommand', () => {
     );
     expect(outcome.status).toBe('skipped');
     expect(apply).not.toHaveBeenCalled();
+  });
+
+  // Issue 2: with NO injected deps.lint, the default compiledLintFacts runs the
+  // real analyzer bound to the model's lint context. type-mismatch-numeric is
+  // needsContext:true and self-suppresses without a typeMap, so re-validation is
+  // only meaningful when the context is threaded in.
+  describe('real re-validation via threaded lint context', () => {
+    const ctx: LintRunContext = {
+      fields: new Set(['age']),
+      typeMap: new Map([['age', 'long']]),
+    };
+
+    it('rejects a candidate that still trips the contextual rule (diagnostic-not-cleared)', async () => {
+      const apply = jest.fn();
+      const outcome = await handleAiFixCommand(
+        args,
+        // The agent "fixes" it to another non-numeric string → still trips
+        // type-mismatch-numeric once the rule re-fires with the typeMap.
+        http({
+          post: jest.fn(async () => ({ query: 'source=accounts | where age = "still-bad"' })),
+        }),
+        { datasetTitle: 'accounts', dataSourceId: 'mds-1', enableAIFeatures: true },
+        apply,
+        ORIGINAL,
+        undefined, // no deps → real compiledLintFacts / compiledPipelineShape
+        ctx
+      );
+      expect(outcome.status).toBe('rejected');
+      if (outcome.status === 'rejected') {
+        expect(outcome.validation.reason).toBe('diagnostic-not-cleared');
+      }
+      expect(apply).not.toHaveBeenCalled();
+    });
+
+    it('compiledLintFacts only raises the contextual rule when a typeMap is present', () => {
+      const bad = 'source=accounts | where age = "thirty"';
+      expect(compiledLintFacts(bad, ctx).ruleIds).toContain('type-mismatch-numeric');
+      // Without context the rule self-suppresses (the inert-revalidation bug).
+      expect(compiledLintFacts(bad).ruleIds).not.toContain('type-mismatch-numeric');
+    });
+  });
+
+  // Issue 9: the outcome is no longer discarded — it is summarized for the host
+  // notification sink. summarizeOutcome is the pure mapping.
+  describe('summarizeOutcome', () => {
+    it('maps applied to a bare applied summary', () => {
+      expect(summarizeOutcome({ status: 'applied', fixedQuery: FIXED })).toEqual({
+        status: 'applied',
+      });
+    });
+
+    it('carries the skip reason', () => {
+      expect(summarizeOutcome({ status: 'skipped', reason: 'no-agent' })).toEqual({
+        status: 'skipped',
+        reason: 'no-agent',
+      });
+    });
+
+    it('carries the rejection reason from the validation result', () => {
+      expect(
+        summarizeOutcome({
+          status: 'rejected',
+          validation: { accepted: false, reason: 'low-overlap' },
+        })
+      ).toEqual({ status: 'rejected', reason: 'low-overlap' });
+    });
+
+    it('carries the error message', () => {
+      expect(summarizeOutcome({ status: 'error', message: 'boom' })).toEqual({
+        status: 'error',
+        message: 'boom',
+      });
+    });
   });
 });

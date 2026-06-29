@@ -65,6 +65,23 @@ export interface PPLLintContext extends PPLValidationContext, LintPayloadContext
    * action is hidden entirely, matching every other Query-Assist surface.
    */
   enableAIFeatures?: boolean;
+  /**
+   * Host-supplied sink for AI-fix outcomes. The leaf package cannot import
+   * core's notifications/toasts, so the host wires this to
+   * `services.notifications.toasts` and the AI-fix command calls it with the
+   * round-trip result, giving the user visible feedback on every non-applied
+   * outcome (rejected / error / no-agent). Bridge-path only.
+   */
+  onAiFixOutcome?: (outcome: AiFixOutcomeSummary) => void;
+}
+
+/** A host-facing summary of an AI quick-fix round-trip, for user feedback. */
+export interface AiFixOutcomeSummary {
+  status: 'applied' | 'skipped' | 'rejected' | 'error';
+  /** RunAiFix `skipped.reason` or `rejected.validation.reason`, when present. */
+  reason?: string;
+  /** Error message, for the `error` status. */
+  message?: string;
 }
 
 export interface PPLLintBridgeRequest {

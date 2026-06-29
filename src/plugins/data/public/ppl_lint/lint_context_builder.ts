@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { i18n } from '@osd/i18n';
 import { IUiSettingsClient } from 'opensearch-dashboards/public';
 import { PPLLintContext } from '@osd/monaco';
-import { ENABLE_AI_FEATURES, HttpSetup } from '../../../../core/public';
+import { ENABLE_AI_FEATURES, HttpSetup, NotificationsStart } from '../../../../core/public';
 import {
   deriveIsCalcite,
   shouldUseRuntimeGrammar,
@@ -51,7 +52,11 @@ interface LintContextDataset {
 export function buildPPLLintContext(
   dataset: LintContextDataset | undefined,
   lintFields: LintFieldsCache,
-  services: { uiSettings: IUiSettingsClient; http: HttpSetup }
+  services: {
+    uiSettings: IUiSettingsClient;
+    http: HttpSetup;
+    notifications: NotificationsStart;
+  }
 ): PPLLintContext {
   const dsId = dataset?.dataSource?.id;
   const dsVersion = dataset?.dataSource?.version;
@@ -69,11 +74,42 @@ export function buildPPLLintContext(
     visibleIndices: cacheMatchesDataset ? lintFields.visibleIndices : undefined,
     overrides: buildOverridesFromSettings(services.uiSettings),
     http: services.http,
-    // The index + AI gate the AI quick-fix ("Ask Olly to fix") command reads via
-    // getPPLLintContext(model). datasetTitle is the dataset name the generate
-    // route takes as `index`; enableAIFeatures hides the action entirely when
-    // AI features are off. Both ride the runtime bridge path only.
+    // The index + AI-features flag the AI quick-fix ("Ask Olly to fix") command
+    // reads via getPPLLintContext(model). datasetTitle is the dataset name the
+    // generate route takes as `index`; enableAIFeatures hides the action
+    // entirely when AI features are off. Both ride the runtime bridge path only.
     datasetTitle: dataset?.title,
     enableAIFeatures: Boolean(services.uiSettings.get(ENABLE_AI_FEATURES, true)),
+    // Host-owned feedback for the AI fix round-trip. The leaf package can't raise
+    // a toast, so it calls back here. ai-disabled / no-index are expected silent
+    // states (the action wouldn't have shown), so they raise nothing.
+    onAiFixOutcome: (outcome) => {
+      const toasts = services.notifications.toasts;
+      if (outcome.status === 'applied') {
+        toasts.addSuccess(
+          i18n.translate('data.pplLint.aiFix.applied', {
+            defaultMessage: 'Applied the AI-suggested fix.',
+          })
+        );
+      } else if (outcome.status === 'error') {
+        toasts.addWarning(
+          i18n.translate('data.pplLint.aiFix.error', {
+            defaultMessage: 'Could not reach the AI fix service.',
+          })
+        );
+      } else if (outcome.status === 'rejected') {
+        toasts.addWarning(
+          i18n.translate('data.pplLint.aiFix.rejected', {
+            defaultMessage: 'The AI could not produce a safe fix for this query.',
+          })
+        );
+      } else if (outcome.reason === 'no-agent') {
+        toasts.addWarning(
+          i18n.translate('data.pplLint.aiFix.noAgent', {
+            defaultMessage: 'No AI assistant is configured for this data source.',
+          })
+        );
+      }
+    },
   };
 }
