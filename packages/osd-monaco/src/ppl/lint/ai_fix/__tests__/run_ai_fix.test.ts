@@ -53,13 +53,15 @@ describe('runAiFix', () => {
     const http = makeHttp();
     const outcome = await runAiFix(baseRequest, makeDeps(http));
     expect(outcome).toEqual({ status: 'applied', fixedQuery: FIXED });
-    // The generate POST carries index + language + a fix-shaped, redacted question.
+    // The generate POST carries index + language + a fix-shaped question with the
+    // query sent verbatim (Option B raw egress, gated on ENABLE_AI_FEATURES —
+    // same posture as Query-Assist), so the agent can return an applicable fix.
     const postBody = JSON.parse((http.post as jest.Mock).mock.calls[0][1].body);
     expect(postBody.index).toBe('accounts');
     expect(postBody.language).toBe('PPL');
     expect(postBody.dataSourceId).toBe('mds-1');
     expect(postBody.question).toContain('Fix this PPL query');
-    expect(postBody.question).not.toContain('thirty'); // redacted
+    expect(postBody.question).toContain(ORIGINAL); // verbatim, not redacted
   });
 
   it('skips when AI features are disabled (no egress)', async () => {

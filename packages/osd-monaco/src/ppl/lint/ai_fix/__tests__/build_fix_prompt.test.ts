@@ -3,49 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { buildFixPrompt, redactLiterals, capLength, MAX_QUERY_CHARS } from '../build_fix_prompt';
-
-describe('redactLiterals', () => {
-  it('redacts single-quoted string values but keeps field/command names', () => {
-    const out = redactLiterals("source=logs | where email = 'alice@example.com'");
-    expect(out).toBe("source=logs | where email = '<redacted>'");
-  });
-
-  it('redacts double-quoted string values', () => {
-    expect(redactLiterals('source=logs | where name = "Alice"')).toBe(
-      "source=logs | where name = '<redacted>'"
-    );
-  });
-
-  it('redacts bare numeric literals', () => {
-    expect(redactLiterals('source=logs | where age = 42')).toBe('source=logs | where age = <n>');
-  });
-
-  it('redacts signed and decimal numbers', () => {
-    expect(redactLiterals('source=logs | eval x = balance / -3.5')).toBe(
-      'source=logs | eval x = balance / <n>'
-    );
-  });
-
-  it('does not mangle digits embedded in identifiers', () => {
-    // account_number, geo_point2 etc. keep their characters.
-    expect(redactLiterals('source=logs | fields account_number, geo_point2')).toBe(
-      'source=logs | fields account_number, geo_point2'
-    );
-  });
-
-  it('does not redact a quoted number that is part of a string', () => {
-    expect(redactLiterals('source=logs | where v = "32"')).toBe(
-      "source=logs | where v = '<redacted>'"
-    );
-  });
-
-  it('handles a SSN-like literal (PII case)', () => {
-    expect(redactLiterals('source=people | where ssn = 123456789')).toBe(
-      'source=people | where ssn = <n>'
-    );
-  });
-});
+import { buildFixPrompt, capLength, MAX_QUERY_CHARS } from '../build_fix_prompt';
 
 describe('capLength', () => {
   it('returns short text unchanged', () => {
@@ -66,7 +24,7 @@ describe('capLength', () => {
 });
 
 describe('buildFixPrompt', () => {
-  it('embeds the diagnostic message and a redacted, capped query', () => {
+  it('embeds the diagnostic message and the (verbatim) query', () => {
     const prompt = buildFixPrompt("source=accounts | where age = 'thirty'", {
       message: 'Comparing a numeric field to a non-numeric string matches no documents.',
       ruleId: 'type-mismatch-numeric',
@@ -74,18 +32,21 @@ describe('buildFixPrompt', () => {
     expect(prompt).toContain('Comparing a numeric field to a non-numeric string');
     expect(prompt).toContain('Return ONLY the corrected PPL');
     expect(prompt).toContain('MINIMAL change');
-    // The literal value must NOT appear; its placeholder must.
-    expect(prompt).not.toContain('thirty');
-    expect(prompt).toContain("'<redacted>'");
-    // The query shape (fields/commands) is preserved for the model.
-    expect(prompt).toContain('source=accounts | where age =');
+    // Option B (raw egress): the query is sent verbatim — same posture as the
+    // existing Query-Assist surface — so the agent can return a directly
+    // applicable fix and re-validation stays coherent. The literal value is
+    // present (no client-side redaction).
+    expect(prompt).toContain("source=accounts | where age = 'thirty'");
+    // The prompt no longer promises placeholders that the validator would reject.
+    expect(prompt).not.toContain('<redacted>');
+    expect(prompt).not.toContain('placeholders in place');
   });
 
   it('caps a pathologically long query before egress', () => {
     const huge = `source=logs | where x = '${'a'.repeat(MAX_QUERY_CHARS * 2)}'`;
     const prompt = buildFixPrompt(huge, { message: 'm', ruleId: 'r' });
-    // Redaction collapses the long string to a placeholder, so the prompt is
-    // bounded regardless — assert it is well under the raw input length.
+    // The length cap bounds the egressed text regardless of input size.
+    expect(prompt).toContain('[truncated]');
     expect(prompt.length).toBeLessThan(huge.length);
   });
 });

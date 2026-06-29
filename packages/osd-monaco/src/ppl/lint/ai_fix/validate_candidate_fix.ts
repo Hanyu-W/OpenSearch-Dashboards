@@ -57,7 +57,67 @@ export interface ValidateCandidateResult {
     | 'diagnostic-not-cleared'
     | 'new-diagnostic'
     | 'shape-changed'
-    | 'low-overlap';
+    | 'low-overlap'
+    | 'operator-inverted';
+}
+
+/** Comparison operators, longest-first so `<=`/`>=`/`<>`/`!=`/`==` win over the single-char forms. */
+const COMPARISON_OPS = /(<=|>=|<>|!=|==|=|<|>)/g;
+
+/**
+ * Direction class of a comparison operator. An "inversion" is a flip to the
+ * OPPOSING class (gt↔lt, eq↔neq); a same-class change (`>`→`>=`, a boundary
+ * tweak) is a legitimate repair and is NOT flagged.
+ */
+type OpClass = 'gt' | 'lt' | 'eq' | 'neq';
+const OP_CLASS: Record<string, OpClass> = {
+  '>': 'gt',
+  '>=': 'gt',
+  '<': 'lt',
+  '<=': 'lt',
+  '=': 'eq',
+  '==': 'eq',
+  '!=': 'neq',
+  '<>': 'neq',
+};
+const OPPOSING_CLASS: Record<OpClass, OpClass> = { gt: 'lt', lt: 'gt', eq: 'neq', neq: 'eq' };
+
+/** Count comparison operators per direction class. */
+function operatorClassMultiset(query: string): Map<OpClass, number> {
+  const counts = new Map<OpClass, number>();
+  for (const op of query.match(COMPARISON_OPS) ?? []) {
+    const cls = OP_CLASS[op];
+    if (cls) {
+      counts.set(cls, (counts.get(cls) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+/**
+ * Detect a predicate-operator INVERSION (`>`→`<`, `=`→`!=`, `>=`→`<`, …) the
+ * token-overlap and command-shape checks are both blind to: `contentTokens`
+ * matches only `[a-z0-9_.]+`, dropping every operator, so `age > 5` and
+ * `age < 5` are indistinguishable to it, and the pipeline shape compares command
+ * names only. Conservative on purpose — flags only a flip to the OPPOSING
+ * direction class (a class loses an operator while its opposite gains one), so a
+ * same-class boundary tweak (`>`→`>=`) or a repair that merely adds/removes an
+ * operator (a cast guard) is not over-rejected. Range-operator flips are not
+ * covered by any lint rule (`type-mismatch-numeric` excludes range operators),
+ * so this is the only check that catches them.
+ */
+function isOperatorInverted(original: string, candidate: string): boolean {
+  const origClasses = operatorClassMultiset(original);
+  const candClasses = operatorClassMultiset(candidate);
+  for (const [cls, n] of origClasses) {
+    const opposite = OPPOSING_CLASS[cls];
+    const lostInClass = (candClasses.get(cls) ?? 0) < n;
+    const gainedInOpposite = (candClasses.get(opposite) ?? 0) > (origClasses.get(opposite) ?? 0);
+    if (lostInClass && gainedInOpposite) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Lowercase content tokens (identifiers/literals), excluding pure punctuation. */
@@ -121,6 +181,13 @@ export function validateCandidateFix(
   // 5. token overlap — catches whole-query regeneration that happens to share a shape
   if (tokenOverlap(original, trimmed) < MIN_TOKEN_OVERLAP) {
     return { accepted: false, reason: 'low-overlap' };
+  }
+
+  // 6. operator inversion — a `>`→`<` / `=`→`!=` flip keeps every content token
+  //    and the same shape, so steps 4-5 miss it; the lint rules miss range-op
+  //    flips too. Reject a candidate that flips a predicate to its inverse.
+  if (isOperatorInverted(original, trimmed)) {
+    return { accepted: false, reason: 'operator-inverted' };
   }
 
   return { accepted: true };

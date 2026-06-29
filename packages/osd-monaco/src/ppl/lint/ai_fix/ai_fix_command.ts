@@ -20,12 +20,13 @@
 import * as antlr from 'antlr4ng';
 import { SimplifiedOpenSearchPPLLexer, SimplifiedOpenSearchPPLParser } from '@osd/antlr-grammar';
 import { monaco } from '../../../monaco';
-import { getPPLLintContext } from '../../lint_bridge';
-import { runAiFix, AiFixHttpClient, RunAiFixDeps } from './run_ai_fix';
+import { getPPLLintContext, AiFixOutcomeSummary } from '../../lint_bridge';
+import { runAiFix, AiFixHttpClient, RunAiFixDeps, RunAiFixOutcome } from './run_ai_fix';
 import { CandidateLintFacts } from './validate_candidate_fix';
 import { getPPLLanguageAnalyzer } from '../../ppl_language_analyzer';
 import { buildPipelineShape } from '../pipeline_shape';
 import { createCompiledRuleNameToIndex } from '../rule_index';
+import { LintRunContext } from '../types';
 import { AI_FIX_COMMAND_ID } from './ai_fix_command_id';
 
 export { AI_FIX_COMMAND_ID };
@@ -45,10 +46,21 @@ export interface AiFixCommandArgs {
   message: string;
 }
 
-/** Lint a query on the compiled surface for re-validation (parse-clean + rule ids). */
-function compiledLintFacts(query: string): CandidateLintFacts {
+/**
+ * Lint a query on the compiled surface for re-validation (parse-clean + rule
+ * ids). The model's real lint context (field metadata, typeMap,
+ * disabledObjectFields, version, engine) is threaded in so context-aware rules
+ * actually re-fire: every AI-fixable rule is `needsContext:true` and
+ * self-suppresses without a `typeMap`/`disabledObjectFields`, so a contextless
+ * lint would never raise them — leaving the "diagnostic cleared / no new
+ * diagnostic" checks vacuous. Lints on the compiled-simplified surface (a
+ * documented narrow limitation: the marker that triggered the fix came from the
+ * runtime bundle, but the three operator/type-anchored AI-fixable rules key on
+ * anchors present on both surfaces, so they re-fire correctly here).
+ */
+export function compiledLintFacts(query: string, ctx?: LintRunContext): CandidateLintFacts {
   const validation = getPPLLanguageAnalyzer().validate(query);
-  const result = getPPLLanguageAnalyzer().lint(query);
+  const result = getPPLLanguageAnalyzer().lint(query, ctx);
   return {
     ruleIds: result.diagnostics.map((d) => d.ruleId),
     syntaxClean: validation.isValid,
@@ -67,6 +79,24 @@ function compiledPipelineShape(query: string): string[] {
     return buildPipelineShape(tree, createCompiledRuleNameToIndex()).stages.map((s) => s.command);
   } catch {
     return [];
+  }
+}
+
+/**
+ * Map a RunAiFixOutcome to the host-facing summary the lint context's
+ * `onAiFixOutcome` sink consumes. Pure + exported so it is unit-testable
+ * independently of Monaco. The host owns the wording/severity for each case.
+ */
+export function summarizeOutcome(outcome: RunAiFixOutcome): AiFixOutcomeSummary {
+  switch (outcome.status) {
+    case 'skipped':
+      return { status: 'skipped', reason: outcome.reason };
+    case 'rejected':
+      return { status: 'rejected', reason: outcome.validation.reason };
+    case 'error':
+      return { status: 'error', message: outcome.message };
+    default:
+      return { status: 'applied' };
   }
 }
 
@@ -95,7 +125,12 @@ export async function handleAiFixCommand(
   },
   apply: (fixedQuery: string) => void,
   query: string,
-  deps?: Partial<RunAiFixDeps>
+  deps?: Partial<RunAiFixDeps>,
+  // The model's real lint context (field metadata / typeMap / engine), threaded
+  // into the default re-validation lint so context-aware rules re-fire. Appended
+  // after `deps` so existing positional callers (which pass `deps` as the last
+  // arg) are unaffected. Ignored when `deps.lint` is injected (unit tests).
+  lintContext?: LintRunContext
 ): Promise<ReturnType<typeof runAiFix> extends Promise<infer R> ? R : never> {
   if (!http) {
     return { status: 'error', message: 'no http client on lint context' };
@@ -104,7 +139,7 @@ export async function handleAiFixCommand(
     http,
     languagesPath: ASSIST_LANGUAGES_PATH,
     generatePath: ASSIST_GENERATE_PATH,
-    lint: deps?.lint ?? compiledLintFacts,
+    lint: deps?.lint ?? ((q) => compiledLintFacts(q, lintContext)),
     pipelineShape: deps?.pipelineShape ?? compiledPipelineShape,
   };
   const outcome = await runAiFix(
@@ -137,7 +172,26 @@ export function registerAiFixCommand(): monaco.IDisposable {
         return;
       }
       const ctx = getPPLLintContext(model);
+      // The field-aware part of the per-model context, forwarded so the default
+      // re-validation lint can re-fire context-aware rules. PPLLintContext
+      // extends the same LintPayloadContext base as LintRunContext (plus
+      // dataSourceVersion via PPLValidationContext), so these members are
+      // structurally assignable; bridge-only fields like `http` are ignored by
+      // the analyzer.
+      const lintContext: LintRunContext | undefined = ctx && {
+        fields: ctx.fields,
+        typeMap: ctx.typeMap,
+        disabledObjectFields: ctx.disabledObjectFields,
+        visibleIndices: ctx.visibleIndices,
+        isCalcite: ctx.isCalcite,
+        overrides: ctx.overrides,
+        dataSourceVersion: ctx.dataSourceVersion,
+      };
       // Fire-and-forget: the handler awaits the round-trip and applies on accept.
+      // The returned outcome is forwarded to the host's notification sink so the
+      // user gets visible feedback on every non-applied outcome (rejected /
+      // error / no-agent); previously it was discarded and any failure was
+      // silently swallowed, so the feature looked broken.
       void handleAiFixCommand(
         rawArgs,
         ctx?.http,
@@ -147,10 +201,18 @@ export function registerAiFixCommand(): monaco.IDisposable {
           enableAIFeatures: ctx?.enableAIFeatures,
         },
         (fixedQuery) => applyFix(model, fixedQuery),
-        model.getValue()
-      ).catch(() => {
-        // AI fix is best-effort: never disrupt the editor on failure.
-      });
+        model.getValue(),
+        undefined,
+        lintContext
+      )
+        .then((outcome) => {
+          ctx?.onAiFixOutcome?.(summarizeOutcome(outcome));
+        })
+        .catch((e) => {
+          ctx?.onAiFixOutcome?.({ status: 'error', message: String(e) });
+          // eslint-disable-next-line no-console
+          console.warn('[ppl-lint] AI fix handler threw', e);
+        });
     }
   );
 }

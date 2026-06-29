@@ -38,7 +38,6 @@ import { DefaultInputProps } from './editors';
 import { MonacoCompatibleQuerySuggestion } from '../../autocomplete/providers/query_suggestion_provider';
 import { getEffectiveLanguageForAutoComplete } from './utils';
 import {
-  deriveIsCalcite,
   pplGrammarCache,
   shouldUseRuntimeGrammar,
 } from '../../antlr/opensearch_ppl/ppl_grammar_cache';
@@ -49,7 +48,6 @@ import {
   cleanupPPLContexts,
   PPLDetachRefs,
 } from './lint_context';
-import { buildOverridesFromSettings } from '../../ppl_lint/lint_overrides';
 import { buildPPLLintContext, LintFieldsCache } from '../../ppl_lint/lint_context_builder';
 import { fetchDisabledObjectFields } from '../../ppl_lint/disabled_object_fields';
 import { calciteSettingsCache } from '../../ppl_lint/calcite_settings';
@@ -182,24 +180,17 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
   useEffect(() => {
     const datasetId = query.dataset?.id;
     const dsId = query.dataset?.dataSource?.id;
-    const dsVersion = query.dataset?.dataSource?.version;
     let cancelled = false;
 
     const syncLint = () => {
-      const calcite = calciteSettingsCache.getCached(dsId);
-      syncPPLLintContext(inputRef.current, {
-        useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
-        dataSourceId: dsId,
-        dataSourceVersion: dsVersion,
-        isCalcite: calcite?.isCalcite ?? deriveIsCalcite(dsVersion),
-        settings: { allJoinTypesAllowed: calcite?.allJoinTypesAllowed ?? false },
-        fields: lintFieldsRef.current.fields,
-        typeMap: lintFieldsRef.current.typeMap,
-        disabledObjectFields: lintFieldsRef.current.disabledObjectFields,
-        visibleIndices: lintFieldsRef.current.visibleIndices,
-        overrides: buildOverridesFromSettings(services.uiSettings),
-        http: services.http,
-      });
+      // Single context constructor: buildPPLLintContext (via getLintContext) is
+      // the only place a PPLLintContext is assembled, so datasetTitle /
+      // enableAIFeatures cannot be dropped here (they were absent from the old
+      // hand-rolled inline object, which left the AI quick-fix lightbulb hidden
+      // after every dataset load). It reads the same refs (lintFieldsRef /
+      // queryRef) that loadFields updates synchronously before this call, and
+      // applies the cacheMatchesDataset guard the inline object lacked.
+      syncPPLLintContext(inputRef.current, getLintContext());
       const model = inputRef.current?.getModel();
       if (model) {
         void revalidatePPLModel(model);
@@ -275,6 +266,10 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     return () => {
       cancelled = true;
     };
+    // syncLint now calls the component-scope getLintContext(); it reads only the
+    // refs/services already covered by the deps below, so it is intentionally
+    // omitted (same pattern as the settings-change effect).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     query.dataset?.id,
     query.dataset?.dataSource?.id,

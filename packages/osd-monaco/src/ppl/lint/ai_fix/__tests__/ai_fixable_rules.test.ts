@@ -6,10 +6,11 @@
 import { AI_FIXABLE_RULES, isAiFixableRule } from '../ai_fixable_rules';
 
 describe('AI-fixable rule registry', () => {
-  it('includes the no-deterministic-template rules', () => {
+  it('includes the no-deterministic-template rules that have a real repair', () => {
     expect(isAiFixableRule('type-mismatch-numeric')).toBe(true);
+    // enabled-false-object has a real intent-preserving repair (a silent
+    // null/HTTP-200 failure), so it stays in the AI tier.
     expect(isAiFixableRule('enabled-false-object')).toBe(true);
-    expect(isAiFixableRule('flat-object-subfield')).toBe(true);
     expect(isAiFixableRule('agg-on-text')).toBe(true);
   });
 
@@ -17,6 +18,12 @@ describe('AI-fixable rule registry', () => {
     // field-validation has a Levenshtein fix; division-by-zero has an obvious guard.
     expect(isAiFixableRule('field-validation')).toBe(false);
     expect(isAiFixableRule('division-by-zero')).toBe(false);
+  });
+
+  it('excludes flat-object-subfield — diagnostic-only, no valid rewrite target', () => {
+    // A flat_object field cannot be referenced in PPL at all, so every AI
+    // candidate is rejected; offering the lightbulb only burns a round-trip.
+    expect(isAiFixableRule('flat-object-subfield')).toBe(false);
   });
 
   it('excludes unknown / undefined rule ids', () => {

@@ -120,4 +120,54 @@ describe('validateCandidateFix', () => {
     });
     expect(validateCandidateFix(original, candidate, ruleId, deps).reason).toBe('low-overlap');
   });
+
+  // Issue 8: operator inversion the lint rules can't see (range operators are
+  // excluded from type-mismatch-numeric) and token-overlap/shape are blind to.
+  it('rejects a predicate inversion (> → <) that keeps every token and shape', () => {
+    const rangeOriginal = 'source=accounts | where age > 5';
+    const candidate = 'source=accounts | where age < 5';
+    // Both lint clean and share the same shape — only the operator differs, so
+    // every prior check passes; the inversion check is the only one that fires.
+    const deps = makeDeps({
+      [rangeOriginal]: { ruleIds: [], shape: ['searchCommand', 'whereCommand'] },
+      [candidate]: { ruleIds: [], shape: ['searchCommand', 'whereCommand'] },
+    });
+    expect(validateCandidateFix(rangeOriginal, candidate, 'head-without-sort', deps).reason).toBe(
+      'operator-inverted'
+    );
+  });
+
+  it('rejects an equality inversion (= → !=)', () => {
+    const eqOriginal = 'source=accounts | where state = "CA"';
+    const candidate = 'source=accounts | where state != "CA"';
+    const deps = makeDeps({
+      [eqOriginal]: { ruleIds: [], shape: ['searchCommand', 'whereCommand'] },
+      [candidate]: { ruleIds: [], shape: ['searchCommand', 'whereCommand'] },
+    });
+    expect(validateCandidateFix(eqOriginal, candidate, 'head-without-sort', deps).reason).toBe(
+      'operator-inverted'
+    );
+  });
+
+  it('accepts a legitimate repair that does not invert an operator', () => {
+    // The classic type-mismatch fix changes the VALUE, not the operator.
+    const candidate = 'source=accounts | where age = 30';
+    const deps = makeDeps({
+      [original]: { ruleIds: [ruleId], shape: ['searchCommand', 'whereCommand'] },
+      [candidate]: { ruleIds: [], shape: ['searchCommand', 'whereCommand'] },
+    });
+    expect(validateCandidateFix(original, candidate, ruleId, deps)).toEqual({ accepted: true });
+  });
+
+  it('accepts a same-direction boundary tweak (> → >=, not an inversion)', () => {
+    const rangeOriginal = 'source=accounts | where age > 5';
+    const candidate = 'source=accounts | where age >= 5';
+    const deps = makeDeps({
+      [rangeOriginal]: { ruleIds: [], shape: ['searchCommand', 'whereCommand'] },
+      [candidate]: { ruleIds: [], shape: ['searchCommand', 'whereCommand'] },
+    });
+    expect(validateCandidateFix(rangeOriginal, candidate, 'head-without-sort', deps)).toEqual({
+      accepted: true,
+    });
+  });
 });
