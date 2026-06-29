@@ -4,27 +4,11 @@
  */
 
 import { monaco } from '../../monaco';
-import { LINT_MARKER_SOURCE, SYNTAX_MARKER_SOURCE } from './diagnostic_to_marker';
+import { LINT_MARKER_SOURCE, SYNTAX_MARKER_SOURCE, ruleIdOf } from './diagnostic_to_marker';
 import { getModelFix, getModelSyntaxFix, markerFixKey } from './fix_registry';
 import { getPPLLintContext } from '../lint_bridge';
 import { isAiFixableRule } from './ai_fix/ai_fixable_rules';
 import { AI_FIX_COMMAND_ID } from './ai_fix/ai_fix_command_id';
-
-/**
- * The ruleId rides on a marker's `code`: the plain-string form (rule with no doc
- * link) or `code.value` (object form, with a link). Mirrors `ruleIdOf` in the
- * hover provider so the two read the marker identically.
- */
-function ruleIdOf(marker: monaco.editor.IMarkerData): string | undefined {
-  const code = (marker as { code?: string | { value?: string } }).code;
-  if (typeof code === 'string') {
-    return code;
-  }
-  if (code && typeof code === 'object' && typeof code.value === 'string') {
-    return code.value;
-  }
-  return undefined;
-}
 
 /**
  * Code-action provider that surfaces quick-fixes for PPL markers on two

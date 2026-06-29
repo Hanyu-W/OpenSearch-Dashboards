@@ -4,7 +4,7 @@
  */
 
 import { monaco } from '../../../monaco';
-import { LINT_MARKER_SOURCE } from '../diagnostic_to_marker';
+import { LINT_MARKER_SOURCE, ruleIdOf } from '../diagnostic_to_marker';
 import { getModelFix, markerFixKey } from '../fix_registry';
 import { getModelHoverFacts } from './hover_registry';
 import { getRuleHoverContent } from './engine_outcomes';
@@ -26,22 +26,6 @@ function severityLabel(severity: monaco.MarkerSeverity): SeverityLabel {
     default:
       return 'Info';
   }
-}
-
-/**
- * The ruleId rides on `code`: either the plain-string form (a rule with no doc
- * link) or `code.value` (the object form, with a link). Returns undefined when
- * code is absent.
- */
-function ruleIdOf(marker: monaco.editor.IMarker): string | undefined {
-  const code = marker.code;
-  if (typeof code === 'string') {
-    return code;
-  }
-  if (code && typeof code === 'object' && typeof code.value === 'string') {
-    return code.value;
-  }
-  return undefined;
 }
 
 /** The specific doc link rides on `code.target` (object form only). */

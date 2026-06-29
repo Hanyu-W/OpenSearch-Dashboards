@@ -4,7 +4,7 @@
  */
 
 import { monaco } from '../../../monaco';
-import { diagnosticToMarker, LINT_MARKER_SOURCE } from '../diagnostic_to_marker';
+import { diagnosticToMarker, ruleIdOf, LINT_MARKER_SOURCE } from '../diagnostic_to_marker';
 import { Diagnostic } from '../diagnostic';
 
 function makeDiagnostic(overrides: Partial<Diagnostic> = {}): Diagnostic {
@@ -106,5 +106,33 @@ describe('diagnosticToMarker', () => {
         endColumn: 5,
       });
     });
+  });
+});
+
+// The shared decoder used by both the code-action and hover providers (Issue
+// 14 consolidation). It is the inverse of diagnosticToMarker's `code` write.
+describe('ruleIdOf', () => {
+  it('reads the plain-string code form (rule with no doc link)', () => {
+    expect(ruleIdOf({ code: 'division-by-zero' })).toBe('division-by-zero');
+  });
+
+  it('reads the object code form (code.value, with a doc link)', () => {
+    expect(ruleIdOf({ code: { value: 'type-mismatch-numeric' } })).toBe('type-mismatch-numeric');
+  });
+
+  it('returns undefined for absent or odd code', () => {
+    expect(ruleIdOf({})).toBeUndefined();
+    expect(ruleIdOf({ code: {} })).toBeUndefined();
+  });
+
+  it('round-trips diagnosticToMarker output (both link and no-link forms)', () => {
+    const withLink = diagnosticToMarker(
+      makeDiagnostic({ ruleId: 'agg-on-text', docUrl: 'https://x' })
+    );
+    const noLink = diagnosticToMarker(
+      makeDiagnostic({ ruleId: 'head-without-sort', docUrl: undefined })
+    );
+    expect(ruleIdOf(withLink)).toBe('agg-on-text');
+    expect(ruleIdOf(noLink)).toBe('head-without-sort');
   });
 });
