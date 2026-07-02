@@ -178,4 +178,44 @@ describe('renderHoverCard', () => {
     });
     expect(md).toContain('use \\*star\\* and \\_under\\_ and \\[brackets\\]');
   });
+
+  it('renders the AI-fix command link when aiFixCommandUri is present', () => {
+    const uri = `command:ppl.lint.aiFix?${encodeURIComponent(
+      JSON.stringify({ modelUri: 'inmemory://m/1', ruleId: 'type-mismatch-numeric', message: 'm' })
+    )}`;
+    const md = renderHoverCard({
+      ruleId: 'type-mismatch-numeric',
+      severityLabel: 'Warning',
+      message: 'Comparing numeric field to a string literal.',
+      aiFixCommandUri: uri,
+    });
+    // The clickable action is on the card, targeting the (pre-encoded) command.
+    expect(md).toContain(`[✨ Ask Olly to fix this](${uri})`);
+  });
+
+  it('omits the AI-fix link when aiFixCommandUri is absent', () => {
+    const md = renderHoverCard({
+      ruleId: 'type-mismatch-numeric',
+      severityLabel: 'Warning',
+      message: 'Comparing numeric field to a string literal.',
+    });
+    expect(md).not.toContain('Ask Olly to fix this');
+    expect(md).not.toContain('command:ppl.lint.aiFix');
+  });
+
+  it('does not escape the pre-encoded command URI (link stays resolvable)', () => {
+    // The provider hands an already-URI-encoded target; the renderer must drop it
+    // verbatim. A JSON payload contains `{`/`"` which, if escaped, would break the
+    // link — assert the raw encoded query survives.
+    const uri = `command:ppl.lint.aiFix?${encodeURIComponent(
+      JSON.stringify({ modelUri: 'inmemory://m/1', ruleId: 'agg-on-text', message: 'x' })
+    )}`;
+    const md = renderHoverCard({
+      ruleId: 'agg-on-text',
+      severityLabel: 'Warning',
+      message: 'Numeric aggregation on a text field.',
+      aiFixCommandUri: uri,
+    });
+    expect(md).toContain(uri);
+  });
 });

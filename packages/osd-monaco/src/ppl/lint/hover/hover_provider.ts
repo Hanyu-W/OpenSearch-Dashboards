@@ -9,6 +9,8 @@ import { getModelFix, markerFixKey } from '../fix_registry';
 import { getModelHoverFacts } from './hover_registry';
 import { getRuleHoverContent } from './engine_outcomes';
 import { renderHoverCard, SeverityLabel } from './hover_card';
+import { getPPLLintContext } from '../../lint_bridge';
+import { AI_FIX_COMMAND_ID, AiFixCommandArgs } from '../ai_fix/ai_fix_command_id';
 
 /**
  * Marker owner for lint diagnostics. Must match `LINT_OWNER` in `language.ts`
@@ -60,6 +62,42 @@ function markerSpan(marker: monaco.editor.IMarker): number {
 }
 
 /**
+ * Build the `command:` link target for the AI ("Ask Olly to fix") action, or
+ * undefined when it should not be offered. Mirrors the code-action provider's
+ * gate exactly (deterministic-first, AI-as-fallback: offered for ANY lint marker
+ * that has no deterministic fix, with no per-rule allowlist, when AI features are
+ * on and an index is known), so the hover card and the ⌘. menu agree on when the
+ * action appears.
+ *
+ * The args match `AiFixCommandArgs` and are JSON-encoded into the link query;
+ * Monaco's opener does `JSON.parse(decodeURIComponent(query))` and, since the
+ * result is a plain object (not an array), passes it as the handler's first
+ * argument — the exact shape `handleAiFixCommand` already receives from the
+ * code-action command.
+ */
+function buildAiFixCommandUri(
+  model: monaco.editor.ITextModel,
+  marker: monaco.editor.IMarker,
+  ruleId: string | undefined,
+  hasDeterministicFix: boolean
+): string | undefined {
+  if (hasDeterministicFix) {
+    return undefined;
+  }
+  const ctx = getPPLLintContext(model);
+  const aiAvailable = ctx?.enableAIFeatures !== false && !!ctx?.datasetTitle;
+  if (!aiAvailable) {
+    return undefined;
+  }
+  const args: AiFixCommandArgs = {
+    modelUri: model.uri.toString(),
+    ruleId,
+    message: marker.message,
+  };
+  return `command:${AI_FIX_COMMAND_ID}?${encodeURIComponent(JSON.stringify(args))}`;
+}
+
+/**
  * Hover provider for PPL lint markers. On hover it finds the `ppl-lint` marker
  * under the cursor (innermost when several overlap), looks up the rich card
  * content lazily — static content by ruleId, per-instance facts and the
@@ -89,6 +127,12 @@ export const pplLintHoverProvider: monaco.languages.HoverProvider = {
     const facts = getModelHoverFacts(model, key);
     const fix = getModelFix(model, key);
 
+    // Offer the AI action inline on the card, gated identically to the ⌘. menu
+    // (deterministic-first: only when no template fix exists and the rule is
+    // AI-fixable with AI available). Its command link needs the command to be
+    // trusted for this hover — allowlist just that one id, nothing else.
+    const aiFixCommandUri = buildAiFixCommandUri(model, marker, ruleId, fix !== undefined);
+
     const value = renderHoverCard({
       ruleId: ruleId ?? 'ppl-lint',
       severityLabel: severityLabel(marker.severity),
@@ -97,6 +141,7 @@ export const pplLintHoverProvider: monaco.languages.HoverProvider = {
       content: ruleId ? getRuleHoverContent(ruleId) : undefined,
       facts,
       fixText: fix?.text,
+      aiFixCommandUri,
     });
 
     return {
@@ -106,7 +151,16 @@ export const pplLintHoverProvider: monaco.languages.HoverProvider = {
         endLineNumber: marker.endLineNumber,
         endColumn: marker.endColumn,
       },
-      contents: [{ value, isTrusted: false }],
+      contents: [
+        {
+          value,
+          // Only the AI-fix command is trusted, and only when it is actually on
+          // the card; the doc "Learn more" link is a plain https URL and needs
+          // no trust. An unconditional `isTrusted: true` would let any future
+          // command link execute, so keep it to the single allowlisted id.
+          isTrusted: aiFixCommandUri ? { enabledCommands: [AI_FIX_COMMAND_ID] } : false,
+        },
+      ],
     };
   },
 };

@@ -52,7 +52,7 @@ describe('pplLintCodeActionProvider — AI quick-fix emission', () => {
     clearPPLLintContext(model);
   });
 
-  it('emits an isAI command action for an AI-fixable rule when AI + index are present', () => {
+  it('emits an isAI command action for a no-fix lint marker when AI + index are present', () => {
     setPPLLintContext(model, { enableAIFeatures: true, datasetTitle: 'accounts' } as any);
     const actions = provide([aiMarker('type-mismatch-numeric')]);
     expect(actions).toHaveLength(1);
@@ -62,6 +62,19 @@ describe('pplLintCodeActionProvider — AI quick-fix emission', () => {
     expect((actions[0].command?.arguments?.[0] as any).ruleId).toBe('type-mismatch-numeric');
     // It carries a command, not an edit.
     expect(actions[0].edit).toBeUndefined();
+  });
+
+  it('offers AI for ANY no-fix lint marker, regardless of rule (no allowlist)', () => {
+    setPPLLintContext(model, { enableAIFeatures: true, datasetTitle: 'accounts' } as any);
+    // A rule that is not in any hand-maintained set — with no deterministic fix,
+    // it still gets the AI fallback under the new "offer on all" model.
+    for (const ruleId of ['division-by-zero', 'flat-object-subfield', 'some-future-rule']) {
+      clearModelFixes(model);
+      const actions = provide([aiMarker(ruleId)]);
+      expect(actions).toHaveLength(1);
+      expect((actions[0] as any).isAI).toBe(true);
+      expect((actions[0].command?.arguments?.[0] as any).ruleId).toBe(ruleId);
+    }
   });
 
   it('does not emit an AI action when AI features are disabled', () => {
@@ -74,23 +87,28 @@ describe('pplLintCodeActionProvider — AI quick-fix emission', () => {
     expect(provide([aiMarker('type-mismatch-numeric')])).toHaveLength(0);
   });
 
-  it('does not emit an AI action for a non-AI-fixable rule', () => {
-    setPPLLintContext(model, { enableAIFeatures: true, datasetTitle: 'accounts' } as any);
-    // field-validation already ships a deterministic Levenshtein fix → no AI tier.
-    expect(provide([aiMarker('field-validation')])).toHaveLength(0);
-  });
-
   it('prefers the deterministic fix and does not also emit an AI action', () => {
     setPPLLintContext(model, { enableAIFeatures: true, datasetTitle: 'accounts' } as any);
-    const marker = aiMarker('type-mismatch-numeric');
+    // field-validation with a near-field match ships a deterministic Levenshtein
+    // fix → the AI tier is suppressed for that marker.
+    const marker = aiMarker('field-validation');
     const fixes = new Map<string, MarkerFix>();
-    fixes.set(markerFixKey(marker), { title: 'Replace with 30', text: '30' });
+    fixes.set(markerFixKey(marker), { title: 'Replace with "revenue"', text: 'revenue' });
     setModelFixes(model, fixes);
     const actions = provide([marker]);
     // Only the deterministic quick-fix; the AI tier is suppressed when a fix exists.
     expect(actions).toHaveLength(1);
     expect((actions[0] as any).isAI).toBeFalsy();
-    expect(actions[0].title).toBe('Replace with 30');
+    expect(actions[0].title).toBe('Replace with "revenue"');
+  });
+
+  it('offers AI for a field-validation marker with NO deterministic fix (no near match)', () => {
+    setPPLLintContext(model, { enableAIFeatures: true, datasetTitle: 'accounts' } as any);
+    // No fix in the side table → the unknown field had no near candidate; the AI
+    // fallback should now be offered where before it was silently absent.
+    const actions = provide([aiMarker('field-validation')]);
+    expect(actions).toHaveLength(1);
+    expect((actions[0] as any).isAI).toBe(true);
   });
 
   it('never emits an AI action on the syntax channel', () => {

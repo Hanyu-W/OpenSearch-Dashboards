@@ -8,6 +8,8 @@ import { LINT_MARKER_SOURCE } from '../../diagnostic_to_marker';
 import { markerFixKey, MarkerFix, setModelFixes, clearModelFixes } from '../../fix_registry';
 import { setModelHoverFacts, clearModelHoverFacts, HoverFacts } from '../hover_registry';
 import { pplLintHoverProvider, LINT_OWNER } from '../hover_provider';
+import { setPPLLintContext, clearPPLLintContext, PPLLintContext } from '../../../lint_bridge';
+import { AI_FIX_COMMAND_ID } from '../../ai_fix/ai_fix_command_id';
 
 type Marker = monaco.editor.IMarker;
 
@@ -45,7 +47,23 @@ afterEach(() => {
   jest.restoreAllMocks();
   clearModelFixes(model);
   clearModelHoverFacts(model);
+  clearPPLLintContext(model);
 });
+
+/** A lint context under which the AI action is available (AI on + an index). */
+function setAiContext(overrides: Partial<PPLLintContext> = {}) {
+  setPPLLintContext(model, ({
+    enableAIFeatures: true,
+    datasetTitle: 'accounts',
+    ...overrides,
+  } as unknown) as PPLLintContext);
+}
+
+/** The `isTrusted` field of the hover's first content part. */
+function trustedOf(hover: monaco.languages.Hover | null) {
+  if (!hover) return undefined;
+  return (hover.contents[0] as monaco.IMarkdownString).isTrusted;
+}
 
 function hoverAt(line: number, column: number) {
   return pplLintHoverProvider.provideHover!(
@@ -127,5 +145,79 @@ describe('pplLintHoverProvider', () => {
     expect(md).toContain('no code here');
     // No static content, no doc link — but never throws / never blank.
     expect(md).not.toContain('**Engine behavior**');
+  });
+
+  describe('AI "Ask Olly to fix" action on the card', () => {
+    const aiMarker = () =>
+      makeMarker({
+        code: {
+          value: 'type-mismatch-numeric',
+          target: monaco.Uri.parse('https://docs.example/t'),
+        },
+        message: 'Comparing numeric field to a string literal.',
+      });
+
+    it('renders a trusted AI-fix command link for an AI-fixable rule when AI is available', () => {
+      markersByOwner[LINT_OWNER] = [aiMarker()];
+      setAiContext();
+      const hover = hoverAt(1, 7);
+      const md = markdownOf(hover);
+      expect(md).toContain('✨ Ask Olly to fix this');
+      expect(md).toContain(`command:${AI_FIX_COMMAND_ID}?`);
+      // The args carry the rule + message so the handler re-validates the fix.
+      const encoded = md.substring(md.indexOf(`command:${AI_FIX_COMMAND_ID}?`)).split(')')[0];
+      const decoded = JSON.parse(decodeURIComponent(encoded.split('?')[1])) as {
+        modelUri: string;
+        ruleId: string;
+        message: string;
+      };
+      expect(decoded.ruleId).toBe('type-mismatch-numeric');
+      expect(decoded.modelUri).toBe(model.uri.toString());
+      // Only that one command is trusted — never a blanket isTrusted:true.
+      expect(trustedOf(hover)).toEqual({ enabledCommands: [AI_FIX_COMMAND_ID] });
+    });
+
+    it('does not offer the AI action when AI features are disabled', () => {
+      markersByOwner[LINT_OWNER] = [aiMarker()];
+      setAiContext({ enableAIFeatures: false });
+      const hover = hoverAt(1, 7);
+      expect(markdownOf(hover)).not.toContain('Ask Olly to fix this');
+      expect(trustedOf(hover)).toBe(false);
+    });
+
+    it('does not offer the AI action when no index (datasetTitle) is known', () => {
+      markersByOwner[LINT_OWNER] = [aiMarker()];
+      setAiContext({ datasetTitle: undefined });
+      expect(markdownOf(hoverAt(1, 7))).not.toContain('Ask Olly to fix this');
+    });
+
+    it('offers AI for ANY no-fix rule, including ones outside the old allowlist', () => {
+      // division-by-zero was never in the old AI allowlist, but with no
+      // deterministic fix it now gets the AI fallback under "offer on all".
+      markersByOwner[LINT_OWNER] = [makeMarker()]; // division-by-zero, no fix in table
+      setAiContext();
+      const md = markdownOf(hoverAt(1, 7));
+      expect(md).toContain('✨ Ask Olly to fix this');
+      expect(md).toContain(`command:${AI_FIX_COMMAND_ID}?`);
+    });
+
+    it('prefers a deterministic fix and omits the AI action when one exists', () => {
+      const marker = aiMarker();
+      markersByOwner[LINT_OWNER] = [marker];
+      setAiContext();
+      setModelFixes(
+        model,
+        new Map([[markerFixKey(marker), { title: 'Quote the literal', text: 'age = "30"' }]])
+      );
+      const md = markdownOf(hoverAt(1, 7));
+      expect(md).toContain('**Suggested fix** →');
+      expect(md).not.toContain('Ask Olly to fix this');
+    });
+
+    it('does not offer the AI action when there is no lint context at all', () => {
+      markersByOwner[LINT_OWNER] = [aiMarker()];
+      // no setAiContext() → getPPLLintContext returns undefined
+      expect(markdownOf(hoverAt(1, 7))).not.toContain('Ask Olly to fix this');
+    });
   });
 });

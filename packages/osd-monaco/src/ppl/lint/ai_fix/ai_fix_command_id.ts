@@ -12,3 +12,16 @@
  * graph and unit tests).
  */
 export const AI_FIX_COMMAND_ID = 'ppl.lint.aiFix';
+
+/**
+ * The argument shape the command handler receives — from the code-action's
+ * `command.arguments[0]` and from the hover card's `command:` link query. Lives
+ * here (not in `ai_fix_command.ts`) so type-only consumers like the hover
+ * provider and the code-action provider can reference it without importing the
+ * heavy command module.
+ */
+export interface AiFixCommandArgs {
+  modelUri: string;
+  ruleId?: string;
+  message: string;
+}

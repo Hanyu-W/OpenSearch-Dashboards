@@ -7,7 +7,6 @@ import { monaco } from '../../monaco';
 import { LINT_MARKER_SOURCE, SYNTAX_MARKER_SOURCE, ruleIdOf } from './diagnostic_to_marker';
 import { getModelFix, getModelSyntaxFix, markerFixKey } from './fix_registry';
 import { getPPLLintContext } from '../lint_bridge';
-import { isAiFixableRule } from './ai_fix/ai_fixable_rules';
 import { AI_FIX_COMMAND_ID } from './ai_fix/ai_fix_command_id';
 
 /**
@@ -52,32 +51,38 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
         continue;
       }
 
-      // Deterministic-first: a lint marker with no deterministic fix but an
-      // AI-fixable ruleId gets an "✨ Ask Olly to fix" action that dispatches a
-      // command (async LLM round-trip after the click), distinct from the
-      // synchronous edit-carrying quick-fixes below. Never offered on the syntax
-      // channel and never when a deterministic fix already exists for the marker.
+      // Deterministic-first, AI-as-fallback: ANY lint marker with no deterministic
+      // fix gets an "✨ Ask Olly to fix" action that dispatches a command (async LLM
+      // round-trip after the click), distinct from the synchronous edit-carrying
+      // quick-fixes below. The trigger is purely "this marker has no template fix"
+      // — no per-rule allowlist — because whether a fix exists is decided per
+      // marker, not per rule: e.g. field-validation ships a fix only when a near
+      // field is found, and invalid-capture-group-name only when sanitizing yields
+      // a valid name; the no-fix instances of those rules should still offer AI.
+      // Never on the syntax channel; never when a deterministic fix already exists.
+      // For the rare rule with no valid PPL fix at all (e.g. flat-object-subfield),
+      // the action still shows but the handler's re-validation rejects the
+      // candidate, surfacing an honest "couldn't produce a safe fix" rather than a
+      // silently missing option.
       if (marker.source === LINT_MARKER_SOURCE && !fix && aiFixAvailable) {
         const ruleId = ruleIdOf(marker);
-        if (isAiFixableRule(ruleId)) {
-          actions.push({
-            title: '✨ Ask Olly to fix this',
-            diagnostics: [marker],
-            kind: 'quickfix',
-            isAI: true,
-            command: {
-              id: AI_FIX_COMMAND_ID,
-              title: 'Ask Olly to fix this',
-              arguments: [
-                {
-                  modelUri: model.uri.toString(),
-                  ruleId,
-                  message: marker.message,
-                },
-              ],
-            },
-          } as monaco.languages.CodeAction);
-        }
+        actions.push({
+          title: '✨ Ask Olly to fix this',
+          diagnostics: [marker],
+          kind: 'quickfix',
+          isAI: true,
+          command: {
+            id: AI_FIX_COMMAND_ID,
+            title: 'Ask Olly to fix this',
+            arguments: [
+              {
+                modelUri: model.uri.toString(),
+                ruleId,
+                message: marker.message,
+              },
+            ],
+          },
+        } as monaco.languages.CodeAction);
       }
 
       if (!fix) {
