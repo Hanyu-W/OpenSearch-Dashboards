@@ -27,9 +27,9 @@ import { getPPLLanguageAnalyzer } from '../../ppl_language_analyzer';
 import { buildPipelineShape } from '../pipeline_shape';
 import { createCompiledRuleNameToIndex } from '../rule_index';
 import { LintRunContext } from '../types';
-import { AI_FIX_COMMAND_ID } from './ai_fix_command_id';
+import { AI_FIX_COMMAND_ID, AiFixCommandArgs } from './ai_fix_command_id';
 
-export { AI_FIX_COMMAND_ID };
+export { AI_FIX_COMMAND_ID, AiFixCommandArgs };
 
 /**
  * Route paths the handler POSTs to. Kept as constants here (not imported from
@@ -38,13 +38,6 @@ export { AI_FIX_COMMAND_ID };
  */
 const ASSIST_LANGUAGES_PATH = '/api/enhancements/assist/languages';
 const ASSIST_GENERATE_PATH = '/api/enhancements/assist/generate';
-
-/** The argument shape the code-action provider passes to the command. */
-export interface AiFixCommandArgs {
-  modelUri: string;
-  ruleId?: string;
-  message: string;
-}
 
 /**
  * Lint a query on the compiled surface for re-validation (parse-clean + rule
