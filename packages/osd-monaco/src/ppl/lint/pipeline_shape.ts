@@ -25,8 +25,13 @@ export interface PipelineShape {
   createdFields: Set<string>;
 }
 
-// Command rule names recognized as pipeline stages, mapped to a short label.
-const COMMAND_RULE_NAMES = [
+/**
+ * Command rule names recognized as pipeline stages. Exported as the single
+ * source of truth for the grammar-verification classification manifest, so the
+ * production pipeline scan and the verification census read the identical set
+ * (R2.2, R2.8). Formerly the module-private `COMMAND_RULE_NAMES`.
+ */
+export const PIPELINE_COMMAND_RULE_NAMES = [
   'searchCommand',
   'whereCommand',
   'fieldsCommand',
@@ -65,7 +70,7 @@ const COMMAND_RULE_NAMES = [
 
 function buildIndexToCommandName(ruleNameToIndex: RuleNameToIndex): Map<number, string> {
   const map = new Map<number, string>();
-  for (const name of COMMAND_RULE_NAMES) {
+  for (const name of PIPELINE_COMMAND_RULE_NAMES) {
     const idx = ruleNameToIndex(name);
     if (idx !== -1) {
       map.set(idx, name);
@@ -282,6 +287,21 @@ export function buildPipelineShape(
  * Each membership test in the caller is O(1) (`Set.has`); building the set is a
  * handful of descendant scans over the tree.
  */
+/**
+ * Subtree-root rule names whose internal field references belong to a *different*
+ * source than the outer pipeline's index. Exported as the source of truth for
+ * the grammar-verification manifest so the production pruning and the census
+ * read the identical set. `appendCommand` is listed here because it is a
+ * *conditional* alternate source (only when it embeds its own `searchCommand`);
+ * the condition itself lives in {@link collectAlternateSourceSubtrees}.
+ */
+export const ALTERNATE_SOURCE_SUBTREE_RULES = [
+  'lookupCommand',
+  'appendCommand',
+  'subSearch',
+  'unionDataset',
+] as const;
+
 export function collectAlternateSourceSubtrees(
   tree: ParserRuleContext,
   ruleNameToIndex: RuleNameToIndex

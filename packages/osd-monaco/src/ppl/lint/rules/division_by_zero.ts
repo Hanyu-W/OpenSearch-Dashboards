@@ -22,7 +22,13 @@ import { rangeFromContext } from '../range_utils';
 
 // Only flag `/`. Modulo-by-zero was not verified live, and STAR/PLUS/MINUS are
 // not division. Keeping to the verified operator preserves the zero-noise bar.
-const DIVISION_OPERATOR = '/';
+//
+// Exported as the single source of truth for the grammar-verification manifest
+// (R2.6): the set stays exactly `['/']` until reviewed engine evidence expands
+// it. `DIVISION_OPERATOR` is derived from it so production and verification can
+// never disagree.
+export const ZERO_DIVISOR_OPERATORS = ['/'] as const;
+const DIVISION_OPERATOR = ZERO_DIVISOR_OPERATORS[0];
 
 /**
  * Is `raw` a numeric literal that equals zero? Strips matched surrounding
