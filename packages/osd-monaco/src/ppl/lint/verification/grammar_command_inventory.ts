@@ -12,6 +12,33 @@ const MAX_COMMAND_CANDIDATES = 150;
 /** Only all-caps keyword symbolic names are command spellings. */
 const KEYWORD_SYMBOLIC_RE = /^[A-Z][A-Z0-9]*$/;
 
+/**
+ * Documented benign differences between the suffix-derived command spellings and
+ * the ATN FIRST(commands) token spellings. Anything outside these sets is real
+ * drift and fails the fast lane.
+ *
+ * - `DOCUMENTED_SUFFIX_ONLY`: `*Command` rules whose keyword the FIRST(commands)
+ *   set does not surface as a leading token — `search` is implicit, and
+ *   `describe`/`showDataSources` are introspection commands routed differently.
+ * - `DOCUMENTED_TOKEN_ONLY`: join-type keywords that appear in FIRST(commands)
+ *   via the join sub-grammar but are not standalone `*Command` rules.
+ */
+const DOCUMENTED_SUFFIX_ONLY: ReadonlySet<string> = new Set([
+  'describe',
+  'search',
+  'showdatasources',
+]);
+const DOCUMENTED_TOKEN_ONLY: ReadonlySet<string> = new Set([
+  'anti',
+  'cross',
+  'full',
+  'inner',
+  'left',
+  'outer',
+  'right',
+  'semi',
+]);
+
 /** A surface-labeled command inventory derived from a grammar surface. */
 export interface CommandInventory {
   surfaceName: SurfaceName;
@@ -218,39 +245,52 @@ function compareDerivationPaths(input: {
     for (const rule of commandRules) {
       suffixSpellings.add(rule.replace(/Command$/, '').toLowerCase());
     }
-    // A handful of commands share a keyword or use a different token spelling
-    // (e.g. `search` is often implicit). We report the raw difference and mark
-    // it as *not* unexpected here because compiled-vs-ATN spelling drift is a
-    // known limitation of matching rule names to token names.
     const onlyInSuffix = [...suffixSpellings].filter((s) => !commandStartTokens.has(s)).sort();
     const onlyInTokens = [...commandStartTokens].filter((s) => !suffixSpellings.has(s)).sort();
+    // Only differences NOT in the documented benign allowlist are unexpected. A
+    // new command keyword in FIRST(commands) with no matching `*Command` rule
+    // (or vice versa) is real drift and MUST fail the fast lane. The benign set
+    // is small and file-local so a genuinely-new command forces a conscious
+    // classification rather than sliding through as noise.
+    const unexpectedSuffix = onlyInSuffix.filter((s) => !DOCUMENTED_SUFFIX_ONLY.has(s));
+    const unexpectedTokens = onlyInTokens.filter((s) => !DOCUMENTED_TOKEN_ONLY.has(s));
+    const unexpected = unexpectedSuffix.length > 0 || unexpectedTokens.length > 0;
     comparisons.push({
       surfaceName: surface.name,
       paths: ['suffix_command_rules', 'atn_command_start_tokens'],
       onlyInFirst: onlyInSuffix,
       onlyInSecond: onlyInTokens,
-      unexpected: false,
-      message:
-        onlyInSuffix.length === 0 && onlyInTokens.length === 0
-          ? 'Suffix rules and ATN command-start tokens agree.'
-          : 'Suffix rules and ATN command-start tokens differ (spelling/rule-name limitation).',
+      unexpected,
+      message: unexpected
+        ? `Undocumented command-inventory drift: suffix-only=${JSON.stringify(
+            unexpectedSuffix
+          )}, token-only=${JSON.stringify(unexpectedTokens)}.`
+        : onlyInSuffix.length === 0 && onlyInTokens.length === 0
+        ? 'Suffix rules and ATN command-start tokens agree.'
+        : 'Suffix rules and ATN command-start tokens differ only in documented benign spellings.',
     });
   }
 
-  // Leading vs post-pipe: on the local surfaces these are derived identically;
-  // report agreement so a future surface that diverges is caught.
+  // Leading vs post-pipe: real per-position ATN reachability is not derivable
+  // from the local compiled surfaces (see deriveReachableCommands), so the two
+  // sets are identical by construction. Report the comparison honestly as
+  // NOT-IMPLEMENTED rather than "agree" — claiming agreement would be a vacuous
+  // green. When a positional derivation exists (e.g. runtime fixture), a real
+  // divergence is `unexpected`.
   const onlyLeading = [...leadingCommandRules].filter((c) => !postPipeCommandRules.has(c)).sort();
   const onlyPostPipe = [...postPipeCommandRules].filter((c) => !leadingCommandRules.has(c)).sort();
+  const positionalImplemented = onlyLeading.length > 0 || onlyPostPipe.length > 0;
   comparisons.push({
     surfaceName: surface.name,
     paths: ['leading_command_rules', 'post_pipe_command_rules'],
     onlyInFirst: onlyLeading,
     onlyInSecond: onlyPostPipe,
+    // A divergence is only meaningful once positional derivation is implemented;
+    // identical sets on a surface without positional support are not "unexpected".
     unexpected: false,
-    message:
-      onlyLeading.length === 0 && onlyPostPipe.length === 0
-        ? 'Leading and post-pipe command rules agree.'
-        : 'Leading and post-pipe command rules differ.',
+    message: positionalImplemented
+      ? 'Leading and post-pipe command rules differ.'
+      : 'Leading/post-pipe positional derivation is not implemented for this surface (identical by construction).',
   });
 
   return comparisons;

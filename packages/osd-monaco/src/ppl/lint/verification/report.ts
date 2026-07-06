@@ -157,9 +157,34 @@ function strongerStatus(a: CheckStatus, b: CheckStatus): CheckStatus {
   return STATUS_RANK[a] >= STATUS_RANK[b] ? a : b;
 }
 
-/** A report has no blocking failures. Used by lane runners to decide CI outcome. */
+/**
+ * A report passes the lane only when it has zero blocking failures AND every
+ * required category for the lane actually ran (no required category left at
+ * `not-run` or `skipped`). A lane that silently skipped a required check must
+ * not report PASS (R14.1) — otherwise the framework's whole purpose (catching
+ * drift) is defeated by an empty run.
+ */
 export function reportPasses(report: VerificationReport): boolean {
-  return report.blockingFailures.length === 0;
+  if (report.blockingFailures.length > 0) {
+    return false;
+  }
+  const required = report.lane === 'fast' ? FAST_LANE_REQUIRED_CATEGORIES : [];
+  for (const category of required) {
+    const status = report.statuses[category];
+    if (status === 'not-run' || status === 'skipped' || status === undefined) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The required categories for a lane that did not run (empty when the report passes coverage). */
+export function unrunRequiredCategories(report: VerificationReport): CheckCategory[] {
+  const required = report.lane === 'fast' ? FAST_LANE_REQUIRED_CATEGORIES : [];
+  return required.filter((c) => {
+    const status = report.statuses[c];
+    return status === 'not-run' || status === 'skipped' || status === undefined;
+  });
 }
 
 /** Human-readable failure summary for throwing out of a Jest lane. */

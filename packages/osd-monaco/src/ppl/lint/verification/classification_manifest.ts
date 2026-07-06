@@ -298,12 +298,10 @@ function buildNavigatedRuleReferences(): readonly RuleReference[] {
   add('multisearch-min-subsearch', ['multisearchCommand'], true);
   add('replace-wildcard-asymmetry', ['stringLiteral']);
   add('replace-wildcard-asymmetry', ['replacePair'], true);
-  add('type-mismatch-numeric', [
-    'stringLiteral',
-    'fieldExpression',
-    'comparisonOperator',
-    'expression',
-  ]);
+  // type-mismatch reaches the comparison parent via operator.parent (object
+  // navigation), NOT by resolving 'expression' by name — so 'expression' is not
+  // listed here (it would overstate the no-op guard's coverage).
+  add('type-mismatch-numeric', ['stringLiteral', 'fieldExpression', 'comparisonOperator']);
   add('union-min-datasets', ['unionCommand', 'unionDataset'], true);
   add('unsupported-window-function-in-eventstats', [
     'eventstatsCommand',

@@ -19,6 +19,7 @@ export * from './shape_assertions';
 export * from './grammar_surface';
 export * from './grammar_command_inventory';
 export * from './silent_no_op_guard';
+export * from './navigated_reference_scan';
 export * from './conformance_census';
 export * from './shape_evaluator';
 export * from './parser_adapter';

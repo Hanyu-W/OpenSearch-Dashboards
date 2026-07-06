@@ -9,6 +9,7 @@ import { validateManifest } from './manifest_validation';
 import { GrammarSurface, localFastLaneSurfaces } from './grammar_surface';
 import { deriveCommandInventory } from './grammar_command_inventory';
 import { assertAllNavigatedRulesResolve } from './silent_no_op_guard';
+import { assertNavigatedReferencesCoverSource } from './navigated_reference_scan';
 import { assertClassificationCompleteness } from './conformance_census';
 import { evaluateShapeAssertion, isShapeApplicable } from './shape_evaluator';
 import { assertRoundTrip } from './parser_adapter';
@@ -64,6 +65,10 @@ export function runFastLaneVerification(input: FastLaneInput = {}): Verification
   builder.add(validateManifest(manifest));
   builder.add(validateEngineFactsBaseline(baseline));
 
+  // Cross-check: every rule name the detector sources navigate by literal is in
+  // the manifest (else it would silently no-op in production while we PASS).
+  builder.add(assertNavigatedReferencesCoverSource(manifest));
+
   // Per-surface: inventory, no-op, census, shapes, round trips.
   for (const surface of surfaces) {
     const inventory = deriveCommandInventory(surface);
@@ -96,8 +101,9 @@ export function runFastLaneVerification(input: FastLaneInput = {}): Verification
       }
     }
 
-    // Round-trip a small set of canonical queries on this surface.
-    for (const query of roundTripQueries(labeledCases, surface.name)) {
+    // Round-trip a small set of canonical queries on this surface (every
+    // surface, including the proxy — so it is actually exercised).
+    for (const query of roundTripQueries()) {
       builder.add(assertRoundTrip(query, surface));
     }
   }
@@ -124,6 +130,17 @@ export function runFastLaneVerification(input: FastLaneInput = {}): Verification
     for (const relation of metamorphicRelations) {
       builder.add(runMetamorphicRelation(relation, baseline, compiled));
     }
+  } else {
+    // The compiled-simplified surface is the shipping one; behavioral,
+    // version-context, and metamorphic coverage MUST run against it. Its absence
+    // is a blocking failure, not a silent skip — otherwise a caller that passes
+    // a surfaces list without the compiled surface would get a green run that
+    // checked none of the detector behavior (R14.1).
+    const missing =
+      'compiled_simplified surface is required for the fast lane but was not provided';
+    builder.addFailure('behavioral', missing, { surface: 'compiled_simplified' });
+    builder.addFailure('version-context', missing, { surface: 'compiled_simplified' });
+    builder.addFailure('metamorphic', missing, { surface: 'compiled_simplified' });
   }
 
   // Runtime-fixture coverage: pending while absent, else set up + labeled.
@@ -146,16 +163,21 @@ export function runFastLaneVerification(input: FastLaneInput = {}): Verification
   return builder.finalize();
 }
 
-/** The canonical queries to round-trip per surface (labeled cases for that surface + shapes). */
-function roundTripQueries(
-  labeledCases: readonly LabeledQueryCase[],
-  surfaceName: SurfaceName
-): string[] {
-  const queries = new Set<string>();
-  for (const testCase of labeledCases) {
-    if (testCase.grammarSurface === surfaceName) {
-      queries.add(testCase.query);
-    }
-  }
-  return [...queries];
+/**
+ * Canonical queries round-tripped on EVERY local surface (not gated on a
+ * per-case surface tag), so the in-repo full proxy surface actually parses
+ * queries rather than being iterated without ever being exercised. These use
+ * only core commands both the compiled-simplified and full proxy grammars
+ * accept; assertRoundTrip reports a located failure if a surface rejects one.
+ */
+const ROUND_TRIP_QUERIES: readonly string[] = [
+  'source=t | where a = 1',
+  'source=t | eval x = a / 0',
+  'source=t | sort a | head 5',
+  'source=t | stats count() by a',
+  'source=t | fields a',
+];
+
+function roundTripQueries(): readonly string[] {
+  return ROUND_TRIP_QUERIES;
 }

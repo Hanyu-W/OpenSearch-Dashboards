@@ -81,6 +81,18 @@ describe('Metamorphic relations (Property 10: independent oracle)', () => {
     ).toBe(true);
   });
 
+  it('a NON-flagged order-destroying relation that under-fires is a BLOCKING failure', () => {
+    const surface = compiledSimplifiedSurface();
+    // Same stats mutation but WITHOUT knownDetectorUnderFire → must block, not warn.
+    const stats = defaultMetamorphicRelations().find(
+      (r) => r.insertedCommandRuleName === 'statsCommand'
+    )!;
+    const unflagged = { ...stats, relationId: 'stats-unflagged', knownDetectorUnderFire: false };
+    const result = runMetamorphicRelation(unflagged, ENGINE_FACTS_BASELINE, surface);
+    expect(result.passing).toBe(false);
+    expect(result.entries.some((e) => e.status === 'failure')).toBe(true);
+  });
+
   it('fails setup when the baseline lacks an order-effect fact for the inserted command', () => {
     const surface = compiledSimplifiedSurface();
     const relation = {

@@ -11,6 +11,10 @@ import {
 import { deriveCommandInventory, resetInventoryCache } from '../grammar_command_inventory';
 import { assertClassificationCompleteness } from '../conformance_census';
 import { assertAllNavigatedRulesResolve, classifyApplicability } from '../silent_no_op_guard';
+import {
+  assertNavigatedReferencesCoverSource,
+  extractNavigatedRuleNames,
+} from '../navigated_reference_scan';
 import { CLASSIFICATION_MANIFEST } from '../classification_manifest';
 import { ClassificationManifest, RuleReference } from '../types';
 
@@ -170,5 +174,46 @@ describe('SilentNoOpGuard (Property 5: names resolve before execution)', () => {
       excludedSurfaces: ['compiled_simplified'],
     };
     expect(classifyApplicability(ref, 'compiled_simplified', 'evaluate', false)).toBe('skip');
+  });
+});
+
+describe('navigated-reference source scan (closes the manifest-omission false PASS)', () => {
+  it('every rule name the detector sources navigate by literal is in the manifest', () => {
+    const result = assertNavigatedReferencesCoverSource(CLASSIFICATION_MANIFEST);
+    if (!result.passing) {
+      throw new Error(
+        result.entries
+          .filter((e) => e.status === 'failure')
+          .map((e) => e.message)
+          .join('\n')
+      );
+    }
+    expect(result.passing).toBe(true);
+  });
+
+  it('extracts rule-name literals from helper calls and resolver calls', () => {
+    const src = `
+      findAllDescendantsByRule(tree, rni, 'valueExpression');
+      findChildByRule(n, rni, 'evalClause');
+      const i = ruleNameToIndex('fieldExpression');
+    `;
+    const names = extractNavigatedRuleNames(src);
+    expect(names.has('valueExpression')).toBe(true);
+    expect(names.has('evalClause')).toBe(true);
+    expect(names.has('fieldExpression')).toBe(true);
+  });
+
+  it('fails when a source-navigated name is missing from the manifest', () => {
+    // A manifest with an empty navigated set (and empty command/dotted/alt sets)
+    // must fail against the real detector sources.
+    const empty: ClassificationManifest = {
+      ...CLASSIFICATION_MANIFEST,
+      navigatedRuleReferences: [],
+      dottedPathRules: [],
+      alternateSourceRules: [],
+      commandRuleNames: [],
+    };
+    const result = assertNavigatedReferencesCoverSource(empty);
+    expect(result.passing).toBe(false);
   });
 });

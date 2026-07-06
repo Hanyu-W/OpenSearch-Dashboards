@@ -143,12 +143,35 @@ export function setupRuntimeFixture(
     return unavailable(`Stale runtime import: ${freshness.importPath ?? 'unknown'}`);
   }
 
+  // startRuleIndex must be a valid parser rule index, else parse() would target
+  // a nonexistent rule (a corrupt-but-deserializable fixture).
+  if (fixture.startRuleIndex < 0 || fixture.startRuleIndex >= fixture.parserRuleNames.length) {
+    return unavailable(
+      `Runtime fixture startRuleIndex ${fixture.startRuleIndex} is out of range (0..${
+        fixture.parserRuleNames.length - 1
+      }).`
+    );
+  }
+
   let surface: GrammarSurface;
   try {
     surface = reconstructRuntimeSurface(fixture);
   } catch (e) {
     return unavailable(
       `Runtime fixture ATN reconstruction failed: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+
+  // Exercise the reconstructed surface before claiming it usable: a fixture can
+  // deserialize yet be unusable (mismatched ATN/vocabulary). A trivial parse
+  // must not throw.
+  try {
+    surface.parse('source=t | head 1');
+  } catch (e) {
+    return unavailable(
+      `Runtime fixture reconstructed but failed a smoke parse: ${
+        e instanceof Error ? e.message : String(e)
+      }`
     );
   }
 

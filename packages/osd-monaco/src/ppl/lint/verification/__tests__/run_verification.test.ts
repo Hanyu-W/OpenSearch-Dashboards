@@ -5,9 +5,13 @@
 
 import { runFastLaneVerification } from '../run_verification';
 import { FAST_LANE_REQUIRED_CATEGORIES } from '../types';
-import { reportPasses, formatVerificationFailures } from '../report';
+import { reportPasses, formatVerificationFailures, unrunRequiredCategories } from '../report';
 import { resetInventoryCache } from '../grammar_command_inventory';
-import { resetSurfaceCache } from '../grammar_surface';
+import {
+  compiledSimplifiedSurface,
+  inRepoFullProxySurface,
+  resetSurfaceCache,
+} from '../grammar_surface';
 
 describe('runFastLaneVerification (end-to-end fast lane)', () => {
   beforeEach(() => {
@@ -46,5 +50,38 @@ describe('runFastLaneVerification (end-to-end fast lane)', () => {
       (e) => e.context.surface === 'runtime_fixture' && e.status === 'pass'
     );
     expect(runtimeSurfaceEntries).toHaveLength(0);
+  });
+
+  it('every required category actually ran (no vacuous coverage)', () => {
+    const report = runFastLaneVerification();
+    expect(unrunRequiredCategories(report)).toEqual([]);
+  });
+
+  it('FAILS loud when the compiled surface is absent (no silent skip of behavior checks)', () => {
+    // A surfaces list lacking the compiled surface must not yield a green run.
+    const report = runFastLaneVerification({ surfaces: [inRepoFullProxySurface()] });
+    expect(reportPasses(report)).toBe(false);
+    for (const category of ['behavioral', 'version-context', 'metamorphic'] as const) {
+      expect(report.statuses[category]).toBe('fail');
+    }
+  });
+
+  it('a report with a required category left not-run does not pass', () => {
+    // Run with an empty surfaces list: behavioral/version/metamorphic never run.
+    const report = runFastLaneVerification({ surfaces: [] });
+    expect(reportPasses(report)).toBe(false);
+    expect(unrunRequiredCategories(report).length).toBeGreaterThan(0);
+  });
+
+  it('the compiled surface actually parses the round-trip corpus (proxy exercised too)', () => {
+    const report = runFastLaneVerification({
+      surfaces: [compiledSimplifiedSurface(), inRepoFullProxySurface()],
+    });
+    // Both surfaces contribute passing shape/round-trip entries.
+    const proxyRoundTrips = report.entries.filter(
+      (e) =>
+        e.context.surface === 'in_repo_full_proxy' && e.category === 'shape' && e.status === 'pass'
+    );
+    expect(proxyRoundTrips.length).toBeGreaterThan(0);
   });
 });

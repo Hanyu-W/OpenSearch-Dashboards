@@ -143,6 +143,22 @@ describe('RuntimeGrammarFixture (Property 12: provenance + freshness)', () => {
       expect(result.message).toContain('Stale runtime import');
     }
   });
+
+  it('fails setup on an out-of-range startRuleIndex (corrupt-but-deserializable)', () => {
+    const fixture = { ...minimalFixture(), startRuleIndex: 99 };
+    const result = setupRuntimeFixture(fixture);
+    expect(isRuntimeSetupUnavailable(result)).toBe(true);
+    if (isRuntimeSetupUnavailable(result)) {
+      expect(result.message).toContain('startRuleIndex');
+    }
+  });
+
+  it('fails setup when a present-but-invalid ATN cannot reconstruct/parse', () => {
+    // minimalFixture has bytes [1] which are not a valid serialized ATN; setup
+    // must fail at reconstruction or the smoke parse, not report PASS.
+    const result = setupRuntimeFixture(minimalFixture());
+    expect(isRuntimeSetupUnavailable(result)).toBe(true);
+  });
 });
 
 /** A structurally-complete but ATN-invalid fixture — enough to exercise the

@@ -108,6 +108,9 @@ export const LABELED_CASES: readonly LabeledQueryCase[] = [
     requiredContextResources: ['fields'],
   },
   {
+    // All field refs here live inside the pruned lookupCommand subtree, so this
+    // verifies alternate-source SUPPRESSION, not field-resolution — labeled
+    // setup_only so it does not inflate detector-behavior coverage.
     caseId: 'field-alt-source-lookup',
     ruleId: 'field-validation',
     query: 'source=t | lookup ref_table id',
@@ -115,8 +118,7 @@ export const LABELED_CASES: readonly LabeledQueryCase[] = [
     lintContext: { fields: new Set(['status', 'source']) },
     expectedFires: false,
     expectedDiagnosticCount: 0,
-    coverageLabel: 'detector_behavior',
-    requiredContextResources: ['fields'],
+    coverageLabel: 'setup_only',
   },
   // Empty-context self-suppression: labeled so it is NOT counted as behavior
   // coverage. field-validation must NOT fire without a field set.
@@ -129,6 +131,23 @@ export const LABELED_CASES: readonly LabeledQueryCase[] = [
     expectedFires: false,
     expectedDiagnosticCount: 0,
     coverageLabel: 'self_suppression',
+  },
+  // Pins the CURRENT source-keyword behavior on this branch: with only `status`
+  // in the field set (no `source`), the `source=t` clause surfaces the `source`
+  // keyword to the existence pass as an unknown field. This is a latent artifact
+  // fixed on the pr4 branch (SOURCE_KEYWORDS skip); pinning it here means the
+  // fix — or any regression — will flip this case and force a corpus update,
+  // rather than the drift passing silently. setup_only: it locks branch behavior,
+  // not the detector's field-resolution logic.
+  {
+    caseId: 'field-source-keyword-artifact-2-diagnostics',
+    ruleId: 'field-validation',
+    query: 'source=t | where nope = 200',
+    grammarSurface: 'compiled_simplified',
+    lintContext: { fields: new Set(['status']) },
+    expectedFires: true,
+    expectedDiagnosticCount: 2, // `source` (artifact) + `nope` (real)
+    coverageLabel: 'setup_only',
   },
 
   // head-without-sort — context-free ordering advisory.

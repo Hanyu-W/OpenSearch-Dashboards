@@ -42,8 +42,13 @@ export const SHAPE_ASSERTIONS: readonly ShapeAssertion[] = Object.freeze([
         ruleName: 'valueExpression',
         predicate: { kind: 'equals', value: 'a/0' },
       },
+      // The detector reads the first rule-node sibling after the `/` terminal as
+      // the divisor; pin that the zero literal lives inside the arithmetic node.
+      { name: 'divisorLiteral', ruleName: 'integerLiteral', text: '0' },
     ],
-    expectedRelationships: [],
+    expectedRelationships: [
+      { kind: 'ancestor_of', ancestor: 'divisorExpr', descendant: 'divisorLiteral' },
+    ],
   },
   {
     assertionId: 'eval-created-field-layout',
@@ -79,8 +84,16 @@ export const SHAPE_ASSERTIONS: readonly ShapeAssertion[] = Object.freeze([
     applicableSurfaces: ['compiled_simplified'],
     notApplicableSurfaces: ['in_repo_full_proxy', 'runtime_fixture'],
     canonicalQuery: 'source=t | lookup ref_table id',
-    expectedAnchors: [{ name: 'lookupCmd', ruleName: 'lookupCommand' }],
-    expectedRelationships: [],
+    expectedAnchors: [
+      { name: 'lookupCmd', ruleName: 'lookupCommand' },
+      // The detector prunes the ENTIRE lookupCommand subtree; that only
+      // suppresses false unknown-field diagnostics if the lookup's field
+      // operand parses INSIDE that subtree. Pin the `id` field as a descendant.
+      { name: 'lookupField', ruleName: 'fieldExpression', text: 'id' },
+    ],
+    expectedRelationships: [
+      { kind: 'ancestor_of', ancestor: 'lookupCmd', descendant: 'lookupField' },
+    ],
   },
   {
     assertionId: 'field-slot-grammar-behavior',
@@ -92,7 +105,18 @@ export const SHAPE_ASSERTIONS: readonly ShapeAssertion[] = Object.freeze([
     applicableSurfaces: ['compiled_simplified'],
     notApplicableSurfaces: ['in_repo_full_proxy', 'runtime_fixture'],
     canonicalQuery: 'source=t | grok field=body "x"',
-    expectedAnchors: [{ name: 'grokCmd', ruleName: 'grokCommand' }],
-    expectedRelationships: [],
+    expectedAnchors: [
+      { name: 'grokCmd', ruleName: 'grokCommand' },
+      // The misparse the shape pass keys on: `field=body` lands as an
+      // `expression` child of grokCommand (rather than a bare field), which the
+      // detector then inspects. Pin that structure so a grammar change that
+      // reshapes it (breaking the detector) also flips this assertion.
+      {
+        name: 'slotExpr',
+        ruleName: 'expression',
+        predicate: { kind: 'includes', value: 'field=body' },
+      },
+    ],
+    expectedRelationships: [{ kind: 'ancestor_of', ancestor: 'grokCmd', descendant: 'slotExpr' }],
   },
 ]);

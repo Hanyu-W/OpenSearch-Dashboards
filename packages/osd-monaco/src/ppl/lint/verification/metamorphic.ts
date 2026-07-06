@@ -19,6 +19,14 @@ export interface MetamorphicRelation {
   insertedCommandRuleName: string;
   /** The literal command text to splice in (e.g. `stats count()`). */
   insertedCommandText: string;
+  /**
+   * Set only for a reviewed, known detector limitation: when the oracle expects
+   * the mutant to fire but the shipping detector provably under-fires (its
+   * order model is weaker than the engine facts). Such a relation downgrades to
+   * a maintainer-review WARNING instead of a blocking failure (R11.5). Any OTHER
+   * relation whose mutant verdict diverges from the oracle is a real failure.
+   */
+  knownDetectorUnderFire?: boolean;
 }
 
 /**
@@ -50,6 +58,9 @@ export function defaultMetamorphicRelations(): MetamorphicRelation[] {
       seedQuery: 'source=t | sort age | head 5',
       insertedCommandRuleName: 'statsCommand',
       insertedCommandText: 'stats count() by age',
+      // Reviewed known limitation: head-without-sort uses a binary sawSort and
+      // does not re-flag after an order-destroying stats. Downgrades to warning.
+      knownDetectorUnderFire: true,
     },
     {
       relationId: 'head-order-reverse',
@@ -103,15 +114,13 @@ export function runMetamorphicRelation(
   );
 
   if (mutantFires !== expectMutantFires) {
-    // The one legitimate divergence today: the shipping head-without-sort
-    // detector tracks a binary `sawSort` and does NOT re-flag when an
-    // order-destroying command intervenes between sort and head. The oracle says
-    // the mutant should fire, the detector under-fires. This is a known detector
-    // limitation, not a regression, so it surfaces as a maintainer-review
-    // WARNING rather than a blocking failure (R11.5) — the detector's order
-    // model is provably weaker than the reviewed engine facts.
+    // Downgrade to a maintainer-review WARNING only for a relation explicitly
+    // marked as a reviewed known limitation (knownDetectorUnderFire) where the
+    // detector provably under-fires vs the oracle. Every other divergence —
+    // including a NEW order-destroying command that under-fires, or a regression
+    // in a currently-correct relation — is a blocking failure (R11.5).
     const detectorUnderFires =
-      expectMutantFires && !mutantFires && fact.orderEffect === 'destroys_order';
+      relation.knownDetectorUnderFire === true && expectMutantFires && !mutantFires;
     const status = detectorUnderFires ? 'warning' : 'failure';
     return {
       category: 'metamorphic',
