@@ -37,6 +37,9 @@ const PPL_LINT_RULE_DEFAULTS: ReadonlyArray<{
   { id: 'flat-object-subfield', enabled: true, severity: 'error' },
   { id: 'type-mismatch-numeric', enabled: true, severity: 'warning' },
   { id: 'enabled-false-object', enabled: true, severity: 'warning' },
+  // Advisory performance rule; ships disabled by default (opt-in), like the
+  // explain-backed rules below.
+  { id: 'rex-scan-cost', enabled: false, severity: 'info' },
   // Explain-backed rules ship disabled by default (opt-in); registering their
   // keys is what makes them individually toggleable via the per-rule override.
   { id: 'operation-not-pushed', enabled: false, severity: 'warning' },

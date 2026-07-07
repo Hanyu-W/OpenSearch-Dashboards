@@ -153,6 +153,16 @@
     "needsContext": true
   },
   {
+    "id": "rex-scan-cost",
+    "detector": "rex-scan-cost",
+    "enabled": false,
+    "severity": "info",
+    "message": "Pattern extraction over a large text field can be expensive.",
+    "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/rex/",
+    "appliesTo": {},
+    "needsContext": true
+  },
+  {
     "id": "operation-not-pushed",
     "detector": "operation-not-pushed",
     "enabled": false,
