@@ -37,6 +37,8 @@ interface LintContextDataset {
   dataSource?: { id?: string; version?: string };
 }
 
+type PPLLintAiFixHooks = Pick<PPLLintContext, 'onAskAiFix' | 'aiFixToolName'>;
+
 /**
  * Assemble the per-model {@link PPLLintContext} from the active dataset, the
  * asynchronously-loaded field cache, and the host services. Shared by both
@@ -56,13 +58,14 @@ export function buildPPLLintContext(
     uiSettings: IUiSettingsClient;
     http: HttpSetup;
     notifications: NotificationsStart;
-  }
+  },
+  aiFix?: PPLLintAiFixHooks
 ): PPLLintContext {
   const dsId = dataset?.dataSource?.id;
   const dsVersion = dataset?.dataSource?.version;
   const cacheMatchesDataset = lintFields.datasetId === dataset?.id;
   const calcite = calciteSettingsCache.getCached(dsId);
-  return {
+  const context: PPLLintContext = {
     useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
     dataSourceId: dsId,
     dataSourceVersion: dsVersion,
@@ -74,12 +77,13 @@ export function buildPPLLintContext(
     visibleIndices: cacheMatchesDataset ? lintFields.visibleIndices : undefined,
     overrides: buildOverridesFromSettings(services.uiSettings),
     http: services.http,
-    // The index + AI-features flag the AI quick-fix ("Ask Olly to fix") command
-    // reads via getPPLLintContext(model). datasetTitle is the dataset name the
-    // generate route takes as `index`; enableAIFeatures hides the action
-    // entirely when AI features are off. Both ride the runtime bridge path only.
+    // Dataset metadata + AI-feature/chat hooks the "Ask Olly to fix" command
+    // reads via getPPLLintContext(model). enableAIFeatures hides the action
+    // entirely when AI features are off. These ride the runtime bridge path only.
     datasetTitle: dataset?.title,
     enableAIFeatures: Boolean(services.uiSettings.get(ENABLE_AI_FEATURES, true)),
+    onAskAiFix: aiFix?.onAskAiFix,
+    aiFixToolName: aiFix?.aiFixToolName,
     // Host-owned feedback for the AI fix round-trip. The leaf package can't raise
     // a toast, so it calls back here. ai-disabled / no-index are expected silent
     // states (the action wouldn't have shown), so they raise nothing.
@@ -112,4 +116,5 @@ export function buildPPLLintContext(
       }
     },
   };
+  return context;
 }

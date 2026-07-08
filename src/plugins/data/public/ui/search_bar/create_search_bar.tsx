@@ -41,6 +41,8 @@ import { DataPublicPluginStart } from '../../types';
 import { DataStorage, Filter, Query, TimeRange } from '../../../common';
 import { useQueryStringManager } from './lib/use_query_string_manager';
 import { TimeRangeToolRegistration } from '../../chat_tools/time_range_tool_registration';
+import { PPLLintFixToolRegistration } from '../../chat_tools/ppl_lint_fix_tool_registration';
+import { PPL_LINT_FIX_DATA_TOOL_NAME } from '../../chat_tools/ppl_lint_fix_session';
 import { ContextProviderStart } from '../../../../../plugins/context_provider/public';
 
 interface StatefulSearchBarDeps {
@@ -185,6 +187,9 @@ export function createSearchBar({ core, storage, data, contextProvider }: Statef
           appName: props.appName,
           data,
           storage,
+          pplLintFixToolName: contextProvider?.hooks?.useAssistantAction
+            ? PPL_LINT_FIX_DATA_TOOL_NAME
+            : undefined,
           ...core,
         }}
       >
@@ -194,6 +199,10 @@ export function createSearchBar({ core, storage, data, contextProvider }: Statef
             useAssistantAction={contextProvider?.hooks?.useAssistantAction}
           />
         )}
+        <PPLLintFixToolRegistration
+          queryString={data.query.queryString}
+          useAssistantAction={contextProvider?.hooks?.useAssistantAction}
+        />
         <SearchBar
           showAutoRefreshOnly={props.showAutoRefreshOnly}
           showDatePicker={props.showDatePicker}

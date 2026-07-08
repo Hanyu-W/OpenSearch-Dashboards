@@ -48,8 +48,15 @@ export {
   getBundledCatalog,
   createRuntimeRuleNameToIndex,
   buildCommandSuggestion,
+  DEFAULT_PPL_LINT_FIX_TOOL_NAME,
+  hashPPLLintFixSource,
+  buildChatFixMessage,
+  validatePPLLintFixCandidate,
+  compiledLintFacts,
+  compiledPipelineShape,
 } from './ppl';
 export type {
+  AskPPLLintFixRequest,
   PPLValidationContext,
   PPLValidationProvider,
   PPLValidationProviderRequest,
@@ -65,6 +72,7 @@ export type {
   BundleRuleOverrides,
   CatalogEntry,
   LintRunContext,
+  ValidateCandidateResult,
 } from './ppl';
 
 /* eslint-disable-next-line @osd/eslint/module_migration */

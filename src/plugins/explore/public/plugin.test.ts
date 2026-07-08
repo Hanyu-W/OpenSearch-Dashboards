@@ -26,6 +26,34 @@ import { ChartsPluginStart } from '../../charts/public';
 import { Start as InspectorPublicPluginStart } from '../../inspector/public';
 import { ContextProviderStart } from '../../context_provider/public';
 import { registerDisabledPPLExecuteQueryAction } from './components/query_panel/actions/ppl_execute_query_action';
+import { registerDisabledPPLLintFixAction } from './components/query_panel/actions/ppl_lint_fix_action';
+import { clearActivePPLLintFixSession } from './components/query_panel/actions/ppl_lint_fix_session';
+
+jest.mock('uuid/v4', () => jest.fn(() => 'mock-uuid'), { virtual: true });
+jest.mock('@osd/monaco/target/ppl/lint/lint_runner', () => ({ runLint: jest.fn() }), {
+  virtual: true,
+});
+jest.mock(
+  '@osd/monaco/target/ppl/lint/rule_index',
+  () => ({ createRuntimeRuleNameToIndex: jest.fn(() => new Map()) }),
+  { virtual: true }
+);
+jest.mock(
+  '@osd/monaco/target/ppl/lint/range_utils',
+  () => ({
+    PIPE_FIRST_PREFIX: 'source=_ | ',
+    remapPipeFirstColumns: jest.fn((result) => result),
+  }),
+  { virtual: true }
+);
+jest.mock(
+  '@osd/monaco/target/ppl/lint/explain/run_explain_lint',
+  () => ({
+    hasExplainRules: jest.fn(() => false),
+    runExplainLint: jest.fn(),
+  }),
+  { virtual: true }
+);
 
 // Mock the action
 jest.mock('./actions/ask_ai_embeddable_action');
@@ -49,6 +77,15 @@ jest.mock('./actions/ask_ai_action', () => ({
 jest.mock('./components/query_panel/actions/ppl_execute_query_action', () => ({
   registerDisabledPPLExecuteQueryAction: jest.fn(),
   EXECUTE_PPL_QUERY_TOOL_DEFINITION: { name: 'execute_ppl_query' },
+}));
+
+jest.mock('./components/query_panel/actions/ppl_lint_fix_action', () => ({
+  registerDisabledPPLLintFixAction: jest.fn(),
+  APPLY_PPL_LINT_FIX_EXPLORE_TOOL_DEFINITION: { name: 'apply_ppl_lint_fix_explore' },
+}));
+
+jest.mock('./components/query_panel/actions/ppl_lint_fix_session', () => ({
+  clearActivePPLLintFixSession: jest.fn(),
 }));
 
 // Mock createOsdUrlTracker
@@ -553,9 +590,13 @@ describe('ExplorePlugin', () => {
 
       plugin.stop();
 
-      expect(startDeps.contextProvider.actions.unregisterAssistantAction).toHaveBeenCalledWith(
+      expect(startDeps.contextProvider!.actions.unregisterAssistantAction).toHaveBeenCalledWith(
         'execute_ppl_query'
       );
+      expect(startDeps.contextProvider!.actions.unregisterAssistantAction).toHaveBeenCalledWith(
+        'apply_ppl_lint_fix_explore'
+      );
+      expect(clearActivePPLLintFixSession).toHaveBeenCalled();
     });
 
     it('should not throw on stop when contextProvider was not available at start', () => {
@@ -571,13 +612,15 @@ describe('ExplorePlugin', () => {
     });
   });
 
-  describe('disabled PPL query action registration', () => {
+  describe('disabled PPL assistant action registration', () => {
     // Cast the imported mocked function to jest.Mock
     const mockRegisterDisabledPPLExecuteQueryAction = registerDisabledPPLExecuteQueryAction as jest.Mock;
+    const mockRegisterDisabledPPLLintFixAction = registerDisabledPPLLintFixAction as jest.Mock;
 
     beforeEach(() => {
       // Clear the mock before each test
       mockRegisterDisabledPPLExecuteQueryAction.mockClear();
+      mockRegisterDisabledPPLLintFixAction.mockClear();
     });
 
     it('should register disabled execute_ppl_query action when contextProvider is available', () => {
@@ -586,7 +629,10 @@ describe('ExplorePlugin', () => {
 
       expect(mockRegisterDisabledPPLExecuteQueryAction).toHaveBeenCalledTimes(1);
       expect(mockRegisterDisabledPPLExecuteQueryAction).toHaveBeenCalledWith(
-        startDeps.contextProvider.actions.registerAssistantAction
+        startDeps.contextProvider!.actions.registerAssistantAction
+      );
+      expect(mockRegisterDisabledPPLLintFixAction).toHaveBeenCalledWith(
+        startDeps.contextProvider!.actions.registerAssistantAction
       );
     });
 
@@ -600,6 +646,7 @@ describe('ExplorePlugin', () => {
       plugin.start(coreStart, startDepsWithoutContextProvider);
 
       expect(mockRegisterDisabledPPLExecuteQueryAction).not.toHaveBeenCalled();
+      expect(mockRegisterDisabledPPLLintFixAction).not.toHaveBeenCalled();
     });
 
     it('should register disabled action with the correct function reference', () => {
@@ -608,6 +655,7 @@ describe('ExplorePlugin', () => {
 
       const registerActionFn = startDeps.contextProvider?.actions?.registerAssistantAction;
       expect(mockRegisterDisabledPPLExecuteQueryAction).toHaveBeenCalledWith(registerActionFn);
+      expect(mockRegisterDisabledPPLLintFixAction).toHaveBeenCalledWith(registerActionFn);
     });
 
     it('should register disabled action before other start lifecycle actions', () => {

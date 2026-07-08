@@ -52,6 +52,8 @@ import { buildPPLLintContext, LintFieldsCache } from '../../ppl_lint/lint_contex
 import { fetchDisabledObjectFields } from '../../ppl_lint/disabled_object_fields';
 import { calciteSettingsCache } from '../../ppl_lint/calcite_settings';
 import { fetchVisibleIndices } from '../../ppl_lint/visible_indices';
+import { storePPLLintFixSession, withTimeout } from '../../chat_tools/ppl_lint_fix_session';
+import type { AskPPLLintFixRequest } from '../../chat_tools/ppl_lint_fix_session';
 
 export interface QueryEditorProps {
   query: Query;
@@ -82,6 +84,12 @@ export interface QueryEditorProps {
 interface Props extends QueryEditorProps {
   opensearchDashboards: OpenSearchDashboardsReactContextValue<IDataPluginServices>;
 }
+
+interface PPLLintFixServiceCapability {
+  pplLintFixToolName?: string;
+}
+
+const ASK_AI_FIX_CHAT_TIMEOUT_MS = 4000;
 
 export const QueryEditorUI: React.FC<Props> = (props) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -147,8 +155,51 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     };
   };
 
-  const getLintContext = (): PPLLintContext =>
-    buildPPLLintContext(queryRef.current.dataset, lintFieldsRef.current, services);
+  function onAskAiFix(request: AskPPLLintFixRequest): void {
+    storePPLLintFixSession({
+      request,
+      getCurrentQuery: () => inputRef.current?.getValue() ?? toUser(queryRef.current.query),
+      getCurrentQueryState: () => queryString.getQuery(),
+      getLintContext,
+    });
+
+    const chat = services.chat;
+    if (!chat?.sendMessageWithWindow) {
+      services.notifications.toasts.addWarning(
+        i18n.translate('data.pplLint.aiFix.chatUnavailable', {
+          defaultMessage: 'Olly is not available for this PPL lint fix.',
+        })
+      );
+      return;
+    }
+
+    void withTimeout(
+      chat.sendMessageWithWindow(request.chatMessage, [], { clearConversation: true }),
+      ASK_AI_FIX_CHAT_TIMEOUT_MS
+    ).catch(() => {
+      services.notifications.toasts.addWarning(
+        i18n.translate('data.pplLint.aiFix.openChatError', {
+          defaultMessage: 'Could not open Olly for this PPL lint fix.',
+        })
+      );
+    });
+  }
+
+  function getLintContext(): PPLLintContext {
+    const aiFixToolName = (services as IDataPluginServices & PPLLintFixServiceCapability)
+      .pplLintFixToolName;
+    const chatAvailable = Boolean(
+      aiFixToolName &&
+        services.chat?.sendMessageWithWindow &&
+        (services.chat.isAvailable?.() ?? true)
+    );
+    return buildPPLLintContext(
+      queryRef.current.dataset,
+      lintFieldsRef.current,
+      services,
+      chatAvailable ? { onAskAiFix, aiFixToolName } : undefined
+    );
+  }
 
   useEffect(() => () => cleanupPPLContexts(detachRefs.current), []);
 

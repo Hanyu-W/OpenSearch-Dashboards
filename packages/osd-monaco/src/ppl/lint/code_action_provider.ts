@@ -31,14 +31,11 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
   ): monaco.languages.ProviderResult<monaco.languages.CodeActionList> {
     const actions: monaco.languages.CodeAction[] = [];
 
-    // The AI quick-fix is offered only when AI features are on AND the active
-    // dataset's index (datasetTitle) is known — both read from the per-model
-    // lint context. Computed once per provider call. The live agent-probe is
-    // deferred to the command handler (it is async and may degrade to a no-op
-    // when no ML-Commons agent is configured), so the lightbulb appears
-    // instantly and only does the round-trip after the user clicks.
+    // The AI quick-fix is offered only when AI features are on and the host has
+    // wired the Olly chat opener/apply-tool flow. Computed once per provider
+    // call so the lightbulb and hover card share the same availability rule.
     const lintCtx = getPPLLintContext(model);
-    const aiFixAvailable = lintCtx?.enableAIFeatures !== false && !!lintCtx?.datasetTitle;
+    const aiFixAvailable = lintCtx?.enableAIFeatures !== false && !!lintCtx?.onAskAiFix;
 
     for (const marker of context.markers) {
       const key = markerFixKey(marker);
@@ -61,7 +58,7 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
       // a valid name; the no-fix instances of those rules should still offer AI.
       // Never on the syntax channel; never when a deterministic fix already exists.
       // For the rare rule with no valid PPL fix at all (e.g. flat-object-subfield),
-      // the action still shows but the handler's re-validation rejects the
+      // the action still shows but the apply tool's re-validation rejects the
       // candidate, surfacing an honest "couldn't produce a safe fix" rather than a
       // silently missing option.
       if (marker.source === LINT_MARKER_SOURCE && !fix && aiFixAvailable) {
