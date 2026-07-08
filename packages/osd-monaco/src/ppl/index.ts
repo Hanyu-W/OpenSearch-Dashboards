@@ -47,6 +47,8 @@ export { createRuntimeRuleNameToIndex } from './lint/rule_index';
 export { runExplainLint, hasExplainRules } from './lint/explain/run_explain_lint';
 export type {
   ExplainPlan,
+  ExplainRelNode,
+  ExplainRelTree,
   ExplainDetector,
   ExplainLintContext,
 } from './lint/explain/explain_types';

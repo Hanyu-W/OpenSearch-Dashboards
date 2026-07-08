@@ -6,6 +6,7 @@
 import { Diagnostic } from '../../diagnostic';
 import { wholeQueryRange } from '../../range_utils';
 import { ExplainDetector } from '../explain_types';
+import { hasPushDownTag, physicalPlanText, sourceBuilderText } from '../explain_tree_utils';
 
 /**
  * A "pushed as script" signal: an operation that WAS pushed into OpenSearch, but
@@ -51,10 +52,15 @@ export const operationPushedAsScriptDetector: ExplainDetector = (plan, config, c
   if (!plan.isCalcite) {
     return [];
   }
-  const physical = plan.physical;
+  const sourceText = sourceBuilderText(plan);
+  const fallbackPhysical = physicalPlanText(plan);
   const diagnostics: Diagnostic[] = [];
   for (const signal of SIGNALS) {
-    if (physical.includes(signal.pushTag) && physical.includes(signal.discriminator)) {
+    const hasTreeSignal =
+      hasPushDownTag(plan, signal.pushTag) && sourceText.includes(signal.discriminator);
+    const hasTextFallbackSignal =
+      fallbackPhysical.includes(signal.pushTag) && fallbackPhysical.includes(signal.discriminator);
+    if (hasTreeSignal || hasTextFallbackSignal) {
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,

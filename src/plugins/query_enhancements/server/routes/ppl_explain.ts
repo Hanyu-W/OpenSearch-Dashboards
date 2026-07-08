@@ -4,9 +4,44 @@
  */
 
 import { schema } from '@osd/config-schema';
-import { IRouter, Logger } from '../../../../core/server';
+import { IRouter, Logger, OpenSearchClient } from '../../../../core/server';
 import { API, URI } from '../../common';
 import { coerceStatusCode, DATASOURCE_UNAVAILABLE_MESSAGE, resolveOpenSearchClient } from '.';
+
+function callExplain(client: OpenSearchClient, query: string, useJsonTree: boolean) {
+  return client.transport.request({
+    method: 'POST',
+    path: `${URI.PPL}/_explain`,
+    ...(useJsonTree ? { querystring: { format: 'json_tree' } } : {}),
+    body: { query },
+  });
+}
+
+function explainErrorMessage(err: unknown): string {
+  const e = err as { message?: string; body?: unknown; meta?: { body?: unknown } };
+  return [e.message, e.body, e.meta?.body]
+    .map((value) => {
+      if (typeof value === 'string') {
+        return value;
+      }
+      try {
+        return JSON.stringify(value ?? '');
+      } catch {
+        return '';
+      }
+    })
+    .join(' ');
+}
+
+function isUnsupportedJsonTreeError(err: unknown): boolean {
+  const message = explainErrorMessage(err).toLowerCase();
+  return (
+    message.includes('json_tree') &&
+    (message.includes('unknown response format') ||
+      message.includes('unsupported') ||
+      message.includes('illegal_argument_exception'))
+  );
+}
 
 /**
  * Defines the PPL explain proxy route. Forwards a query to OpenSearch
@@ -38,11 +73,16 @@ export function definePPLExplainRoute(logger: Logger, router: IRouter) {
           return res.custom({ statusCode: 400, body: DATASOURCE_UNAVAILABLE_MESSAGE });
         }
 
-        const result = await client.transport.request({
-          method: 'POST',
-          path: `${URI.PPL}/_explain`,
-          body: { query: req.body.query },
-        });
+        let result: any;
+        try {
+          result = await callExplain(client, req.body.query, true);
+        } catch (err) {
+          if (!isUnsupportedJsonTreeError(err)) {
+            throw err;
+          }
+          logger.debug('PPL explain json_tree unsupported; retrying without format=json_tree');
+          result = await callExplain(client, req.body.query, false);
+        }
 
         const body = result?.body ?? result;
         return res.ok({ body });

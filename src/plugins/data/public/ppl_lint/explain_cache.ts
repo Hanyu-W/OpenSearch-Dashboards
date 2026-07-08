@@ -8,7 +8,10 @@
 // the barrel pulls in monaco-editor browser ESM (with .css side effects) and is
 // globally jest.mock()'d, so its value/type exports are unavailable under bare
 // Node resolution and Jest.
-import type { ExplainPlan } from '@osd/monaco/target/ppl/lint/explain/explain_types';
+import type {
+  ExplainPlan,
+  ExplainRelTree,
+} from '@osd/monaco/target/ppl/lint/explain/explain_types';
 import type { PPLLintHttpClient } from '@osd/monaco/target/ppl/lint_bridge';
 
 // Hardcoded rather than imported from query_enhancements/common to avoid a
@@ -19,24 +22,43 @@ const EXPLAIN_PATH = '/api/enhancements/ppl/explain';
 // small cap is plenty for an interactive editing session.
 const MAX_ENTRIES = 50;
 
-const EMPTY: ExplainPlan = { isCalcite: false, physical: '', logical: '' };
+const EMPTY: ExplainPlan = { isCalcite: false };
+
+function isRelTree(value: unknown): value is ExplainRelTree {
+  return !!value && typeof value === 'object' && Array.isArray((value as { rels?: unknown }).rels);
+}
 
 /**
- * Map a raw `_explain` response into an {@link ExplainPlan}. On a Calcite
- * cluster the response is `{ calcite: { logical, physical } }`; anything else
- * (the `{ root: {...} }` v2 shape, an error body) maps to a non-Calcite empty
- * plan, which makes every explain detector no-op.
+ * Map a raw `_explain` response into an {@link ExplainPlan}. Newer Calcite
+ * clusters return rel-tree objects for `logical`/`physical`; older clusters
+ * return strings. Anything else (the `{ root: {...} }` v2 shape, malformed
+ * bodies, error bodies) maps to a non-Calcite empty plan, which makes every
+ * explain detector no-op.
  */
-function toPlan(res: unknown): ExplainPlan {
-  const calcite = (res as { calcite?: { physical?: string; logical?: string } })?.calcite;
-  if (calcite) {
-    return {
-      isCalcite: true,
-      physical: calcite.physical ?? '',
-      logical: calcite.logical ?? '',
-    };
+export function toExplainPlan(res: unknown): ExplainPlan {
+  const calcite = (res as { calcite?: { physical?: unknown; logical?: unknown } })?.calcite;
+  if (!calcite || typeof calcite !== 'object') {
+    return EMPTY;
   }
-  return EMPTY;
+
+  const logical = calcite.logical;
+  const physical = calcite.physical;
+  const logicalTree = isRelTree(logical) ? logical : undefined;
+  const physicalTree = isRelTree(physical) ? physical : undefined;
+  const logicalText = typeof logical === 'string' ? logical : undefined;
+  const physicalText = typeof physical === 'string' ? physical : undefined;
+
+  if (!logicalTree && !physicalTree && !logicalText && !physicalText) {
+    return EMPTY;
+  }
+
+  return {
+    isCalcite: true,
+    logicalTree,
+    physicalTree,
+    logicalText,
+    physicalText,
+  };
 }
 
 /**
@@ -71,7 +93,7 @@ class ExplainCache {
         body: JSON.stringify({ query }),
         query: dataSourceId ? { dataSourceId } : {},
       })
-      .then(toPlan)
+      .then(toExplainPlan)
       .catch(() => EMPTY)
       .then((plan) => {
         // Evict the oldest entry (insertion order) once the cap is reached.

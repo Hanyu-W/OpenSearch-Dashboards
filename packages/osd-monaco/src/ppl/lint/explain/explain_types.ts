@@ -7,21 +7,46 @@ import { Diagnostic } from '../diagnostic';
 import { CatalogEntry } from '../types';
 
 /**
+ * One rel node from the machine-readable `json_tree` explain format. Keep this
+ * permissive: Calcite's RelJsonWriter can add operator-specific fields, and the
+ * linter only needs a few stable signals.
+ */
+export interface ExplainRelNode {
+  id?: string;
+  relOp?: string;
+  inputs?: string[];
+  PushDownContext?: unknown;
+  sourceBuilder?: unknown;
+  [key: string]: unknown;
+}
+
+/** The logical or physical rel tree returned by `_explain?format=json_tree`. */
+export interface ExplainRelTree {
+  rels?: ExplainRelNode[];
+  [key: string]: unknown;
+}
+
+/**
  * The physical/logical plan returned by `POST /_plugins/_ppl/_explain`, narrowed
  * to what the explain detectors read.
  *
- * On a Calcite-enabled cluster (3.3+) the engine returns
- * `{ calcite: { logical, physical } }`; the host maps that into this shape with
- * `isCalcite: true`. On a non-Calcite cluster the response is `{ root: {...} }`
- * and the host produces `isCalcite: false`, which makes every detector no-op.
+ * New clusters return `{ calcite: { logical, physical } }` where logical and
+ * physical are rel-tree objects. During migration, older clusters may still
+ * return logical/physical as strings; keep optional text fields as a fallback.
+ * On a non-Calcite cluster the host produces `isCalcite: false`, which makes
+ * every detector no-op.
  */
 export interface ExplainPlan {
-  /** True only when the response carried a Calcite plan. */
+  /** True only when the response carried a usable Calcite plan. */
   isCalcite: boolean;
-  /** The physical plan text (with `PushDownContext=[[...]]` blocks). */
-  physical: string;
-  /** The logical plan text. */
-  logical: string;
+  /** Machine-readable physical plan, preferred when available. */
+  physicalTree?: ExplainRelTree;
+  /** Machine-readable logical plan, preferred when available. */
+  logicalTree?: ExplainRelTree;
+  /** Legacy physical plan text fallback. */
+  physicalText?: string;
+  /** Legacy logical plan text fallback. */
+  logicalText?: string;
 }
 
 /**

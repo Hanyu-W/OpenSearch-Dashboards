@@ -6,6 +6,12 @@
 import { Diagnostic } from '../../diagnostic';
 import { wholeQueryRange } from '../../range_utils';
 import { ExplainDetector } from '../explain_types';
+import {
+  hasPushDownTag,
+  hasRelOp,
+  physicalPlanText,
+  relTreeContainsCondition,
+} from '../explain_tree_utils';
 
 /**
  * A "not pushed" signal: a residual marker that, when present in the physical
@@ -13,10 +19,12 @@ import { ExplainDetector } from '../explain_types';
  * coordinator after a full fetch.
  */
 interface NotPushedSignal {
-  /** A residual marker in the plan text (Enumerable node or `$condition=`). */
+  /** A residual marker in the legacy plan text. */
   residual: string;
   /** If ANY of these push tags is present, the operation WAS pushed. */
   pushedAs: string[];
+  /** Tree-first residual detector for json_tree payloads. */
+  hasTreeResidual: (plan: Parameters<ExplainDetector>[0]) => boolean;
   /** Context-specific message so the user knows which operation to fix. */
   message: string;
 }
@@ -30,18 +38,21 @@ const SIGNALS: NotPushedSignal[] = [
   {
     residual: '$condition=',
     pushedAs: ['FILTER->', 'SCRIPT->'],
+    hasTreeResidual: relTreeContainsCondition,
     message:
       'A filter in this query could not be pushed to OpenSearch and runs in the coordinator after a full index scan. Consider rewriting to avoid arithmetic or functions in the predicate.',
   },
   {
     residual: 'EnumerableAggregate',
     pushedAs: ['AGGREGATION->'],
+    hasTreeResidual: (plan) => hasRelOp(plan, 'EnumerableAggregate'),
     message:
       'An aggregation in this query could not be pushed to OpenSearch and runs in the coordinator. An unsupported function or expression may be forcing in-engine aggregation.',
   },
   {
     residual: 'EnumerableSort',
     pushedAs: ['SORT->', 'SORT_EXPR->'],
+    hasTreeResidual: (plan) => hasRelOp(plan, 'EnumerableSort'),
     message:
       'A sort in this query could not be pushed to OpenSearch and runs in the coordinator after fetching all matching rows.',
   },
@@ -56,13 +67,15 @@ export const operationNotPushedDetector: ExplainDetector = (plan, config, contex
   if (!plan.isCalcite) {
     return [];
   }
-  const physical = plan.physical;
+  const fallbackPhysical = physicalPlanText(plan);
   const diagnostics: Diagnostic[] = [];
   for (const signal of SIGNALS) {
-    if (
-      physical.includes(signal.residual) &&
-      !signal.pushedAs.some((tag) => physical.includes(tag))
-    ) {
+    const hasTreeSignal =
+      signal.hasTreeResidual(plan) && !signal.pushedAs.some((tag) => hasPushDownTag(plan, tag));
+    const hasTextFallbackSignal =
+      fallbackPhysical.includes(signal.residual) &&
+      !signal.pushedAs.some((tag) => fallbackPhysical.includes(tag));
+    if (hasTreeSignal || hasTextFallbackSignal) {
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,

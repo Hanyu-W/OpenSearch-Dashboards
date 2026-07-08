@@ -54,6 +54,7 @@ describe('definePPLExplainRoute', () => {
     expect(requestMock).toHaveBeenCalledWith({
       method: 'POST',
       path: `${URI.PPL}/_explain`,
+      querystring: { format: 'json_tree' },
       body: { query: 'source=accounts | head 1' },
     });
     expect(res.ok).toHaveBeenCalledWith({ body: calcitePlan });
@@ -79,10 +80,65 @@ describe('definePPLExplainRoute', () => {
     expect(requestMock).toHaveBeenCalledWith({
       method: 'POST',
       path: `${URI.PPL}/_explain`,
+      querystring: { format: 'json_tree' },
       body: { query: 'source=accounts' },
     });
     // requestMock resolves { body: { calcite: {} } }, so the unwrapped body is { calcite: {} }.
     expect(res.ok).toHaveBeenCalledWith({ body: { calcite: {} } });
+  });
+
+  it('retries once without json_tree when the backend does not support the format', async () => {
+    const { handler } = captureHandler();
+
+    const fallbackPlan = { calcite: { logical: 'L', physical: 'P' } };
+    const requestMock = jest
+      .fn()
+      .mockRejectedValueOnce({ statusCode: 400, message: 'unknown response format: json_tree' })
+      .mockResolvedValueOnce({ body: fallbackPlan });
+    const context = {
+      dataSource: { opensearch: { getClient: jest.fn() } },
+      core: {
+        opensearch: { client: { asCurrentUser: { transport: { request: requestMock } } } },
+      },
+    } as any;
+    const req = { query: {}, body: { query: 'source=accounts' } } as any;
+    const res = createResponse();
+
+    await handler()(context, req, res);
+
+    expect(requestMock).toHaveBeenNthCalledWith(1, {
+      method: 'POST',
+      path: `${URI.PPL}/_explain`,
+      querystring: { format: 'json_tree' },
+      body: { query: 'source=accounts' },
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(2, {
+      method: 'POST',
+      path: `${URI.PPL}/_explain`,
+      body: { query: 'source=accounts' },
+    });
+    expect(res.ok).toHaveBeenCalledWith({ body: fallbackPlan });
+  });
+
+  it('does not retry non-format errors', async () => {
+    const { handler } = captureHandler();
+
+    const requestMock = jest
+      .fn()
+      .mockRejectedValue({ statusCode: 500, message: 'backend failure' });
+    const context = {
+      dataSource: { opensearch: { getClient: jest.fn() } },
+      core: {
+        opensearch: { client: { asCurrentUser: { transport: { request: requestMock } } } },
+      },
+    } as any;
+    const req = { query: {}, body: { query: 'source=accounts' } } as any;
+    const res = createResponse();
+
+    await handler()(context, req, res);
+
+    expect(requestMock).toHaveBeenCalledTimes(1);
+    expect(res.custom).toHaveBeenCalledWith({ statusCode: 503, body: 'backend failure' });
   });
 
   it('coerces 500-class errors to 503', async () => {

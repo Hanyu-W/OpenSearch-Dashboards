@@ -206,6 +206,22 @@ describe('lintRuntimePPLQuery', () => {
 
     const scriptFilterPlan = {
       calcite: {
+        logical: { rels: [{ relOp: 'LogicalFilter' }] },
+        physical: {
+          rels: [
+            {
+              relOp: 'CalciteEnumerableIndexScan',
+              PushDownContext: ['PROJECT->[firstname, age]', 'SCRIPT->>(-($1, 2), 30)'],
+              sourceBuilder: {
+                query: { script: { script: { lang: 'opensearch_compounded_script' } } },
+              },
+            },
+          ],
+        },
+      },
+    };
+    const legacyStringScriptPlan = {
+      calcite: {
         logical: 'LogicalFilter',
         physical:
           'CalciteEnumerableIndexScan(table=[[OpenSearch, accounts]], PushDownContext=[[PROJECT->[age], SCRIPT->>(-($1, 2), 30), LIMIT->10000], OpenSearchRequestBuilder(sourceBuilder={"query":{"script":{"script":{"lang":"opensearch_compounded_script"}}}})])',
@@ -213,9 +229,16 @@ describe('lintRuntimePPLQuery', () => {
     };
     const nativeFilterPlan = {
       calcite: {
-        logical: 'LogicalFilter',
-        physical:
-          'CalciteEnumerableIndexScan(table=[[OpenSearch, accounts]], PushDownContext=[[PROJECT->[age], FILTER->>($0, 30), LIMIT->10000]])',
+        logical: { rels: [{ relOp: 'LogicalFilter' }] },
+        physical: {
+          rels: [
+            {
+              relOp: 'CalciteEnumerableIndexScan',
+              PushDownContext: ['PROJECT->[age]', 'FILTER->>($0, 30)', 'LIMIT->10000'],
+              sourceBuilder: { query: { range: { age: { from: 30 } } } },
+            },
+          ],
+        },
       },
     };
 
@@ -234,6 +257,19 @@ describe('lintRuntimePPLQuery', () => {
       });
 
       expect(http.post).toHaveBeenCalledTimes(1);
+      expect(result!.diagnostics.map((d) => d.ruleId)).toContain('operation-pushed-as-script');
+    });
+
+    it('keeps legacy string explain fallback markers working', async () => {
+      jest.spyOn(pplGrammarCache, 'getCachedGrammar').mockReturnValue(buildRuntimeGrammar());
+      const http = { post: jest.fn().mockResolvedValue(legacyStringScriptPlan) } as any;
+
+      const result = await lintRuntimePPLQuery({
+        content: 'source=accounts | where age - 2 > 30',
+        context: { ...baseContext, http, dataSourceId: 'ds-explain-legacy' },
+        model: {} as any,
+      });
+
       expect(result!.diagnostics.map((d) => d.ruleId)).toContain('operation-pushed-as-script');
     });
 

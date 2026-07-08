@@ -3,9 +3,25 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { explainCache } from './explain_cache';
+import { explainCache, toExplainPlan } from './explain_cache';
 
-const CALCITE_RESPONSE = {
+const LOGICAL_TREE = { rels: [{ id: '1', relOp: 'LogicalFilter' }] };
+const PHYSICAL_TREE = {
+  rels: [
+    {
+      id: '2',
+      relOp: 'CalciteEnumerableIndexScan',
+      PushDownContext: ['FILTER->>($0, 30)', 'LIMIT->10000'],
+      sourceBuilder: { query: { range: { age: { from: 30 } } } },
+    },
+  ],
+};
+
+const JSON_TREE_RESPONSE = {
+  calcite: { logical: LOGICAL_TREE, physical: PHYSICAL_TREE },
+};
+
+const STRING_RESPONSE = {
   calcite: { logical: 'L', physical: 'P-physical-plan' },
 };
 
@@ -13,16 +29,48 @@ const V2_RESPONSE = {
   root: { name: 'ProjectOperator' },
 };
 
+describe('toExplainPlan', () => {
+  it('maps a json_tree Calcite response to physicalTree/logicalTree', () => {
+    expect(toExplainPlan(JSON_TREE_RESPONSE)).toEqual({
+      isCalcite: true,
+      logicalTree: LOGICAL_TREE,
+      physicalTree: PHYSICAL_TREE,
+      logicalText: undefined,
+      physicalText: undefined,
+    });
+  });
+
+  it('maps a legacy string Calcite response to physicalText/logicalText', () => {
+    expect(toExplainPlan(STRING_RESPONSE)).toEqual({
+      isCalcite: true,
+      logicalTree: undefined,
+      physicalTree: undefined,
+      logicalText: 'L',
+      physicalText: 'P-physical-plan',
+    });
+  });
+
+  it('maps a v2 (non-Calcite) response to an empty, non-Calcite plan', () => {
+    expect(toExplainPlan(V2_RESPONSE)).toEqual({ isCalcite: false });
+  });
+
+  it('maps malformed Calcite bodies to an empty, non-Calcite plan', () => {
+    expect(toExplainPlan({ calcite: { logical: 1, physical: null } })).toEqual({
+      isCalcite: false,
+    });
+  });
+});
+
 describe('explainCache', () => {
   afterEach(() => {
     explainCache.clear();
   });
 
   const makeHttp = (impl?: (path: string, opts: any) => Promise<any>) => ({
-    post: jest.fn(impl ?? (() => Promise.resolve(CALCITE_RESPONSE))),
+    post: jest.fn(impl ?? (() => Promise.resolve(JSON_TREE_RESPONSE))),
   });
 
-  it('POSTs to the explain endpoint with the query body and maps a Calcite plan', async () => {
+  it('POSTs to the explain endpoint with the query body and maps a json_tree Calcite plan', async () => {
     const http = makeHttp();
     const plan = await explainCache.resolve(http as any, 'source=accounts | head 1', 'ds-1');
 
@@ -30,7 +78,13 @@ describe('explainCache', () => {
       body: JSON.stringify({ query: 'source=accounts | head 1' }),
       query: { dataSourceId: 'ds-1' },
     });
-    expect(plan).toEqual({ isCalcite: true, physical: 'P-physical-plan', logical: 'L' });
+    expect(plan).toEqual({
+      isCalcite: true,
+      logicalTree: LOGICAL_TREE,
+      physicalTree: PHYSICAL_TREE,
+      logicalText: undefined,
+      physicalText: undefined,
+    });
   });
 
   it('omits the dataSourceId query param for a local cluster', async () => {
@@ -42,16 +96,28 @@ describe('explainCache', () => {
     });
   });
 
+  it('keeps legacy string explain fallback responses usable', async () => {
+    const http = makeHttp(() => Promise.resolve(STRING_RESPONSE));
+    const plan = await explainCache.resolve(http as any, 'source=accounts', 'ds-1');
+    expect(plan).toEqual({
+      isCalcite: true,
+      logicalTree: undefined,
+      physicalTree: undefined,
+      logicalText: 'L',
+      physicalText: 'P-physical-plan',
+    });
+  });
+
   it('maps a v2 (non-Calcite) response to an empty, non-Calcite plan', async () => {
     const http = makeHttp(() => Promise.resolve(V2_RESPONSE));
     const plan = await explainCache.resolve(http as any, 'source=accounts', 'ds-1');
-    expect(plan).toEqual({ isCalcite: false, physical: '', logical: '' });
+    expect(plan).toEqual({ isCalcite: false });
   });
 
   it('returns an empty plan when the request rejects', async () => {
     const http = makeHttp(() => Promise.reject(new Error('boom')));
     const plan = await explainCache.resolve(http as any, 'source=accounts', 'ds-1');
-    expect(plan).toEqual({ isCalcite: false, physical: '', logical: '' });
+    expect(plan).toEqual({ isCalcite: false });
   });
 
   it('caches by (dataSourceId, query): a repeat hit makes no second call', async () => {
@@ -81,7 +147,7 @@ describe('explainCache', () => {
     };
     const p1 = explainCache.resolve(http as any, 'source=accounts', 'ds-1');
     const p2 = explainCache.resolve(http as any, 'source=accounts', 'ds-1');
-    resolveFn(CALCITE_RESPONSE);
+    resolveFn(JSON_TREE_RESPONSE);
     const [r1, r2] = await Promise.all([p1, p2]);
     expect(http.post).toHaveBeenCalledTimes(1);
     expect(r1).toEqual(r2);

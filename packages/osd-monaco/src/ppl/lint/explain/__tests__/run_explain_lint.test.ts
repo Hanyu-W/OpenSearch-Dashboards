@@ -12,8 +12,26 @@ import filterScript from '../__fixtures__/filter_script.json';
 import filterPushed from '../__fixtures__/filter_pushed.json';
 
 function toPlan(payload: { calcite: { logical: string; physical: string } }): ExplainPlan {
-  return { isCalcite: true, physical: payload.calcite.physical, logical: payload.calcite.logical };
+  return {
+    isCalcite: true,
+    physicalText: payload.calcite.physical,
+    logicalText: payload.calcite.logical,
+  };
 }
+
+const TREE_FILTER_SCRIPT_PLAN: ExplainPlan = {
+  isCalcite: true,
+  physicalTree: {
+    rels: [
+      {
+        relOp: 'CalciteEnumerableIndexScan',
+        PushDownContext: ['SCRIPT->>(-($1, 2), 30)'],
+        sourceBuilder: { query: { script: { script: { lang: 'opensearch_compounded_script' } } } },
+      },
+    ],
+  },
+  logicalTree: { rels: [{ relOp: 'LogicalFilter' }] },
+};
 
 // A small catalog covering: a tree rule (must be ignored here), and the two
 // explain rules. Enabled here so we exercise the run path; the shipped catalog
@@ -65,6 +83,11 @@ describe('runExplainLint', () => {
     expect(ids).toContain('operation-pushed-as-script');
     expect(ids).not.toContain('head-without-sort');
     expect(ids).not.toContain('operation-not-pushed');
+  });
+
+  it('runs explain rules against a json_tree plan', () => {
+    const diags = runExplainLint(TREE_FILTER_SCRIPT_PLAN, { ...BASE, catalog: CATALOG });
+    expect(diags.map((d) => d.ruleId)).toContain('operation-pushed-as-script');
   });
 
   it('produces no diagnostics for a fully-pushed plan', () => {
@@ -121,7 +144,6 @@ describe('runExplainLint', () => {
     registerExplainDetector('operation-pushed-as-script', () => {
       throw new Error('boom');
     });
-    // Use the not-pushed payload so the surviving rule has something to emit.
     const diags = runExplainLint(toPlan(filterScript), { ...BASE, catalog: CATALOG });
     // The throwing rule is swallowed; no exception bubbles up.
     expect(Array.isArray(diags)).toBe(true);

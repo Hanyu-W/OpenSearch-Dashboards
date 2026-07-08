@@ -4,7 +4,7 @@
  */
 
 import { CatalogEntry } from '../../types';
-import { ExplainPlan } from '../explain_types';
+import { ExplainPlan, ExplainRelTree } from '../explain_types';
 import { operationNotPushedDetector } from '../rules/operation_not_pushed';
 import { operationPushedAsScriptDetector } from '../rules/operation_pushed_as_script';
 
@@ -21,8 +21,19 @@ interface CalcitePayload {
   calcite: { logical: string; physical: string };
 }
 
-function toPlan(payload: CalcitePayload): ExplainPlan {
-  return { isCalcite: true, physical: payload.calcite.physical, logical: payload.calcite.logical };
+function toTextPlan(payload: CalcitePayload): ExplainPlan {
+  return {
+    isCalcite: true,
+    physicalText: payload.calcite.physical,
+    logicalText: payload.calcite.logical,
+  };
+}
+
+function toTreePlan(
+  physicalTree: ExplainRelTree,
+  logicalTree: ExplainRelTree = { rels: [] }
+): ExplainPlan {
+  return { isCalcite: true, physicalTree, logicalTree };
 }
 
 const NOT_PUSHED_CONFIG: CatalogEntry = {
@@ -48,67 +59,213 @@ const PUSHED_AS_SCRIPT_CONFIG: CatalogEntry = {
 // query text is only used to size the whole-query range; any string works here.
 const CTX = { query: 'source=accounts | head 1' };
 
-// The truth table from design §6.10, verified against the real engine payloads.
+const TREE_FIXTURES: Record<string, ExplainPlan> = {
+  filterPushed: toTreePlan({
+    rels: [
+      {
+        id: '1',
+        relOp: 'CalciteEnumerableIndexScan',
+        PushDownContext: ['PROJECT->[age]', 'FILTER->>($0, 30)', 'LIMIT->10000'],
+        sourceBuilder: { query: { range: { age: { from: 30 } } } },
+      },
+    ],
+  }),
+  statsAgg: toTreePlan({
+    rels: [
+      {
+        id: '2',
+        relOp: 'CalciteEnumerableIndexScan',
+        PushDownContext: ['AGGREGATION->rel#1:LogicalAggregate', 'PROJECT->[avg(age), state]'],
+        sourceBuilder: { aggregations: { composite_buckets: {} } },
+      },
+    ],
+  }),
+  deepPipe: toTreePlan({
+    rels: [
+      { id: '3', relOp: 'CalciteEnumerableTopK' },
+      {
+        id: '4',
+        relOp: 'CalciteEnumerableIndexScan',
+        PushDownContext: ['FILTER->>($2, 20)', 'AGGREGATION->rel#2:LogicalAggregate'],
+        // Guard: sourceBuilder can contain this token for non-script-push internals.
+        sourceBuilder: { aggregations: { scripted_bucket: 'opensearch_compounded_script' } },
+      },
+    ],
+  }),
+  filterScript: toTreePlan({
+    rels: [
+      {
+        id: '5',
+        relOp: 'CalciteEnumerableIndexScan',
+        PushDownContext: ['PROJECT->[firstname, age]', 'SCRIPT->>(-($1, 2), 30)', 'LIMIT->10000'],
+        sourceBuilder: {
+          query: { script: { script: { lang: 'opensearch_compounded_script' } } },
+        },
+      },
+    ],
+  }),
+  evalDivScript: toTreePlan({
+    rels: [
+      { id: '6', relOp: 'EnumerableCalc' },
+      {
+        id: '7',
+        relOp: 'CalciteEnumerableIndexScan',
+        PushDownContext: ['PROJECT->[balance, age]', 'SCRIPT->>(DIVIDE($0, $1), 100)'],
+        sourceBuilder: {
+          query: { script: { script: { lang: 'opensearch_compounded_script' } } },
+        },
+      },
+    ],
+  }),
+  sortEval: toTreePlan({
+    rels: [
+      { id: '8', relOp: 'EnumerableCalc' },
+      {
+        id: '9',
+        relOp: 'CalciteEnumerableIndexScan',
+        PushDownContext: ['PROJECT->[age, balance]', 'SORT_EXPR->[+($0, $1) ASCENDING]'],
+        sourceBuilder: {
+          sort: [{ _script: { script: { lang: 'opensearch_compounded_script' } } }],
+        },
+      },
+    ],
+  }),
+  filterNotPushedWindow: toTreePlan({
+    rels: [
+      { id: '10', relOp: 'EnumerableLimit' },
+      { id: '11', relOp: 'EnumerableCalc', $condition: '[$t5]' },
+      { id: '12', relOp: 'EnumerableWindow' },
+      {
+        id: '13',
+        relOp: 'CalciteEnumerableIndexScan',
+        PushDownContext: ['PROJECT->[balance]'],
+        sourceBuilder: { _source: { includes: ['balance'] } },
+      },
+    ],
+  }),
+  aggNotPushedValues: toTreePlan({
+    rels: [
+      { id: '14', relOp: 'EnumerableLimit' },
+      { id: '15', relOp: 'EnumerableAggregate' },
+      {
+        id: '16',
+        relOp: 'CalciteEnumerableIndexScan',
+        PushDownContext: ['PROJECT->[state]'],
+        sourceBuilder: { _source: { includes: ['state'] } },
+      },
+    ],
+  }),
+};
+
+// The truth table from design §6.10, verified against legacy engine payloads and
+// mirrored with inline json_tree fixtures while the local cluster lacks
+// `format=json_tree` support.
 const FIXTURES: Array<{
   name: string;
-  payload: CalcitePayload;
+  plan: ExplainPlan;
   notPushed: boolean;
   pushedAsScript: boolean;
 }> = [
   {
-    name: 'filter_pushed (where age > 30)',
-    payload: filterPushed,
+    name: 'string filter_pushed (where age > 30)',
+    plan: toTextPlan(filterPushed),
     notPushed: false,
     pushedAsScript: false,
   },
   {
-    name: 'stats_agg (stats avg(age) by state)',
-    payload: statsAgg,
+    name: 'tree filter_pushed (where age > 30)',
+    plan: TREE_FIXTURES.filterPushed,
     notPushed: false,
     pushedAsScript: false,
   },
   {
-    name: 'deep_pipe (8-stage, all native)',
-    payload: deepPipe,
+    name: 'string stats_agg (stats avg(age) by state)',
+    plan: toTextPlan(statsAgg),
     notPushed: false,
     pushedAsScript: false,
   },
   {
-    name: 'filter_script (where age - 2 > 30)',
-    payload: filterScript,
+    name: 'tree stats_agg (stats avg(age) by state)',
+    plan: TREE_FIXTURES.statsAgg,
+    notPushed: false,
+    pushedAsScript: false,
+  },
+  {
+    name: 'string deep_pipe (8-stage, all native)',
+    plan: toTextPlan(deepPipe),
+    notPushed: false,
+    pushedAsScript: false,
+  },
+  {
+    name: 'tree deep_pipe (8-stage, all native)',
+    plan: TREE_FIXTURES.deepPipe,
+    notPushed: false,
+    pushedAsScript: false,
+  },
+  {
+    name: 'string filter_script (where age - 2 > 30)',
+    plan: toTextPlan(filterScript),
     notPushed: false,
     pushedAsScript: true,
   },
   {
-    name: 'eval_div_script (eval r=balance/age | where r>100)',
-    payload: evalDivScript,
+    name: 'tree filter_script (where age - 2 > 30)',
+    plan: TREE_FIXTURES.filterScript,
     notPushed: false,
     pushedAsScript: true,
   },
   {
-    name: 'sort_eval (eval x=age+balance | sort x)',
-    payload: sortEval,
+    name: 'string eval_div_script (eval r=balance/age | where r>100)',
+    plan: toTextPlan(evalDivScript),
     notPushed: false,
     pushedAsScript: true,
   },
   {
-    name: 'filter_not_pushed_window (eventstats avg | where)',
-    payload: filterNotPushedWindow,
+    name: 'tree eval_div_script (eval r=balance/age | where r>100)',
+    plan: TREE_FIXTURES.evalDivScript,
+    notPushed: false,
+    pushedAsScript: true,
+  },
+  {
+    name: 'string sort_eval (eval x=age+balance | sort x)',
+    plan: toTextPlan(sortEval),
+    notPushed: false,
+    pushedAsScript: true,
+  },
+  {
+    name: 'tree sort_eval (eval x=age+balance | sort x)',
+    plan: TREE_FIXTURES.sortEval,
+    notPushed: false,
+    pushedAsScript: true,
+  },
+  {
+    name: 'string filter_not_pushed_window (eventstats avg | where)',
+    plan: toTextPlan(filterNotPushedWindow),
     notPushed: true,
     pushedAsScript: false,
   },
   {
-    name: 'agg_not_pushed_values (stats values(state))',
-    payload: aggNotPushedValues,
+    name: 'tree filter_not_pushed_window (eventstats avg | where)',
+    plan: TREE_FIXTURES.filterNotPushedWindow,
+    notPushed: true,
+    pushedAsScript: false,
+  },
+  {
+    name: 'string agg_not_pushed_values (stats values(state))',
+    plan: toTextPlan(aggNotPushedValues),
+    notPushed: true,
+    pushedAsScript: false,
+  },
+  {
+    name: 'tree agg_not_pushed_values (stats values(state))',
+    plan: TREE_FIXTURES.aggNotPushedValues,
     notPushed: true,
     pushedAsScript: false,
   },
 ];
 
-describe('explain detectors against captured engine payloads', () => {
-  describe.each(FIXTURES)('$name', ({ payload, notPushed, pushedAsScript }) => {
-    const plan = toPlan(payload);
-
+describe('explain detectors against captured and json_tree payloads', () => {
+  describe.each(FIXTURES)('$name', ({ plan, notPushed, pushedAsScript }) => {
     it(`operation-not-pushed ${notPushed ? 'fires' : 'stays silent'}`, () => {
       const diagnostics = operationNotPushedDetector(plan, NOT_PUSHED_CONFIG, CTX);
       expect(diagnostics.length > 0).toBe(notPushed);
@@ -123,8 +280,7 @@ describe('explain detectors against captured engine payloads', () => {
   });
 
   it('the two rules are mutually exclusive for every payload', () => {
-    for (const { payload } of FIXTURES) {
-      const plan = toPlan(payload);
+    for (const { plan } of FIXTURES) {
       const a = operationNotPushedDetector(plan, NOT_PUSHED_CONFIG, CTX).length > 0;
       const b = operationPushedAsScriptDetector(plan, PUSHED_AS_SCRIPT_CONFIG, CTX).length > 0;
       expect(a && b).toBe(false);
@@ -132,14 +288,13 @@ describe('explain detectors against captured engine payloads', () => {
   });
 
   it('both detectors no-op when the plan is not Calcite', () => {
-    const nonCalcite: ExplainPlan = { isCalcite: false, physical: '', logical: '' };
+    const nonCalcite: ExplainPlan = { isCalcite: false };
     expect(operationNotPushedDetector(nonCalcite, NOT_PUSHED_CONFIG, CTX)).toEqual([]);
     expect(operationPushedAsScriptDetector(nonCalcite, PUSHED_AS_SCRIPT_CONFIG, CTX)).toEqual([]);
   });
 
   it('emits a context-specific message and a whole-query range', () => {
-    const plan = toPlan(aggNotPushedValues);
-    const [diag] = operationNotPushedDetector(plan, NOT_PUSHED_CONFIG, {
+    const [diag] = operationNotPushedDetector(TREE_FIXTURES.aggNotPushedValues, NOT_PUSHED_CONFIG, {
       query: 'source=accounts | stats values(state)',
     });
     expect(diag.message).toContain('aggregation');
@@ -152,8 +307,8 @@ describe('explain detectors against captured engine payloads', () => {
 });
 
 // Fixture-drift canary: if an engine upgrade changes the plan vocabulary, this
-// fails loudly before the rules silently stop firing (design §7).
-describe('fixture-drift canary', () => {
+// fails loudly before the legacy fallback rules silently stop firing (design §7).
+describe('legacy fixture-drift canary', () => {
   it('filter_pushed still carries a native FILTER-> push tag', () => {
     expect(filterPushed.calcite.physical).toContain('FILTER->');
   });
@@ -181,5 +336,32 @@ describe('fixture-drift canary', () => {
     expect(deepPipe.calcite.physical).toContain('opensearch_compounded_script');
     expect(deepPipe.calcite.physical).not.toContain('SCRIPT->');
     expect(deepPipe.calcite.physical).not.toContain('SORT_EXPR->');
+  });
+});
+
+describe('json_tree fixture canary', () => {
+  it('physical tree exposes rels with relOp fields', () => {
+    expect(TREE_FIXTURES.filterPushed.physicalTree?.rels).toEqual(
+      expect.arrayContaining([expect.objectContaining({ relOp: 'CalciteEnumerableIndexScan' })])
+    );
+  });
+
+  it('pushed examples expose PushDownContext and sourceBuilder fields', () => {
+    expect(TREE_FIXTURES.filterScript.physicalTree?.rels?.[0]).toEqual(
+      expect.objectContaining({
+        PushDownContext: expect.arrayContaining([expect.stringContaining('SCRIPT->')]),
+        sourceBuilder: expect.any(Object),
+      })
+    );
+  });
+
+  it('residual filter examples expose a condition field without filter/script pushdown', () => {
+    expect(TREE_FIXTURES.filterNotPushedWindow.physicalTree?.rels).toEqual(
+      expect.arrayContaining([expect.objectContaining({ relOp: 'EnumerableCalc' })])
+    );
+    const text = JSON.stringify(TREE_FIXTURES.filterNotPushedWindow.physicalTree);
+    expect(text).toContain('$condition');
+    expect(text).not.toContain('FILTER->');
+    expect(text).not.toContain('SCRIPT->');
   });
 });
