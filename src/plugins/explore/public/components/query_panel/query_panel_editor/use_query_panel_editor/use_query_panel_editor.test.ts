@@ -3,6 +3,32 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+jest.mock('uuid/v4', () => jest.fn(() => 'mock-uuid'), { virtual: true });
+jest.mock('@osd/monaco/target/ppl/lint/lint_runner', () => ({ runLint: jest.fn() }), {
+  virtual: true,
+});
+jest.mock(
+  '@osd/monaco/target/ppl/lint/rule_index',
+  () => ({ createRuntimeRuleNameToIndex: jest.fn(() => new Map()) }),
+  { virtual: true }
+);
+jest.mock(
+  '@osd/monaco/target/ppl/lint/range_utils',
+  () => ({
+    PIPE_FIRST_PREFIX: 'source=_ | ',
+    remapPipeFirstColumns: jest.fn((result) => result),
+  }),
+  { virtual: true }
+);
+jest.mock(
+  '@osd/monaco/target/ppl/lint/explain/run_explain_lint',
+  () => ({
+    hasExplainRules: jest.fn(() => false),
+    runExplainLint: jest.fn(),
+  }),
+  { virtual: true }
+);
+
 // Mock @ag-ui/client and @ag-ui/core before any imports that use them
 jest.mock('@ag-ui/client', () => ({
   parseSSEStream: jest.fn(),
@@ -72,7 +98,7 @@ jest.mock('../../../../../../data/public', () => {
     // syncLint through it (not a hand-rolled inline object) is what keeps them
     // on the stored context. The full behavior is covered in
     // lint_context_builder.test.ts.
-    buildPPLLintContext: jest.fn((dataset, _lintFields, services) => ({
+    buildPPLLintContext: jest.fn((dataset, _lintFields, services, aiFix) => ({
       useRuntimeGrammar: false,
       dataSourceId: dataset?.dataSource?.id,
       dataSourceVersion: dataset?.dataSource?.version,
@@ -80,6 +106,7 @@ jest.mock('../../../../../../data/public', () => {
       http: services.http,
       datasetTitle: dataset?.title,
       enableAIFeatures: true,
+      ...aiFix,
     })),
     UI_SETTINGS: { QUERY_ENHANCEMENTS_PPL_LINT_RULES: 'query:enhancements:pplLint:rules' },
     shouldUseRuntimeGrammar: jest.fn(() => false),
@@ -132,6 +159,11 @@ jest.mock('./editor_options', () => ({
   promptEditorOptions: { readOnly: false },
 }));
 
+jest.mock('../../actions/ppl_lint_fix_session', () => ({
+  APPLY_PPL_LINT_FIX_EXPLORE_TOOL_NAME: 'apply_ppl_lint_fix_explore',
+  setActivePPLLintFixSession: jest.fn(),
+}));
+
 // Mock Monaco editor
 jest.mock('@osd/monaco', () => ({
   monaco: {
@@ -179,6 +211,7 @@ import { onEditorRunActionCreator } from '../../../../application/utils/state_ma
 import { setEditorMode } from '../../../../application/utils/state_management/slices';
 import { EditorMode } from '../../../../application/utils/state_management/types';
 import { usePromptIsTyping } from './use_prompt_is_typing';
+import { setActivePPLLintFixSession } from '../../actions/ppl_lint_fix_session';
 import {
   selectIsPromptEditorMode,
   selectPromptModeIsAvailable,
@@ -194,6 +227,7 @@ const mockUseDatasetContext = jest.mocked(useDatasetContext);
 const mockUseOpenSearchDashboards = jest.mocked(useOpenSearchDashboards);
 const mockGetEffectiveLanguageForAutoComplete = jest.mocked(getEffectiveLanguageForAutoComplete);
 const mockUsePromptIsTyping = jest.mocked(usePromptIsTyping);
+const mockSetActivePPLLintFixSession = jest.mocked(setActivePPLLintFixSession);
 
 describe('useQueryPanelEditor', () => {
   let mockDispatch: jest.Mock;
@@ -241,6 +275,12 @@ describe('useQueryPanelEditor', () => {
     };
 
     mockServices = {
+      core: {
+        chat: {
+          isAvailable: jest.fn(() => true),
+          sendMessageWithWindow: jest.fn(() => Promise.resolve({})),
+        },
+      },
       data: {
         query: {
           queryString: {
@@ -269,6 +309,11 @@ describe('useQueryPanelEditor', () => {
       uiSettings: {
         get: jest.fn(),
         getUpdate$: jest.fn(() => ({ subscribe: jest.fn(() => ({ unsubscribe: jest.fn() })) })),
+      },
+      notifications: {
+        toasts: {
+          addWarning: jest.fn(),
+        },
       },
     };
 
@@ -633,8 +678,58 @@ describe('useQueryPanelEditor', () => {
       expect(buildPPLLintContext).toHaveBeenCalledWith(
         mdsDataset,
         expect.any(Object),
-        mockServices
+        mockServices,
+        expect.objectContaining({
+          aiFixToolName: 'apply_ppl_lint_fix_explore',
+          onAskAiFix: expect.any(Function),
+        })
       );
+    });
+
+    it('onAskAiFix stores the request with editor/lint getters and opens core chat', () => {
+      const request = {
+        requestId: 'req-1',
+        sourceQueryHash: 'hash-1',
+        toolName: 'apply_ppl_lint_fix_explore',
+        modelUri: 'file://model',
+        query: 'source=logs | head 10',
+        diagnostic: { message: 'Use a valid field', ruleId: 'unknown-field' },
+        chatMessage: 'Please fix this query',
+      };
+      const { getLintContext } = captureContexts();
+      const ctx = getLintContext();
+
+      ctx.onAskAiFix?.(request);
+
+      expect(mockSetActivePPLLintFixSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          request,
+          getCurrentQuery: expect.any(Function),
+          getLintContext: expect.any(Function),
+        })
+      );
+      const session = mockSetActivePPLLintFixSession.mock.calls[0][0];
+      expect(session.getCurrentQuery()).toBe('test query');
+      expect(session.getLintContext()).toEqual(
+        expect.objectContaining({
+          aiFixToolName: 'apply_ppl_lint_fix_explore',
+          onAskAiFix: expect.any(Function),
+        })
+      );
+      expect(mockServices.core.chat.sendMessageWithWindow).toHaveBeenCalledWith(
+        request.chatMessage,
+        [],
+        { clearConversation: true }
+      );
+    });
+
+    it('omits onAskAiFix from the lint context when core chat is unavailable', () => {
+      mockServices.core.chat.isAvailable.mockReturnValue(false);
+
+      const ctx = captureContexts().getLintContext();
+
+      expect(ctx.onAskAiFix).toBeUndefined();
+      expect(ctx.aiFixToolName).toBeUndefined();
     });
 
     it('getValidationContext reads dataSourceId from the dataset, not queryString', () => {

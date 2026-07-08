@@ -31,6 +31,13 @@
  *                            even when the shape coincidentally matches).
  */
 
+import * as antlr from 'antlr4ng';
+import { SimplifiedOpenSearchPPLLexer, SimplifiedOpenSearchPPLParser } from '@osd/antlr-grammar';
+import { getPPLLanguageAnalyzer } from '../../ppl_language_analyzer';
+import { buildPipelineShape } from '../pipeline_shape';
+import { createCompiledRuleNameToIndex } from '../rule_index';
+import { LintRunContext } from '../types';
+
 /** Minimum fraction of the original's content tokens the fix must retain. */
 export const MIN_TOKEN_OVERLAP = 0.5;
 
@@ -191,4 +198,50 @@ export function validateCandidateFix(
   }
 
   return { accepted: true };
+}
+
+/**
+ * Lint a query on the compiled surface for re-validation (parse-clean + rule
+ * ids). The model's real lint context is threaded in so context-aware rules
+ * actually re-fire.
+ */
+export function compiledLintFacts(query: string, ctx?: LintRunContext): CandidateLintFacts {
+  const validation = getPPLLanguageAnalyzer().validate(query);
+  const result = getPPLLanguageAnalyzer().lint(query, ctx);
+  return {
+    ruleIds: result.diagnostics.map((d) => d.ruleId),
+    syntaxClean: validation.isValid,
+  };
+}
+
+/** The ordered pipeline command names of a query, for intent preservation. */
+export function compiledPipelineShape(query: string): string[] {
+  try {
+    const cs = antlr.CharStream.fromString(query);
+    const lx = new SimplifiedOpenSearchPPLLexer(cs);
+    const ts = new antlr.CommonTokenStream(lx);
+    const parser = new SimplifiedOpenSearchPPLParser(ts);
+    parser.removeErrorListeners();
+    const tree = parser.root();
+    return buildPipelineShape(tree, createCompiledRuleNameToIndex()).stages.map((s) => s.command);
+  } catch {
+    return [];
+  }
+}
+
+export function validatePPLLintFixCandidate({
+  originalQuery,
+  fixedQuery,
+  ruleId,
+  lintContext,
+}: {
+  originalQuery: string;
+  fixedQuery: string;
+  ruleId?: string;
+  lintContext?: LintRunContext;
+}): ValidateCandidateResult {
+  return validateCandidateFix(originalQuery, fixedQuery, ruleId || '', {
+    lint: (q) => compiledLintFacts(q, lintContext),
+    pipelineShape: compiledPipelineShape,
+  });
 }

@@ -4,9 +4,16 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { monaco, PPLValidationContext, PPLLintContext, revalidatePPLModel } from '@osd/monaco';
+import {
+  AskPPLLintFixRequest,
+  monaco,
+  PPLValidationContext,
+  PPLLintContext,
+  revalidatePPLModel,
+} from '@osd/monaco';
 import { useDispatch, useSelector } from 'react-redux';
 import { i18n } from '@osd/i18n';
+import { withTimeout } from '@osd/std';
 import { DEFAULT_DATA } from '../../../../../../data/common';
 import {
   selectIsPromptEditorMode,
@@ -50,10 +57,22 @@ import {
   fetchDisabledObjectFields,
   UI_SETTINGS,
 } from '../../../../../../data/public';
+import {
+  APPLY_PPL_LINT_FIX_EXPLORE_TOOL_NAME,
+  setActivePPLLintFixSession,
+} from '../../actions/ppl_lint_fix_session';
 
 type IStandaloneCodeEditor = monaco.editor.IStandaloneCodeEditor;
 type LanguageConfiguration = monaco.languages.LanguageConfiguration;
 type IEditorConstructionOptions = monaco.editor.IEditorConstructionOptions;
+type PPLLintAiFixHooks = Pick<PPLLintContext, 'onAskAiFix' | 'aiFixToolName'>;
+
+const buildPPLLintContextWithAiFix = buildPPLLintContext as (
+  dataset: Parameters<typeof buildPPLLintContext>[0],
+  lintFields: Parameters<typeof buildPPLLintContext>[1],
+  services: Parameters<typeof buildPPLLintContext>[2],
+  aiFix?: PPLLintAiFixHooks
+) => PPLLintContext;
 
 export const DEFAULT_TRIGGER_CHARACTERS = [' ', '=', "'", '"', '`', '$'];
 
@@ -139,6 +158,58 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
   // Cache of derived field metadata per dataset id, populated asynchronously.
   // Field-aware lint rules self-suppress until this resolves.
   const lintFieldsRef = useRef<LintFieldsCache>({});
+  const getLintContextRef = useRef<() => PPLLintContext>(() =>
+    buildPPLLintContextWithAiFix(datasetRef.current, lintFieldsRef.current, services)
+  );
+
+  const chat = services.core?.chat;
+  const chatIsAvailable = Boolean(chat?.isAvailable?.());
+  const onAskAiFix = useCallback(
+    (request: AskPPLLintFixRequest) => {
+      setActivePPLLintFixSession({
+        request,
+        getCurrentQuery: () => editorRef.current?.getValue() ?? editorTextRef.current,
+        getLintContext: () => getLintContextRef.current(),
+      });
+
+      if (!chat?.sendMessageWithWindow) {
+        services.notifications?.toasts?.addWarning(
+          i18n.translate('explore.queryPanelEditor.pplLintFix.chatUnavailable', {
+            defaultMessage: 'Olly chat is not available for this PPL fix.',
+          })
+        );
+        return;
+      }
+
+      void withTimeout({
+        promise: chat.sendMessageWithWindow(request.chatMessage, [], { clearConversation: true }),
+        timeout: 4000,
+        errorMessage: i18n.translate('explore.queryPanelEditor.pplLintFix.chatTimeout', {
+          defaultMessage: 'Timed out opening Olly chat for this PPL fix.',
+        }),
+      }).catch((error) => {
+        services.notifications?.toasts?.addWarning(
+          error instanceof Error
+            ? error.message
+            : i18n.translate('explore.queryPanelEditor.pplLintFix.chatError', {
+                defaultMessage: 'Could not open Olly chat for this PPL fix.',
+              })
+        );
+      });
+    },
+    [chat, editorRef, services.notifications?.toasts]
+  );
+
+  const aiFixHooks = useMemo<PPLLintAiFixHooks | undefined>(
+    () =>
+      chatIsAvailable
+        ? {
+            aiFixToolName: APPLY_PPL_LINT_FIX_EXPLORE_TOOL_NAME,
+            onAskAiFix,
+          }
+        : undefined,
+    [chatIsAvailable, onAskAiFix]
+  );
 
   const getValidationContext = useCallback((): PPLValidationContext => {
     const ds = datasetRef.current;
@@ -152,12 +223,14 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
   }, []);
 
   const getLintContext = useCallback(
-    (): PPLLintContext => buildPPLLintContext(datasetRef.current, lintFieldsRef.current, services),
+    (): PPLLintContext =>
+      buildPPLLintContextWithAiFix(datasetRef.current, lintFieldsRef.current, services, aiFixHooks),
     // Only services.uiSettings/http are read off `services` inside
     // buildPPLLintContext; the rest of `services` is irrelevant to the context.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [services.uiSettings, services.http]
+    [services.uiSettings, services.http, aiFixHooks]
   );
+  getLintContextRef.current = getLintContext;
 
   const switchEditorMode = useLanguageSwitch();
 

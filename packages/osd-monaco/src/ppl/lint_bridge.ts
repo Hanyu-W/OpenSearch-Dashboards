@@ -6,7 +6,7 @@
 import { monaco } from '../monaco';
 import type { PPLValidationContext } from './validation_provider';
 import type { LintResult } from './lint/diagnostic';
-import type { BundleRuleOverrides, LintPayloadContext } from './lint/types';
+import type { LintPayloadContext, LintRunContext } from './lint/types';
 import type { PPLValidationResult } from './ppl_language_analyzer';
 
 /**
@@ -73,6 +73,17 @@ export interface PPLLintContext extends PPLValidationContext, LintPayloadContext
    * outcome (rejected / error / no-agent). Bridge-path only.
    */
   onAiFixOutcome?: (outcome: AiFixOutcomeSummary) => void;
+  /**
+   * Host-supplied opener for the Olly chat-based lint fix flow. The leaf
+   * package cannot import core/chat, so it builds a plain request payload and
+   * lets the host open chat plus register the apply tool.
+   */
+  onAskAiFix?: (request: AskPPLLintFixRequest) => void;
+  /**
+   * Assistant action name the host registered for applying a PPL lint fix.
+   * Hosts may use distinct names because assistant actions are globally keyed.
+   */
+  aiFixToolName?: string;
 }
 
 /** A host-facing summary of an AI quick-fix round-trip, for user feedback. */
@@ -82,6 +93,23 @@ export interface AiFixOutcomeSummary {
   reason?: string;
   /** Error message, for the `error` status. */
   message?: string;
+}
+
+/** Plain-data request the Monaco command sends to a host chat opener. */
+export interface AskPPLLintFixRequest {
+  requestId: string;
+  sourceQueryHash: string;
+  toolName: string;
+  modelUri: string;
+  query: string;
+  diagnostic: {
+    message: string;
+    ruleId?: string;
+  };
+  datasetTitle?: string;
+  dataSourceId?: string;
+  chatMessage: string;
+  lintContext?: LintRunContext;
 }
 
 export interface PPLLintBridgeRequest {

@@ -80,6 +80,16 @@ describe('buildPPLLintContext', () => {
     expect(ctx.enableAIFeatures).toBe(true);
   });
 
+  it('copies the optional chat AI fix hook and host tool name', () => {
+    const onAskAiFix = jest.fn();
+    const ctx = buildPPLLintContext(dataset, fullCache, services, {
+      onAskAiFix,
+      aiFixToolName: 'apply_ppl_lint_fix_data',
+    });
+    expect(ctx.onAskAiFix).toBe(onAskAiFix);
+    expect(ctx.aiFixToolName).toBe('apply_ppl_lint_fix_data');
+  });
+
   it('reports enableAIFeatures false when the uiSetting is off', () => {
     mockUiSettingsGet.mockReturnValue(false);
     const ctx = buildPPLLintContext(dataset, fullCache, services);

@@ -50,11 +50,12 @@ afterEach(() => {
   clearPPLLintContext(model);
 });
 
-/** A lint context under which the AI action is available (AI on + an index). */
+/** A lint context under which the AI action is available (AI on + chat opener). */
 function setAiContext(overrides: Partial<PPLLintContext> = {}) {
   setPPLLintContext(model, ({
     enableAIFeatures: true,
     datasetTitle: 'accounts',
+    onAskAiFix: jest.fn(),
     ...overrides,
   } as unknown) as PPLLintContext);
 }
@@ -185,9 +186,9 @@ describe('pplLintHoverProvider', () => {
       expect(trustedOf(hover)).toBe(false);
     });
 
-    it('does not offer the AI action when no index (datasetTitle) is known', () => {
+    it('does not offer the AI action when no chat opener is wired', () => {
       markersByOwner[LINT_OWNER] = [aiMarker()];
-      setAiContext({ datasetTitle: undefined });
+      setAiContext({ onAskAiFix: undefined });
       expect(markdownOf(hoverAt(1, 7))).not.toContain('Ask Olly to fix this');
     });
 

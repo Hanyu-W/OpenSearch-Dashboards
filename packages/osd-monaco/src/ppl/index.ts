@@ -32,11 +32,23 @@ export {
   setPPLLintEnabled,
 } from './lint_bridge';
 export type {
+  AskPPLLintFixRequest,
   PPLLintContext,
   PPLLintBridge,
   PPLLintBridgeRequest,
   PPLLintHttpClient,
 } from './lint_bridge';
+export {
+  DEFAULT_PPL_LINT_FIX_TOOL_NAME,
+  hashPPLLintFixSource,
+  buildChatFixMessage,
+} from './lint/ai_fix/build_chat_fix_message';
+export {
+  validatePPLLintFixCandidate,
+  compiledLintFacts,
+  compiledPipelineShape,
+} from './lint/ai_fix/validate_candidate_fix';
+export type { ValidateCandidateResult } from './lint/ai_fix/validate_candidate_fix';
 export { buildCommandSuggestion } from './command_suggestion';
 export type { CommandSuggestion } from './command_suggestion';
 export type { Diagnostic, DiagnosticRange, LintResult, LintSeverity } from './lint/diagnostic';

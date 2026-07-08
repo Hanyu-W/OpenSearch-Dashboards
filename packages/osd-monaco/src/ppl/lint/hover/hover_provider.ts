@@ -66,8 +66,8 @@ function markerSpan(marker: monaco.editor.IMarker): number {
  * undefined when it should not be offered. Mirrors the code-action provider's
  * gate exactly (deterministic-first, AI-as-fallback: offered for ANY lint marker
  * that has no deterministic fix, with no per-rule allowlist, when AI features are
- * on and an index is known), so the hover card and the ⌘. menu agree on when the
- * action appears.
+ * on and the host wired the Olly chat opener), so the hover card and the ⌘. menu
+ * agree on when the action appears.
  *
  * The args match `AiFixCommandArgs` and are JSON-encoded into the link query;
  * Monaco's opener does `JSON.parse(decodeURIComponent(query))` and, since the
@@ -85,7 +85,7 @@ function buildAiFixCommandUri(
     return undefined;
   }
   const ctx = getPPLLintContext(model);
-  const aiAvailable = ctx?.enableAIFeatures !== false && !!ctx?.datasetTitle;
+  const aiAvailable = ctx?.enableAIFeatures !== false && !!ctx?.onAskAiFix;
   if (!aiAvailable) {
     return undefined;
   }
