@@ -11,7 +11,8 @@ import {
   PPLValidationResult,
 } from '../ppl_language_analyzer';
 import { LintResult } from '../lint/diagnostic';
-import { BundleRuleOverrides } from '../lint/types';
+import { WorkerLintContextPayload } from '../lint/types';
+import { hydrateWorkerLintContext } from '../lint/worker_context';
 
 // Simple worker implementation that doesn't depend on Monaco's internal modules
 class PPLWorkerImpl {
@@ -31,13 +32,11 @@ class PPLWorkerImpl {
     return this.analyzer.validate(content);
   }
 
-  async lint(content: string, overrides?: BundleRuleOverrides): Promise<LintResult> {
+  async lint(content: string, context?: WorkerLintContextPayload): Promise<LintResult> {
     if (!this.analyzer) {
       this.analyzer = getPPLLanguageAnalyzer();
     }
-    // The compiled fallback has no host context except the per-rule overrides
-    // forwarded from the main thread; carry them on a minimal LintRunContext.
-    return this.analyzer.lint(content, overrides ? { overrides } : undefined);
+    return this.analyzer.lint(content, hydrateWorkerLintContext(context));
   }
 }
 

@@ -135,6 +135,55 @@ describe('PPLLanguageAnalyzer.lint (compiled surface)', () => {
     });
   });
 
+  describe('field-validation field-slot shape', () => {
+    it('flags grok field=body with an actionable fix on the compiled surface', () => {
+      const query = 'source=logs | grok field=body "%{WORD:first}"';
+      const d = diag(query, 'field-validation');
+      expect(d?.severity).toBe('error');
+      expect(d?.fix?.text).toBe('body');
+      expect(d?.message).toContain('grok');
+      expect(d?.range).toEqual({
+        startLine: 1,
+        startColumn: query.indexOf('field=body'),
+        endLine: 1,
+        endColumn: query.indexOf('field=body') + 'field=body'.length,
+      });
+    });
+
+    it('flags parse field = message with an actionable fix on the compiled surface', () => {
+      const d = diag('source=logs | parse field = message "x"', 'field-validation');
+      expect(d?.severity).toBe('error');
+      expect(d?.fix?.text).toBe('message');
+      expect(d?.message).toContain('parse');
+    });
+
+    it('flags patterns field=body on the compiled surface', () => {
+      const d = diag('source=logs | patterns field=body', 'field-validation');
+      expect(d?.severity).toBe('error');
+      expect(d?.fix?.text).toBe('body');
+      expect(d?.message).toContain('patterns');
+    });
+
+    it('does not flag a bare source field', () => {
+      expect(ruleIds('source=logs | grok body "%{WORD:first}"')).not.toContain('field-validation');
+    });
+
+    it('remaps field-slot ranges for pipe-first queries', () => {
+      const d = diag('| grok field=body "x"', 'field-validation');
+      expect(d?.range).toEqual({ startLine: 1, startColumn: 7, endLine: 1, endColumn: 17 });
+      expect(d?.fix?.text).toBe('body');
+    });
+
+    it('does not duplicate unknown-field diagnostics inside the shape range', () => {
+      const diags = analyzer
+        .lint('source=logs | grok field=body "x"', { fields: new Set(['other']) })
+        .diagnostics.filter((d) => d.ruleId === 'field-validation');
+
+      expect(diags).toHaveLength(1);
+      expect(diags[0].message).not.toContain('Unknown field');
+    });
+  });
+
   describe('disabled-join-type', () => {
     it('flags a cross join', () => {
       const ids = ruleIds('source=a | cross join left=l right=r on l.id = r.id b');

@@ -5,7 +5,7 @@
 
 import { PPLValidationResult, PPLToken } from './ppl_language_analyzer';
 import { LintResult } from './lint/diagnostic';
-import { BundleRuleOverrides } from './lint/types';
+import { WorkerLintContextPayload } from './lint/types';
 import { getWorker } from '../monaco_environment';
 import { WorkerLabels } from '../worker_config';
 
@@ -77,15 +77,14 @@ export class PPLWorkerProxyService {
 
   /**
    * Lint PPL content using the compiled grammar and get lint diagnostics.
-   * `overrides` is the host's resolved per-rule config; it is structured-cloned
-   * across `postMessage` (a plain `Record`, so it clones cleanly).
+   * `context` is the structured-clone-safe host lint context payload.
    */
-  public async lint(content: string, overrides?: BundleRuleOverrides): Promise<LintResult> {
+  public async lint(content: string, context?: WorkerLintContextPayload): Promise<LintResult> {
     if (!this.worker) {
       throw new Error('PPL Worker Proxy Service has not been setup!');
     }
 
-    return this.sendMessage('lint', [content, overrides]);
+    return this.sendMessage('lint', [content, context]);
   }
 
   /**

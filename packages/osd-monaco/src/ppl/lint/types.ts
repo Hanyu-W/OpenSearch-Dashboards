@@ -93,6 +93,23 @@ export interface LintPayloadContext {
 }
 
 /**
+ * Structured-clone-safe form of the host lint context sent to the compiled PPL
+ * worker. Sets and maps are serialized as arrays because every supported
+ * browser worker can clone plain arrays reliably.
+ */
+export interface WorkerLintContextPayload {
+  isCalcite?: boolean;
+  dataSourceId?: string;
+  dataSourceVersion?: string;
+  fields?: string[];
+  typeMap?: Array<[string, string]>;
+  disabledObjectFields?: string[];
+  visibleIndices?: string[];
+  settings?: { allJoinTypesAllowed?: boolean };
+  overrides?: BundleRuleOverrides;
+}
+
+/**
  * Host-supplied lint context. Extends {@link LintPayloadContext} with the
  * engine-only fields the runner threads through. Mirrors `PPLLintContext` in
  * `lint_bridge.ts` (which extends the same base), narrowed to what detectors
@@ -102,12 +119,17 @@ export interface LintRunContext extends LintPayloadContext {
   dataSourceId?: string;
   dataSourceVersion?: string;
   /**
+   * Original source text used by detectors that need a narrow text-side
+   * fallback on the compiled grammar surface.
+   */
+  sourceText?: string;
+  /**
    * Which grammar surface produced the parse tree. The field-slot shape pass
-   * (`field-validation`) branches on this: it defers to the syntax channel on
-   * `compiled-simplified` (where `grok field=body` error-recovers to a syntax
-   * error) and flags on `runtime-bundle` (where the same input is a silent
-   * misparse). Absent for callers that don't set it (unit tests, older callers);
-   * the shape pass then falls back to an implicit zero-structure heuristic.
+   * (`field-validation`) branches on this: the runtime-bundle path reads the
+   * parse tree, while the compiled-simplified path can use `sourceText` for
+   * narrow text-side fallbacks. Absent for callers that don't set it (unit
+   * tests, older callers); the shape pass then falls back to an implicit
+   * zero-structure heuristic.
    */
   grammarSurface?: 'compiled-simplified' | 'runtime-bundle';
   /** Identifies the runtime grammar bundle a tree came from (debugging aid). */

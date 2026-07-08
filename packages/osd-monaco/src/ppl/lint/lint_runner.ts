@@ -49,8 +49,11 @@ export function mergeConfig(local: CatalogEntry, override?: Partial<CatalogEntry
 // detector still runs its own resource self-check.
 function isContextEmpty(context: LintRunContext | undefined): boolean {
   const noFields = !context?.fields || context.fields.size === 0;
+  const noTypeMap = !context?.typeMap || context.typeMap.size === 0;
+  const noDisabledObjects =
+    !context?.disabledObjectFields || context.disabledObjectFields.size === 0;
   const noIndices = !context?.visibleIndices || context.visibleIndices.length === 0;
-  return noFields && noIndices;
+  return noFields && noTypeMap && noDisabledObjects && noIndices;
 }
 
 /**

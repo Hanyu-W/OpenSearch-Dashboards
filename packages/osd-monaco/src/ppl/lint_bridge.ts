@@ -116,7 +116,7 @@ export function setPPLLintContext(model: monaco.editor.IModel, context: PPLLintC
  * receives the context directly in its request, but the compiled-grammar
  * fallback runs in a web worker with no access to this registry, so the
  * lifecycle reads the context here on the main thread and forwards the parts
- * the worker needs (per-rule `overrides`) across `postMessage`.
+ * the worker needs across `postMessage`.
  */
 export function getPPLLintContext(model: monaco.editor.IModel): PPLLintContext | undefined {
   return getGlobalLintState().contexts.get(model);

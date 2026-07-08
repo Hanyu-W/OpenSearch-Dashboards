@@ -183,9 +183,9 @@ export class PPLLanguageAnalyzer {
       const diagnostics = runLint(tree, {
         ruleNameToIndex: createCompiledRuleNameToIndex(),
         dataSourceVersion: context?.dataSourceVersion,
-        // Declare the surface so detectors can account for simplified-grammar
-        // recovery shapes, including the targeted `grok field=body` lint.
-        context: { ...context, grammarSurface: 'compiled-simplified' },
+        // Declare the surface and source text so narrow compiled-grammar text
+        // detectors can complement the parse-tree rules.
+        context: { ...context, sourceText: effectiveCode, grammarSurface: 'compiled-simplified' },
       });
 
       if (isPipeFirst) {

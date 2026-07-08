@@ -19,6 +19,8 @@ const mockResolvePPLLintResult = jest.fn(
   ) => fallback(content)
 );
 const mockSetModelMarkers = jest.fn();
+let mockLintContext: any;
+let mockValidationResult: any;
 
 // monaco surface used by language.ts at import time (registerPPLLanguage runs)
 // and inside processLintHighlighting. Only the members touched here are mocked.
@@ -52,7 +54,7 @@ jest.mock('../monaco', () => ({
 // the test's queued promises drive response timing.
 jest.mock('./lint_bridge', () => ({
   isPPLLintEnabled: () => true,
-  getPPLLintContext: () => undefined,
+  getPPLLintContext: () => mockLintContext,
   resolvePPLLintResult: (
     model: unknown,
     content: string,
@@ -75,7 +77,7 @@ jest.mock('./worker_proxy_service', () => ({
 // before the lint pass; stub it to resolve clean so it never blocks the lint we
 // are exercising. Lint and validation are independent (separate marker owners).
 jest.mock('./validation_provider', () => ({
-  resolvePPLValidationResult: jest.fn().mockResolvedValue({ isValid: true, errors: [] }),
+  resolvePPLValidationResult: jest.fn(() => Promise.resolve(mockValidationResult)),
 }));
 
 // Marker mapping is identity-ish: carry the rule id through so assertions can
@@ -87,6 +89,8 @@ jest.mock('./lint/fix_registry', () => ({
   markerFixKey: (m: { code: string }) => m.code,
   setModelFixes: jest.fn(),
   clearModelFixes: jest.fn(),
+  setModelSyntaxFixes: jest.fn(),
+  clearModelSyntaxFixes: jest.fn(),
 }));
 jest.mock('./lint/hover/hover_registry', () => ({
   setModelHoverFacts: jest.fn(),
@@ -143,6 +147,8 @@ describe('processLintHighlighting — generation guard (stale-response drop)', (
     mockLintFallback.mockReset();
     mockValidateFallback.mockReset();
     mockResolvePPLLintResult.mockClear();
+    mockLintContext = undefined;
+    mockValidationResult = { isValid: true, errors: [] };
   });
 
   it('drops an earlier pass whose response resolves AFTER a later pass', async () => {
@@ -231,5 +237,43 @@ describe('processLintHighlighting — generation guard (stale-response drop)', (
     // another's (the counter is keyed by model id).
     const owners = lintMarkerCalls().map((c) => c[0].id);
     expect(owners).toEqual(expect.arrayContaining(['a', 'b']));
+  });
+
+  it('forwards a worker-safe lint context payload to the compiled fallback', async () => {
+    const model = makeModel('m3');
+    const overrides = { 'head-without-sort': { enabled: false } };
+    mockLintContext = {
+      useRuntimeGrammar: true,
+      dataSourceId: 'ds-1',
+      dataSourceVersion: '3.5.0',
+      isCalcite: true,
+      fields: new Set(['body']),
+      typeMap: new Map([['body', 'text']]),
+      disabledObjectFields: new Set(['raw']),
+      visibleIndices: ['logs-2026'],
+      settings: { allJoinTypesAllowed: true },
+      overrides,
+      http: { post: jest.fn() },
+    };
+    mockLintFallback.mockResolvedValueOnce({ diagnostics: [] });
+
+    await revalidatePPLModel(model);
+    await flush();
+
+    expect(mockLintFallback).toHaveBeenCalledTimes(1);
+    const payload = mockLintFallback.mock.calls[0][1];
+    expect(payload).toEqual({
+      dataSourceId: 'ds-1',
+      dataSourceVersion: '3.5.0',
+      isCalcite: true,
+      fields: ['body'],
+      typeMap: [['body', 'text']],
+      disabledObjectFields: ['raw'],
+      visibleIndices: ['logs-2026'],
+      settings: { allJoinTypesAllowed: true },
+      overrides,
+    });
+    expect(payload).not.toHaveProperty('http');
+    expect(payload).not.toHaveProperty('useRuntimeGrammar');
   });
 });

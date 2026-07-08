@@ -4,14 +4,9 @@
  */
 
 import { CharStream, CommonTokenStream, ParserRuleContext } from 'antlr4ng';
-import {
-  OpenSearchPPLLexer,
-  OpenSearchPPLParser,
-  SimplifiedOpenSearchPPLLexer,
-  SimplifiedOpenSearchPPLParser,
-} from '@osd/antlr-grammar';
+import { OpenSearchPPLLexer, OpenSearchPPLParser } from '@osd/antlr-grammar';
 import { fieldValidationDetector } from '../rules/field_validation';
-import { createCompiledRuleNameToIndex, createRuntimeRuleNameToIndex } from '../rule_index';
+import { createRuntimeRuleNameToIndex } from '../rule_index';
 import { CatalogEntry, LintRunContext } from '../types';
 import { Diagnostic } from '../diagnostic';
 
@@ -53,24 +48,6 @@ function shapeDiagnostics(query: string, surface?: LintRunContext['grammarSurfac
   const tree = buildTree(query);
   const context: LintRunContext = surface ? { grammarSurface: surface } : {};
   return fieldValidationDetector(tree, config, context, ruleNameToIndex);
-}
-
-function buildCompiledTree(query: string): ParserRuleContext {
-  const lexer = new SimplifiedOpenSearchPPLLexer(CharStream.fromString(query));
-  lexer.removeErrorListeners();
-  const parser = new SimplifiedOpenSearchPPLParser(new CommonTokenStream(lexer));
-  parser.removeErrorListeners();
-  return parser.root();
-}
-
-function compiledDiagnostics(query: string): Diagnostic[] {
-  const tree = buildCompiledTree(query);
-  return fieldValidationDetector(
-    tree,
-    config,
-    { grammarSurface: 'compiled-simplified' },
-    createCompiledRuleNameToIndex()
-  );
 }
 
 describe('field-slot shape (runtime-bundle proxy)', () => {
@@ -125,6 +102,22 @@ describe('field-slot shape (runtime-bundle proxy)', () => {
       expect(diags).toHaveLength(1);
       expect(diags[0].fix).toBeUndefined();
     });
+
+    it('offers no fix for equality when the left side is not field', () => {
+      const diags = shapeDiagnostics('source=t | grok status=200 "x"', 'runtime-bundle');
+      expect(diags).toHaveLength(1);
+      expect(diags[0].severity).toBe('error');
+      expect(diags[0].fix).toBeUndefined();
+    });
+
+    it('offers no fix for field= when the right side is not a bare field', () => {
+      for (const query of ['source=t | grok field=200 "x"', 'source=t | grok field=body+1 "x"']) {
+        const diags = shapeDiagnostics(query, 'runtime-bundle');
+        expect(diags).toHaveLength(1);
+        expect(diags[0].severity).toBe('error');
+        expect(diags[0].fix).toBeUndefined();
+      }
+    });
   });
 
   describe('does NOT flag a bare field reference', () => {
@@ -142,23 +135,23 @@ describe('field-slot shape (runtime-bundle proxy)', () => {
   });
 
   describe('surface gate', () => {
-    it('flags the recovered field=body typo on the compiled-simplified surface', () => {
-      const diags = compiledDiagnostics('source=t | grok field=body "x"');
+    it('uses source text on the compiled-simplified surface', () => {
+      const query = 'source=t | grok field=body "x"';
+      const tree = buildTree(query);
+      const diags = fieldValidationDetector(
+        tree,
+        config,
+        { grammarSurface: 'compiled-simplified', sourceText: query },
+        ruleNameToIndex
+      );
+
       expect(diags).toHaveLength(1);
-      expect(diags[0].ruleId).toBe('field-validation');
       expect(diags[0].severity).toBe('error');
       expect(diags[0].fix?.text).toBe('body');
     });
 
-    it('flags recovered field=<expression> on compiled-simplified without an unsafe fix', () => {
-      const diags = compiledDiagnostics('source=t | grok field=upper(body) "x"');
-      expect(diags).toHaveLength(1);
-      expect(diags[0].ruleId).toBe('field-validation');
-      expect(diags[0].fix).toBeUndefined();
-    });
-
-    it('still defers generic compiled-simplified recovery to the syntax channel', () => {
-      expect(compiledDiagnostics('source=t | grok field "x"')).toEqual([]);
+    it('self-suppresses on compiled-simplified when source text is absent', () => {
+      expect(shapeDiagnostics('source=t | grok field=body "x"', 'compiled-simplified')).toEqual([]);
     });
   });
 

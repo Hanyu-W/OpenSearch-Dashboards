@@ -69,7 +69,7 @@ describe('runLint resolution loop', () => {
     expect(runLint(fakeTree, { catalog, ruleNameToIndex: rni, context: {} })).toEqual([]);
   });
 
-  it('gates needsContext rules on a non-empty fields set', () => {
+  it('gates needsContext rules only when all context resources are empty', () => {
     registerDetector('ctx', (_t, cfg) => [
       {
         ruleId: cfg.id,
@@ -81,13 +81,28 @@ describe('runLint resolution loop', () => {
     const catalog = [makeRule({ id: 'a', detector: 'ctx', needsContext: true })];
 
     expect(runLint(fakeTree, { catalog, ruleNameToIndex: rni, context: {} })).toEqual([]);
+    expect(runLint(fakeTree, { catalog, ruleNameToIndex: rni })).toEqual([]);
     expect(
       runLint(fakeTree, {
         catalog,
         ruleNameToIndex: rni,
-        context: { fields: new Set(['f']) },
+        context: {
+          fields: new Set(),
+          typeMap: new Map(),
+          disabledObjectFields: new Set(),
+          visibleIndices: [],
+        },
       })
-    ).toHaveLength(1);
+    ).toEqual([]);
+
+    for (const context of [
+      { fields: new Set(['f']) },
+      { typeMap: new Map([['f', 'long']]) },
+      { disabledObjectFields: new Set(['raw']) },
+      { visibleIndices: ['logs-2026'] },
+    ]) {
+      expect(runLint(fakeTree, { catalog, ruleNameToIndex: rni, context })).toHaveLength(1);
+    }
   });
 
   it('applies bundle overrides over local config', () => {

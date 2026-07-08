@@ -24,6 +24,7 @@ import {
 } from './lint/fix_registry';
 import { LINT_OWNER, pplLintHoverProvider } from './lint/hover/hover_provider';
 import { clearModelHoverFacts, HoverFacts, setModelHoverFacts } from './lint/hover/hover_registry';
+import { toWorkerLintContextPayload } from './lint/worker_context';
 
 const PPL_LANGUAGE_ID = ID;
 const OWNER = 'PPL_WORKER';
@@ -258,15 +259,14 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
 
   pplWorkerProxyService.setup();
 
-  // The compiled fallback runs in a web worker with no uiSettings client, so
-  // read the per-model overrides here on the main thread and forward them.
-  const lintContext = getPPLLintContext(model);
-  const overrides = lintContext?.overrides;
+  // The compiled fallback runs in a web worker, so snapshot the serializable
+  // host lint context on the main thread and leave http/runtime flags behind.
+  const workerLintContext = toWorkerLintContextPayload(getPPLLintContext(model));
 
   void resolvePPLLintResult(
     model,
     content,
-    async (query) => (await pplWorkerProxyService.lint(query, overrides)) as LintResult,
+    async (query) => (await pplWorkerProxyService.lint(query, workerLintContext)) as LintResult,
     async (query) => (await pplWorkerProxyService.validate(query)) as PPLValidationResult
   )
     .then((lintResult: LintResult) => {
