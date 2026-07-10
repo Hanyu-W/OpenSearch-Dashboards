@@ -106,8 +106,6 @@ export const ENGINE_OUTCOMES: Record<string, RuleHoverContent> = {
     engineBehavior:
       'the field is not present in the index and is not created upstream in the pipeline, so the engine cannot resolve it.',
     failureClass: 'engine-throw',
-    safeToIgnoreWhen:
-      'the field is produced by an upstream eval/rename the linter cannot see (it does not track every dataflow).',
   },
   'expand-on-non-array': {
     engineBehavior:
