@@ -184,6 +184,37 @@ describe('PPLLanguageAnalyzer.lint (compiled surface)', () => {
     });
   });
 
+  // The existence pass self-suppresses without a field list. On the compiled
+  // (3.5) surface the worker only fires it once the host context — including
+  // `fields` — is forwarded across postMessage (see worker_context.ts). These
+  // guard that path: field-aware linting must work on the compiled analyzer,
+  // not just the runtime grammar.
+  describe('field-validation existence pass (compiled surface, with field list)', () => {
+    it('flags an unknown field and suggests the closest known field', () => {
+      const d = analyzer
+        .lint('source=logs | where severtyText = "x"', {
+          fields: new Set(['severityText', 'body', 'status']),
+        })
+        .diagnostics.find((diagnostic) => diagnostic.ruleId === 'field-validation');
+      expect(d?.message).toContain('Unknown field "severtyText"');
+      expect(d?.message).toContain('Did you mean "severityText"');
+    });
+
+    it('does not flag a field that exists in the list', () => {
+      const ids = analyzer
+        .lint('source=logs | where severityText = "x"', {
+          fields: new Set(['severityText', 'body']),
+        })
+        .diagnostics.map((d) => d.ruleId);
+      expect(ids).not.toContain('field-validation');
+    });
+
+    it('self-suppresses when no field list is present (R22.3)', () => {
+      const ids = ruleIds('source=logs | where severtyText = "x"');
+      expect(ids).not.toContain('field-validation');
+    });
+  });
+
   describe('disabled-join-type', () => {
     it('flags a cross join', () => {
       const ids = ruleIds('source=a | cross join left=l right=r on l.id = r.id b');
