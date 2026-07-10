@@ -183,8 +183,8 @@ export class PPLLanguageAnalyzer {
       const diagnostics = runLint(tree, {
         ruleNameToIndex: createCompiledRuleNameToIndex(),
         dataSourceVersion: context?.dataSourceVersion,
-        // Declare the surface so the field-slot shape pass defers here (on the
-        // simplified grammar `grok field=body` is already a syntax error).
+        // Declare the surface so detectors can account for simplified-grammar
+        // recovery shapes, including the targeted `grok field=body` lint.
         context: { ...context, grammarSurface: 'compiled-simplified' },
       });
 

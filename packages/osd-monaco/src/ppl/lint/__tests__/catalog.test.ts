@@ -88,11 +88,11 @@ describe('catalog loading', () => {
       message: 'm',
       docUrl: 'd',
       appliesTo: { minVersion: '3.3.0', engine: 'calcite' },
-      runtimeOnly: true,
       needsExplain: true,
     });
     expect(entry).not.toBeNull();
     expect(entry!.needsExplain).toBe(true);
+    expect(entry!.runtimeOnly).toBeUndefined();
   });
 
   it('rejects a non-boolean needsExplain', () => {
@@ -117,6 +117,7 @@ describe('catalog loading', () => {
       expect(entry).toBeDefined();
       expect(entry!.needsExplain).toBe(true);
       expect(entry!.enabled).toBe(false);
+      expect(entry!.runtimeOnly).toBeUndefined();
     }
   });
 

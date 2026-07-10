@@ -310,11 +310,48 @@ function equalsRhs(
   if (opPos === -1 || opPos === siblings.length - 1) {
     return undefined;
   }
-  const rhs = siblings
-    .slice(opPos + 1)
-    .map((c) => (c as ParseTree).getText())
-    .join('');
-  return rhs.length > 0 ? rhs : undefined;
+  const rhsNodes = siblings.slice(opPos + 1) as ParseTree[];
+  const rhs = rhsNodes.map((c) => c.getText()).join('');
+  if (rhs.length === 0) {
+    return undefined;
+  }
+  const rhsFieldExprs = rhsNodes
+    .filter(isParserRuleContext)
+    .flatMap((node) => findAllDescendantsByRule(node, ruleNameToIndex, 'fieldExpression'));
+  return rhsFieldExprs.length === 1 && rhsFieldExprs[0].getText() === rhs ? rhs : undefined;
+}
+
+function isBareFieldText(text: string): boolean {
+  const segment = '(?:`[^`]+`|[@A-Za-z_][@A-Za-z0-9_-]*)';
+  return new RegExp(`^${segment}(?:\\.${segment})*$`).test(text);
+}
+
+/**
+ * The simplified compiled grammar tokenizes `field` as the FIELD keyword, so
+ * `grok field=body` error-recovers to an expression with terminal children
+ * instead of the normal comparison/fieldExpression subtree. Recover that exact
+ * shape so 3.5 can show the same field-validation diagnostic as runtime grammar.
+ */
+function recoveredFieldEqualsRhs(expression: ParserRuleContext): string | undefined | null {
+  const children = expression.children ?? [];
+  if (children.length < 3) {
+    return null;
+  }
+  const [lhs, operator, ...rhsNodes] = children as ParseTree[];
+  const lhsText = lhs.getText();
+  const operatorText = operator.getText();
+  if (lhsText.toLowerCase() !== 'field' || (operatorText !== '=' && operatorText !== '==')) {
+    return null;
+  }
+  const rhs = rhsNodes.map((node) => node.getText()).join('');
+  if (!rhs) {
+    return null;
+  }
+  return isBareFieldText(rhs) ? rhs : undefined;
+}
+
+function startsWithRecoveredFieldKeyword(expression: ParserRuleContext): boolean {
+  return expression.children?.[0]?.getText().toLowerCase() === 'field';
 }
 
 /**
@@ -328,9 +365,9 @@ function equalsRhs(
  * expression collapses to a single `fieldExpression` whose text equals the whole
  * expression (a bare field, dotted paths included). A `comparisonOperator`,
  * `literalValue`, or a wrapped/multi-field expression is flagged. An expression
- * with no field/literal/operator structure at all is the simplified-grammar
- * error-recovery shape — left to the syntax channel (see the surface gate in
- * `fieldValidationDetector`).
+ * with no field/literal/operator structure is usually simplified-grammar
+ * error-recovery; the `field=<candidate>` form is recovered below so 3.5 can
+ * still produce the targeted lint instead of only a generic syntax marker.
  */
 function detectFieldSlotShape(
   tree: ParserRuleContext,
@@ -363,6 +400,7 @@ function detectFieldSlotShape(
       const hasLiteral =
         litIdx !== -1 &&
         findAllDescendantsByRule(expression, ruleNameToIndex, 'literalValue').length > 0;
+      const recoveredRhs = recoveredFieldEqualsRhs(expression);
 
       // Bare field reference: exactly one fieldExpression spanning the whole
       // expression. This is the only accepted shape.
@@ -376,8 +414,16 @@ function detectFieldSlotShape(
       }
 
       // No field/literal/comparison structure at all → the parser error-
-      // recovered (simplified surface). Leave it to the syntax channel.
-      if (fieldExprs.length === 0 && !hasComparison && !hasLiteral) {
+      // recovered (simplified surface). Leave it to the syntax channel unless
+      // it is the unambiguous Splunk-style `field=...` typo.
+      if (fieldExprs.length === 0 && !hasComparison && !hasLiteral && recoveredRhs === null) {
+        continue;
+      }
+      if (
+        fieldExprs.length === 0 &&
+        recoveredRhs === null &&
+        startsWithRecoveredFieldKeyword(expression)
+      ) {
         continue;
       }
 
@@ -387,7 +433,8 @@ function detectFieldSlotShape(
       // to the bare field. Other flagged shapes (literals, wrapped/arithmetic
       // expressions, non-equality comparisons) have ambiguous intent, so they
       // get a message but no fix.
-      const rhs = hasComparison ? equalsRhs(expression, ruleNameToIndex) : undefined;
+      const rhs =
+        recoveredRhs ?? (hasComparison ? equalsRhs(expression, ruleNameToIndex) : undefined);
 
       diagnostics.push({
         ruleId: config.id,
@@ -445,21 +492,17 @@ function suppressContained(
 /**
  * field-validation is a merged detector with two independent passes:
  *  - PASS 1 (shape): grok/parse/patterns field-slot must be a bare field, not a
- *    Splunk-style `field=` expression. Emits `error`. Deferred on the simplified
- *    grammar surface, where the same input is already a syntax error.
+ *    Splunk-style `field=` expression. Emits `error`. On the simplified grammar
+ *    surface this recovers the specific `field=<candidate>` typo and leaves
+ *    other syntax recovery shapes to the syntax channel.
  *  - PASS 2 (existence): a referenced field must exist on the source. Emits
  *    `warning` (the catalog nominal). Self-gates on an empty field list.
  * PASS 3 suppresses an existence finding the shape pass already covers.
  */
 export const fieldValidationDetector: Detector = (tree, config, context, ruleNameToIndex) => {
-  // PASS 1 — shape. Needs no field list. Defer on the simplified surface (its
-  // error-recovery makes `field=` a syntax error already); the implicit
-  // zero-structure check in `detectFieldSlotShape` is the fallback for callers
-  // that don't declare a surface.
-  const shapeDiagnostics =
-    context.grammarSurface === 'compiled-simplified'
-      ? []
-      : detectFieldSlotShape(tree, config, ruleNameToIndex);
+  // PASS 1 — shape. Needs no field list. The detector self-suppresses generic
+  // simplified-grammar recovery shapes that should stay syntax-only.
+  const shapeDiagnostics = detectFieldSlotShape(tree, config, ruleNameToIndex);
 
   // PASS 2 — existence (self-gates on empty fields).
   const existenceDiagnostics = detectUnknownFields(tree, config, context, ruleNameToIndex);

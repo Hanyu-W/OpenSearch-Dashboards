@@ -56,6 +56,11 @@ describe('Settings', function () {
       it('should return the type of the value if the default value is null', function () {
         expect(getValType({ value: null }, 'someString')).to.be('string');
       });
+
+      it('should return json if the default value or current value is an object', function () {
+        expect(getValType({ value: { enabled: true, severity: 'info' } })).to.be('json');
+        expect(getValType({ value: null }, { enabled: true, severity: 'info' })).to.be('json');
+      });
     });
   });
 });

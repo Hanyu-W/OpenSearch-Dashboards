@@ -381,4 +381,67 @@ describe('Form', () => {
 
     expect(save).toHaveBeenCalledWith({ 'general:test:array': ['test1', 'test2'] });
   });
+
+  it('should save an object-backed json field as an object', () => {
+    const jsonObjectSettings = {
+      general: [
+        {
+          ...defaults,
+          name: 'general:test:json-object',
+          ariaName: 'json object test',
+          displayName: 'Test object setting',
+          description: 'json object foo',
+          type: 'json' as UiSettingsType,
+          category: ['general'],
+          value: undefined,
+          defVal: {
+            enabled: true,
+            severity: 'info',
+          },
+        },
+      ],
+    };
+    const wrapper = mountWithI18nProvider(
+      <Form
+        settings={jsonObjectSettings}
+        visibleSettings={jsonObjectSettings}
+        categories={categories}
+        categoryCounts={categoryCounts}
+        save={save}
+        clearQuery={clearQuery}
+        showNoResultsMessage={true}
+        enableSaving={false}
+        toasts={{} as any}
+        dockLinks={{} as any}
+      />
+    );
+
+    act(() => {
+      (wrapper.instance() as Form).setState({
+        unsavedChanges: {
+          'general:test:json-object': {
+            value: `{
+  "enabled": false,
+  "severity": "info"
+}`,
+          },
+        },
+      });
+    });
+    wrapper.update();
+
+    act(() => {
+      const saveButton = document.querySelector(
+        '[data-test-subj="advancedSetting-saveButton"]'
+      ) as HTMLElement;
+      saveButton.click();
+    });
+
+    expect(save).toHaveBeenCalledWith({
+      'general:test:json-object': {
+        enabled: false,
+        severity: 'info',
+      },
+    });
+  });
 });

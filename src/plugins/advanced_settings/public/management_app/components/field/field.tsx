@@ -90,6 +90,11 @@ export const getEditableValue = (
       return (val as string[]).join(', ');
     case 'boolean':
       return !!val;
+    case 'json':
+      if (val === undefined || val === null) {
+        return '';
+      }
+      return typeof val === 'string' ? val : JSON.stringify(val, null, 2) || '';
     case 'number':
       return Number(val);
     case 'image':
@@ -156,7 +161,9 @@ export class Field extends PureComponent<FieldProps> {
 
     switch (type) {
       case 'json':
-        const isJsonArray = Array.isArray(JSON.parse((defVal as string) || '{}'));
+        const isJsonArray = Array.isArray(
+          typeof defVal === 'string' ? JSON.parse(defVal || '{}') : defVal
+        );
         newUnsavedValue = value.trim() || (isJsonArray ? '[]' : '{}');
         try {
           JSON.parse(newUnsavedValue);

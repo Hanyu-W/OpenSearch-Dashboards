@@ -113,6 +113,13 @@ describe('Settings', function () {
           });
         });
 
+        describe('that contains a value of type object', function () {
+          it('sets type to json', function () {
+            def.value = { enabled: true, severity: 'info' };
+            expect(invoke({ def }).type).to.equal('json');
+          });
+        });
+
         describe('that contains a validation object', function () {
           it('constructs a validation regex with message', function () {
             def.validation = {

@@ -9,6 +9,15 @@ import type { LintResult } from './lint/diagnostic';
 // `mock`-prefixed so babel-plugin-jest-hoist permits referencing them inside the
 // hoisted jest.mock factories below.
 const mockLintFallback = jest.fn();
+const mockValidateFallback = jest.fn();
+const mockResolvePPLLintResult = jest.fn(
+  (
+    _model: unknown,
+    content: string,
+    fallback: (q: string) => Promise<LintResult>,
+    _validateFallback?: (q: string) => Promise<unknown>
+  ) => fallback(content)
+);
 const mockSetModelMarkers = jest.fn();
 
 // monaco surface used by language.ts at import time (registerPPLLanguage runs)
@@ -45,18 +54,20 @@ jest.mock('./lint_bridge', () => ({
   isPPLLintEnabled: () => true,
   getPPLLintContext: () => undefined,
   resolvePPLLintResult: (
-    _model: unknown,
+    model: unknown,
     content: string,
-    fallback: (q: string) => Promise<LintResult>
-  ) => fallback(content),
+    fallback: (q: string) => Promise<LintResult>,
+    validateFallback?: (q: string) => Promise<unknown>
+  ) => mockResolvePPLLintResult(model, content, fallback, validateFallback),
 }));
 
-// The worker proxy is set up but never actually called (resolvePPLLintResult is
-// mocked to call the fallback directly).
+// The worker proxy is set up and its lint/validate methods are exposed through
+// the fallbacks that resolvePPLLintResult receives.
 jest.mock('./worker_proxy_service', () => ({
   PPLWorkerProxyService: class {
     setup = jest.fn();
     lint = (...args: unknown[]) => mockLintFallback(...args);
+    validate = (...args: unknown[]) => mockValidateFallback(...args);
   },
 }));
 
@@ -130,6 +141,8 @@ describe('processLintHighlighting — generation guard (stale-response drop)', (
   beforeEach(() => {
     mockSetModelMarkers.mockClear();
     mockLintFallback.mockReset();
+    mockValidateFallback.mockReset();
+    mockResolvePPLLintResult.mockClear();
   });
 
   it('drops an earlier pass whose response resolves AFTER a later pass', async () => {
@@ -176,6 +189,31 @@ describe('processLintHighlighting — generation guard (stale-response drop)', (
     const calls = lintMarkerCalls();
     expect(calls).toHaveLength(1);
     expect(calls[0][2]).toEqual([expect.objectContaining({ code: 'only' })]);
+  });
+
+  it('passes compiled lint and validate fallbacks to the bridge resolver', async () => {
+    const model = makeModel('m-validate');
+    mockLintFallback.mockResolvedValueOnce(result('only'));
+    mockValidateFallback.mockResolvedValueOnce({ isValid: true, errors: [] });
+
+    await revalidatePPLModel(model);
+    await flush();
+
+    expect(mockResolvePPLLintResult).toHaveBeenCalledWith(
+      model,
+      'source=logs | head 5',
+      expect.any(Function),
+      expect.any(Function)
+    );
+
+    const validateFallback = mockResolvePPLLintResult.mock.calls[0][3] as (
+      query: string
+    ) => Promise<unknown>;
+    await expect(validateFallback('source=logs')).resolves.toEqual({
+      isValid: true,
+      errors: [],
+    });
+    expect(mockValidateFallback).toHaveBeenCalledWith('source=logs');
   });
 
   it('keeps generations independent per model', async () => {

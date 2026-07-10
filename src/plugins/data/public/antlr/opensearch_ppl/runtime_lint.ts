@@ -98,6 +98,18 @@ interface GrammarLintOutcome {
   tree: ParserRuleContext | undefined;
 }
 
+function canAttemptExplain(context: PPLLintContext): boolean {
+  return !!(
+    context.isCalcite &&
+    context.http &&
+    hasExplainRules({
+      overrides: context.overrides,
+      dataSourceVersion: context.dataSourceVersion,
+      isCalcite: context.isCalcite,
+    })
+  );
+}
+
 function lintWithGrammar(
   query: string,
   grammar: CachedGrammar,
@@ -151,20 +163,13 @@ async function layerExplainLint(
   staticResult: LintResult,
   context: PPLLintContext
 ): Promise<LintResult> {
-  if (
-    !context.isCalcite ||
-    !context.http ||
-    !hasExplainRules({
-      overrides: context.overrides,
-      dataSourceVersion: context.dataSourceVersion,
-      isCalcite: context.isCalcite,
-    })
-  ) {
+  const http = context.http;
+  if (!http || !canAttemptExplain(context)) {
     return staticResult;
   }
 
   try {
-    const plan = await explainCache.resolve(context.http, query, context.dataSourceId);
+    const plan = await explainCache.resolve(http, query, context.dataSourceId);
     if (!plan.isCalcite) {
       return staticResult;
     }
@@ -188,25 +193,56 @@ async function layerExplainLint(
   }
 }
 
+async function lintCompiledFallbackWithExplain(
+  request: PPLLintBridgeRequest
+): Promise<LintResult | null> {
+  const { content, context, compiledFallbackLint, compiledFallbackValidate } = request;
+  if (!content.trim()) {
+    return { diagnostics: [] };
+  }
+  if (!context || !compiledFallbackLint) {
+    return null;
+  }
+
+  const staticResult = await compiledFallbackLint(content);
+  if (!compiledFallbackValidate || !canAttemptExplain(context)) {
+    return staticResult;
+  }
+
+  try {
+    const validation = await compiledFallbackValidate(content);
+    if (!validation.isValid) {
+      return staticResult;
+    }
+  } catch {
+    return staticResult;
+  }
+
+  return layerExplainLint(content, staticResult, context);
+}
+
 /**
- * Runtime-grammar lint bridge. Returns null when the runtime grammar is
- * disabled or not cached (the null triggers the compiled-grammar fallback).
- * Runs on the main thread, mirroring validateRuntimePPLQuery. Async because it
- * layers the explain-backed rules, which require a network round-trip; the
- * bridge contract and `resolvePPLLintResult` already await the result, so this
- * is a non-breaking change for callers.
+ * Main-thread lint bridge. Uses the runtime grammar when available; otherwise
+ * delegates to the compiled worker fallback callbacks and, when the compiled
+ * query validates cleanly, layers explain-backed rules on top. Returns null only
+ * when it has no context/fallback it can use, allowing `resolvePPLLintResult`
+ * to run the normal compiled fallback itself.
  */
 export async function lintRuntimePPLQuery(
   request: PPLLintBridgeRequest
 ): Promise<LintResult | null> {
   const { content, context } = request;
-  if (!context?.useRuntimeGrammar) {
+  if (!context) {
     return null;
+  }
+
+  if (!context.useRuntimeGrammar) {
+    return lintCompiledFallbackWithExplain(request);
   }
 
   const grammar = pplGrammarCache.getCachedGrammar(context.dataSourceId);
   if (!grammar) {
-    return null;
+    return lintCompiledFallbackWithExplain(request);
   }
 
   const { result, tree } = lintWithGrammar(content, grammar, context);

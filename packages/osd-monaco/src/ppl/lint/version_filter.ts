@@ -41,7 +41,9 @@ export function appliesTo(
   const { appliesTo: predicate, severity } = rule;
   const isCalciteGated = predicate.engine === 'calcite';
 
-  if (dataSourceVersion === undefined) {
+  const hasNoVersion = dataSourceVersion === undefined || dataSourceVersion.trim() === '';
+
+  if (hasNoVersion) {
     // Engine gating first (R7.9, R7.10).
     if (isCalciteGated) {
       // Cannot confirm Calcite is active. Error-severity self-suppresses to

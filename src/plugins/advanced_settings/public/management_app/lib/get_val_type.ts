@@ -52,7 +52,11 @@ export function getValType(def: Partial<FieldSetting>, value?: any): UiSettingsT
     return 'number';
   }
 
-  if (typeofVal === 'symbol' || typeofVal === 'object' || typeofVal === 'function') {
+  if (typeofVal === 'object') {
+    return 'json';
+  }
+
+  if (typeofVal === 'symbol' || typeofVal === 'function') {
     throw new Error(
       `incompatible UiSettingsType: '${def.name}' type ${typeofVal} | ${JSON.stringify(def)}`
     );

@@ -52,10 +52,10 @@ export class QueryEnhancementsPlugin
   public setup(core: CoreSetup, { data, dataSource }: QueryEnhancementsPluginSetupDependencies) {
     this.logger.debug('queryEnhancements: Setup');
 
-    // Per-rule PPL lint overrides (enable/disable + severity), one uiSettings
-    // key per catalog rule. Registered here (not in the data plugin) so the
-    // lint feature lives wholly in query_enhancements.
-    core.uiSettings.register(getPplLintRuleSettings(core.workspace.isWorkspaceEnabled()));
+    // PPL lint rule overrides (enable/disable + severity) as a single JSON
+    // uiSetting. Registered here (not in the data plugin) so the lint feature
+    // lives wholly in query_enhancements.
+    core.uiSettings.register(getPplLintRuleSettings());
 
     // PPL lint capability — disabled by default until an operator enables it via
     // the queryEnhancements.pplLint dynamic app config flag (see the switcher

@@ -7,6 +7,7 @@ import { monaco } from '../monaco';
 import type { PPLValidationContext } from './validation_provider';
 import type { LintResult } from './lint/diagnostic';
 import type { BundleRuleOverrides, LintPayloadContext } from './lint/types';
+import type { PPLValidationResult } from './ppl_language_analyzer';
 
 /**
  * Minimal HTTP client the explain-backed lint pass uses to POST the `_explain`
@@ -34,10 +35,10 @@ export interface PPLLintHttpClient {
 export interface PPLLintContext extends PPLValidationContext, LintPayloadContext {
   /**
    * HTTP client for the explain-backed lint pass. Present only on the runtime
-   * (main-thread) bridge path — the compiled worker fallback has no HTTP access,
-   * so explain rules are silently skipped there (they are an enhancement; the
-   * worker still ships every static rule). Non-serializable, so it never crosses
-   * the worker `postMessage` boundary.
+   * (main-thread) bridge path. The compiled worker fallback still has no HTTP
+   * access; when the bridge is registered it may call the worker fallback
+   * callbacks below and layer explain diagnostics on the main thread.
+   * Non-serializable, so it never crosses the worker `postMessage` boundary.
    */
   http?: PPLLintHttpClient;
 }
@@ -46,6 +47,8 @@ export interface PPLLintBridgeRequest {
   content: string;
   model: monaco.editor.IModel;
   context?: PPLLintContext;
+  compiledFallbackLint?: (content: string) => Promise<LintResult>;
+  compiledFallbackValidate?: (content: string) => Promise<PPLValidationResult>;
 }
 
 export type PPLLintBridge = (
@@ -134,7 +137,8 @@ export function clearPPLLintContext(model: monaco.editor.IModel): void {
 export async function resolvePPLLintResult(
   model: monaco.editor.IModel,
   content: string,
-  fallbackLint: (content: string) => Promise<LintResult>
+  fallbackLint: (content: string) => Promise<LintResult>,
+  fallbackValidate?: (content: string) => Promise<PPLValidationResult>
 ): Promise<LintResult> {
   const state = getGlobalLintState();
   if (state.bridge) {
@@ -143,6 +147,8 @@ export async function resolvePPLLintResult(
         content,
         model,
         context: state.contexts.get(model),
+        compiledFallbackLint: fallbackLint,
+        compiledFallbackValidate: fallbackValidate,
       });
       // A non-null result — even with an empty diagnostics list — is a
       // completed lint that found nothing; do NOT fall back (R2.7).

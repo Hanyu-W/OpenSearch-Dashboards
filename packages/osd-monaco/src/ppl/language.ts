@@ -260,12 +260,14 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
 
   // The compiled fallback runs in a web worker with no uiSettings client, so
   // read the per-model overrides here on the main thread and forward them.
-  const overrides = getPPLLintContext(model)?.overrides;
+  const lintContext = getPPLLintContext(model);
+  const overrides = lintContext?.overrides;
 
   void resolvePPLLintResult(
     model,
     content,
-    async (query) => (await pplWorkerProxyService.lint(query, overrides)) as LintResult
+    async (query) => (await pplWorkerProxyService.lint(query, overrides)) as LintResult,
+    async (query) => (await pplWorkerProxyService.validate(query)) as PPLValidationResult
   )
     .then((lintResult: LintResult) => {
       // Drop a response that a newer lint pass has superseded (stale context or

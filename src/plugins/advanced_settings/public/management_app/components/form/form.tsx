@@ -45,7 +45,7 @@ import {
   EuiButtonEmpty,
 } from '@elastic/eui';
 import { FormattedMessage } from '@osd/i18n/react';
-import { isEmpty } from 'lodash';
+import { isEmpty, isEqual } from 'lodash';
 import { i18n } from '@osd/i18n';
 import { DocLinksStart, ToastsStart } from 'opensearch-dashboards/public';
 import { createPortal } from 'react-dom';
@@ -172,9 +172,18 @@ export class Form extends PureComponent<FormProps> {
           equalsToDefault = valueToSave.join(',') === (defVal as string[]).join(',');
           break;
         case 'json':
-          const isArray = Array.isArray(JSON.parse((defVal as string) || '{}'));
+          const isArray = Array.isArray(
+            typeof defVal === 'string' ? JSON.parse(defVal || '{}') : defVal
+          );
           valueToSave = valueToSave.trim();
           valueToSave = valueToSave || (isArray ? '[]' : '{}');
+          if (typeof defVal === 'string') {
+            equalsToDefault = valueToSave === defVal;
+          } else {
+            valueToSave = JSON.parse(valueToSave);
+            equalsToDefault = isEqual(valueToSave, defVal);
+          }
+          break;
         default:
           equalsToDefault = valueToSave === defVal;
       }

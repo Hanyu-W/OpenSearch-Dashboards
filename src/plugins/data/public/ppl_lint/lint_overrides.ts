@@ -29,8 +29,10 @@ interface StoredRuleSetting {
 }
 
 /**
- * Read the per-rule lint uiSettings into a {@link BundleRuleOverrides} map the
- * lint engine merges over the bundled catalog.
+ * Read the single lint-rules uiSetting into a {@link BundleRuleOverrides} map
+ * the lint engine merges over the bundled catalog. The stored value is one
+ * `type: 'json'` object keyed by rule id → { enabled, severity }; get() returns
+ * it already parsed.
  *
  * Sparse by design: a field is emitted only when it actually differs from the
  * bundled default, so an unchanged rule contributes nothing and the engine
@@ -40,31 +42,33 @@ interface StoredRuleSetting {
 export function buildOverridesFromSettings(uiSettings: IUiSettingsClient): BundleRuleOverrides {
   const overrides: BundleRuleOverrides = {};
 
+  const stored = uiSettings.get<Record<string, StoredRuleSetting> | undefined>(
+    UI_SETTINGS.QUERY_ENHANCEMENTS_PPL_LINT_RULES,
+    undefined
+  );
+  if (!stored || typeof stored !== 'object') {
+    return overrides;
+  }
+
   for (const entry of getBundledCatalog()) {
-    const key = `${UI_SETTINGS.QUERY_ENHANCEMENTS_PPL_LINT_RULE_PREFIX}${entry.id}`;
-    // For a registered key with no user value, get() returns the registered
-    // default object ({ enabled, severity }) rather than undefined — so this
-    // does NOT short-circuit unchanged rules; the per-field comparisons below
-    // are what make those rules contribute nothing. The guard only handles a
-    // missing/unregistered key or a non-object value.
-    const stored = uiSettings.get<StoredRuleSetting | undefined>(key, undefined);
-    if (!stored || typeof stored !== 'object') {
+    const ruleSetting = stored[entry.id];
+    if (!ruleSetting || typeof ruleSetting !== 'object') {
       continue;
     }
 
     const patch: Partial<CatalogEntry> = {};
 
-    if (typeof stored.enabled === 'boolean' && stored.enabled !== entry.enabled) {
-      patch.enabled = stored.enabled;
+    if (typeof ruleSetting.enabled === 'boolean' && ruleSetting.enabled !== entry.enabled) {
+      patch.enabled = ruleSetting.enabled;
     }
 
-    if (stored.severity) {
+    if (ruleSetting.severity) {
       // Clamp up to the silent-failure floor first, then emit only if the
       // effective severity still differs from the catalog default — a downgrade
       // clamped back to the default contributes nothing (sparse).
       const floor = MIN_SEVERITY[entry.id];
       const effective =
-        floor && SEV_RANK[stored.severity] < SEV_RANK[floor] ? floor : stored.severity;
+        floor && SEV_RANK[ruleSetting.severity] < SEV_RANK[floor] ? floor : ruleSetting.severity;
       if (effective !== entry.severity) {
         patch.severity = effective;
       }

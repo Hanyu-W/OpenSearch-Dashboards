@@ -42,14 +42,15 @@ describe('registerPplLint', () => {
     expect(disposer).toBe(mockUnregister);
   });
 
-  it('enables the engine but skips the bridge when the runtime grammar is off', () => {
-    // With no runtime grammar, the bridge would always return null; the editor's
-    // worker lints against the compiled grammar instead, so no bridge is set.
+  it('enables the engine and registers the bridge when runtime grammar is off', () => {
+    // The bridge also layers explain-backed diagnostics over the compiled
+    // worker fallback, so it is registered whenever lint itself is enabled.
     const disposer = registerPplLint(true, false);
 
     expect(mockSetPPLLintEnabled).toHaveBeenCalledWith(true);
-    expect(mockRegisterPPLLintBridge).not.toHaveBeenCalled();
-    expect(disposer).toBeUndefined();
+    expect(mockRegisterPPLLintBridge).toHaveBeenCalledTimes(1);
+    expect(mockRegisterPPLLintBridge).toHaveBeenCalledWith(expect.any(Function));
+    expect(disposer).toBe(mockUnregister);
   });
 
   it('returns a disposer that unregisters the bridge', () => {

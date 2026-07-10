@@ -241,9 +241,155 @@ describe('lintRuntimePPLQuery', () => {
         },
       },
     };
+    const compiledStaticResult = (ruleId = 'compiled-static') => ({
+      diagnostics: [
+        {
+          ruleId,
+          severity: 'warning',
+          message: ruleId,
+          range: { startLine: 1, startColumn: 0, endLine: 1, endColumn: 1 },
+        },
+      ],
+    });
 
     afterEach(() => {
       explainCache.clear();
+    });
+
+    it('layers explain markers over the compiled fallback for 3.5 Calcite when runtime grammar is off', async () => {
+      const query = 'source=accounts | where age - 2 > 30';
+      const http = { post: jest.fn().mockResolvedValue(legacyStringScriptPlan) } as any;
+      const compiledFallbackLint = jest.fn().mockResolvedValue(compiledStaticResult());
+      const compiledFallbackValidate = jest.fn().mockResolvedValue({ isValid: true, errors: [] });
+
+      const result = await lintRuntimePPLQuery({
+        content: query,
+        context: {
+          ...baseContext,
+          useRuntimeGrammar: false,
+          dataSourceVersion: '3.5.0',
+          http,
+          dataSourceId: 'ds-compiled-35',
+        },
+        compiledFallbackLint,
+        compiledFallbackValidate,
+        model: {} as any,
+      });
+
+      expect(compiledFallbackLint).toHaveBeenCalledWith(query);
+      expect(compiledFallbackValidate).toHaveBeenCalledWith(query);
+      expect(http.post).toHaveBeenCalledTimes(1);
+      expect(result!.diagnostics.map((d) => d.ruleId)).toEqual(
+        expect.arrayContaining(['compiled-static', 'operation-pushed-as-script'])
+      );
+    });
+
+    it('keeps compiled static markers and skips explain when compiled validation is invalid', async () => {
+      const query = 'source=accounts | ';
+      const http = { post: jest.fn().mockResolvedValue(legacyStringScriptPlan) } as any;
+      const staticResult = compiledStaticResult('compiled-invalid-static');
+      const compiledFallbackLint = jest.fn().mockResolvedValue(staticResult);
+      const compiledFallbackValidate = jest.fn().mockResolvedValue({
+        isValid: false,
+        errors: [{ message: 'invalid', line: 1, column: 0 }],
+      });
+
+      const result = await lintRuntimePPLQuery({
+        content: query,
+        context: {
+          ...baseContext,
+          useRuntimeGrammar: false,
+          dataSourceVersion: '3.5.0',
+          http,
+          dataSourceId: 'ds-compiled-invalid',
+        },
+        compiledFallbackLint,
+        compiledFallbackValidate,
+        model: {} as any,
+      });
+
+      expect(result).toBe(staticResult);
+      expect(compiledFallbackValidate).toHaveBeenCalledWith(query);
+      expect(http.post).not.toHaveBeenCalled();
+    });
+
+    it('does not validate or explain the compiled fallback when explain rules are disabled by default', async () => {
+      const query = 'source=accounts | where age - 2 > 30';
+      const http = { post: jest.fn().mockResolvedValue(legacyStringScriptPlan) } as any;
+      const staticResult = compiledStaticResult('compiled-default-static');
+      const compiledFallbackLint = jest.fn().mockResolvedValue(staticResult);
+      const compiledFallbackValidate = jest.fn().mockResolvedValue({ isValid: true, errors: [] });
+
+      const result = await lintRuntimePPLQuery({
+        content: query,
+        context: {
+          useRuntimeGrammar: false,
+          isCalcite: true,
+          dataSourceVersion: '3.5.0',
+          http,
+          dataSourceId: 'ds-compiled-defaults',
+        },
+        compiledFallbackLint,
+        compiledFallbackValidate,
+        model: {} as any,
+      });
+
+      expect(result).toBe(staticResult);
+      expect(compiledFallbackLint).toHaveBeenCalledWith(query);
+      expect(compiledFallbackValidate).not.toHaveBeenCalled();
+      expect(http.post).not.toHaveBeenCalled();
+    });
+
+    it('does not lint, validate, or explain empty compiled-fallback queries', async () => {
+      const http = { post: jest.fn().mockResolvedValue(legacyStringScriptPlan) } as any;
+      const compiledFallbackLint = jest.fn().mockResolvedValue(compiledStaticResult());
+      const compiledFallbackValidate = jest.fn().mockResolvedValue({ isValid: true, errors: [] });
+
+      const result = await lintRuntimePPLQuery({
+        content: '   ',
+        context: {
+          ...baseContext,
+          useRuntimeGrammar: true,
+          dataSourceVersion: '3.5.0',
+          http,
+          dataSourceId: 'ds-runtime-empty',
+        },
+        compiledFallbackLint,
+        compiledFallbackValidate,
+        model: {} as any,
+      });
+
+      expect(result).toEqual({ diagnostics: [] });
+      expect(compiledFallbackLint).not.toHaveBeenCalled();
+      expect(compiledFallbackValidate).not.toHaveBeenCalled();
+      expect(http.post).not.toHaveBeenCalled();
+    });
+
+    it('uses compiled fallback plus explain when the runtime grammar cache misses', async () => {
+      const query = 'source=accounts | where age - 2 > 30';
+      jest.spyOn(pplGrammarCache, 'getCachedGrammar').mockReturnValue(null);
+      const http = { post: jest.fn().mockResolvedValue(legacyStringScriptPlan) } as any;
+      const compiledFallbackLint = jest.fn().mockResolvedValue(compiledStaticResult());
+      const compiledFallbackValidate = jest.fn().mockResolvedValue({ isValid: true, errors: [] });
+
+      const result = await lintRuntimePPLQuery({
+        content: query,
+        context: {
+          ...baseContext,
+          useRuntimeGrammar: true,
+          dataSourceVersion: '3.5.0',
+          http,
+          dataSourceId: 'ds-runtime-cache-miss',
+        },
+        compiledFallbackLint,
+        compiledFallbackValidate,
+        model: {} as any,
+      });
+
+      expect(compiledFallbackLint).toHaveBeenCalledWith(query);
+      expect(compiledFallbackValidate).toHaveBeenCalledWith(query);
+      expect(http.post).toHaveBeenCalledTimes(1);
+      expect(result!.diagnostics.map((d) => d.ruleId)).toContain('operation-pushed-as-script');
     });
 
     it('merges explain markers after static markers when the plan flags an anti-pattern', async () => {

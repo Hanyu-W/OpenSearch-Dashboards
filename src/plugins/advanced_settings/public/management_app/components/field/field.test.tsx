@@ -223,6 +223,20 @@ const getFieldSettingValue = (wrapper: ReactWrapper, name: string, type: string)
 };
 
 describe('Field', () => {
+  describe('getEditableValue', () => {
+    it('formats object values as JSON editor text', () => {
+      expect(
+        getEditableValue('json', undefined, {
+          enabled: true,
+          severity: 'info',
+        })
+      ).toEqual(`{
+  "enabled": true,
+  "severity": "info"
+}`);
+    });
+  });
+
   Object.keys(settings).forEach((type) => {
     const setting = settings[type];
 

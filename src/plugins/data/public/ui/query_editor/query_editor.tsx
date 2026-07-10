@@ -288,18 +288,13 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
   // (which rebuilds overrides) before revalidating, otherwise the stored
   // context would still carry the pre-change overrides.
   //
-  // We subscribe to getUpdate$ (the optimistic local write), NOT getSaved$. The
-  // optimistic value is what we want: a user's own write is the highest soft
-  // scope (USER > WORKSPACE > GLOBAL), so it is also the resolved value. The one
-  // case where the post-merge value could differ — writing a non-winning scope
-  // while a higher scope overrides the same rule — is not reachable from this
-  // editor, and even then the next keystroke lint reads the merged cache and
-  // self-corrects. Chasing getSaved$ would not help anyway: update() fires
-  // saved$ before the multi-scope cache merge resolves, so it carries the same
-  // optimistic value. See ppl-lint-rule-config-ui-settings-merge-fix.md.
+  // We subscribe to getUpdate$ (the optimistic local write) so squiggles
+  // refresh the moment the JSON setting is saved in Advanced Settings, without
+  // waiting for the next keystroke. The setting is a single global key, so the
+  // optimistic value is the resolved value.
   useEffect(() => {
     const subscription = services.uiSettings.getUpdate$().subscribe(({ key }) => {
-      if (!key.startsWith(UI_SETTINGS.QUERY_ENHANCEMENTS_PPL_LINT_RULE_PREFIX)) {
+      if (key !== UI_SETTINGS.QUERY_ENHANCEMENTS_PPL_LINT_RULES) {
         return;
       }
       syncPPLLintContext(inputRef.current, getLintContext());

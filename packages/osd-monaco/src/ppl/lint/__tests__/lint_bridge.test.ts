@@ -30,6 +30,7 @@ describe('PPL lint bridge', () => {
 
   it('uses the registered bridge result when available', async () => {
     const fallback = jest.fn().mockResolvedValue(emptyResult);
+    const fallbackValidate = jest.fn().mockResolvedValue({ isValid: true, errors: [] });
     const runtimeResult: LintResult = {
       diagnostics: [
         {
@@ -41,15 +42,33 @@ describe('PPL lint bridge', () => {
       ],
     };
     setPPLLintContext(model, { useRuntimeGrammar: true, dataSourceId: 'ds-1' });
-    unregister = registerPPLLintBridge(({ context }) => {
-      expect(context?.dataSourceId).toBe('ds-1');
-      return runtimeResult;
+    unregister = registerPPLLintBridge(
+      ({ context, compiledFallbackLint, compiledFallbackValidate }) => {
+        expect(context?.dataSourceId).toBe('ds-1');
+        expect(compiledFallbackLint).toBe(fallback);
+        expect(compiledFallbackValidate).toBe(fallbackValidate);
+        return runtimeResult;
+      }
+    );
+
+    await expect(
+      resolvePPLLintResult(model, 'source=logs', fallback, fallbackValidate)
+    ).resolves.toEqual(runtimeResult);
+    expect(fallback).not.toHaveBeenCalled();
+    expect(fallbackValidate).not.toHaveBeenCalled();
+  });
+
+  it('does not run the fallback again after a bridge uses the fallback callback', async () => {
+    const fallback = jest.fn().mockResolvedValue(emptyResult);
+    unregister = registerPPLLintBridge(async ({ content, compiledFallbackLint }) => {
+      return compiledFallbackLint!(content);
     });
 
     await expect(resolvePPLLintResult(model, 'source=logs', fallback)).resolves.toEqual(
-      runtimeResult
+      emptyResult
     );
-    expect(fallback).not.toHaveBeenCalled();
+    expect(fallback).toHaveBeenCalledTimes(1);
+    expect(fallback).toHaveBeenCalledWith('source=logs');
   });
 
   it('treats an empty (but non-null) bridge result as complete without fallback', async () => {

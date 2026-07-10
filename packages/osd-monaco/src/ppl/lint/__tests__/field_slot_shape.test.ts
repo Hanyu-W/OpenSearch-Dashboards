@@ -4,9 +4,14 @@
  */
 
 import { CharStream, CommonTokenStream, ParserRuleContext } from 'antlr4ng';
-import { OpenSearchPPLLexer, OpenSearchPPLParser } from '@osd/antlr-grammar';
+import {
+  OpenSearchPPLLexer,
+  OpenSearchPPLParser,
+  SimplifiedOpenSearchPPLLexer,
+  SimplifiedOpenSearchPPLParser,
+} from '@osd/antlr-grammar';
 import { fieldValidationDetector } from '../rules/field_validation';
-import { createRuntimeRuleNameToIndex } from '../rule_index';
+import { createCompiledRuleNameToIndex, createRuntimeRuleNameToIndex } from '../rule_index';
 import { CatalogEntry, LintRunContext } from '../types';
 import { Diagnostic } from '../diagnostic';
 
@@ -48,6 +53,24 @@ function shapeDiagnostics(query: string, surface?: LintRunContext['grammarSurfac
   const tree = buildTree(query);
   const context: LintRunContext = surface ? { grammarSurface: surface } : {};
   return fieldValidationDetector(tree, config, context, ruleNameToIndex);
+}
+
+function buildCompiledTree(query: string): ParserRuleContext {
+  const lexer = new SimplifiedOpenSearchPPLLexer(CharStream.fromString(query));
+  lexer.removeErrorListeners();
+  const parser = new SimplifiedOpenSearchPPLParser(new CommonTokenStream(lexer));
+  parser.removeErrorListeners();
+  return parser.root();
+}
+
+function compiledDiagnostics(query: string): Diagnostic[] {
+  const tree = buildCompiledTree(query);
+  return fieldValidationDetector(
+    tree,
+    config,
+    { grammarSurface: 'compiled-simplified' },
+    createCompiledRuleNameToIndex()
+  );
 }
 
 describe('field-slot shape (runtime-bundle proxy)', () => {
@@ -119,10 +142,23 @@ describe('field-slot shape (runtime-bundle proxy)', () => {
   });
 
   describe('surface gate', () => {
-    it('defers on the compiled-simplified surface (syntax channel owns it)', () => {
-      // Even on a tree that contains the misparse, an explicit simplified
-      // surface suppresses the shape pass.
-      expect(shapeDiagnostics('source=t | grok field=body "x"', 'compiled-simplified')).toEqual([]);
+    it('flags the recovered field=body typo on the compiled-simplified surface', () => {
+      const diags = compiledDiagnostics('source=t | grok field=body "x"');
+      expect(diags).toHaveLength(1);
+      expect(diags[0].ruleId).toBe('field-validation');
+      expect(diags[0].severity).toBe('error');
+      expect(diags[0].fix?.text).toBe('body');
+    });
+
+    it('flags recovered field=<expression> on compiled-simplified without an unsafe fix', () => {
+      const diags = compiledDiagnostics('source=t | grok field=upper(body) "x"');
+      expect(diags).toHaveLength(1);
+      expect(diags[0].ruleId).toBe('field-validation');
+      expect(diags[0].fix).toBeUndefined();
+    });
+
+    it('still defers generic compiled-simplified recovery to the syntax channel', () => {
+      expect(compiledDiagnostics('source=t | grok field "x"')).toEqual([]);
     });
   });
 

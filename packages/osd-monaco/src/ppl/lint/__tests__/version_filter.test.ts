@@ -82,5 +82,14 @@ describe('version_filter appliesTo', () => {
       const rule = makeRule({ severity: 'warning', appliesTo: { engine: 'calcite' } });
       expect(appliesTo(rule, undefined, undefined)).toBe(true);
     });
+
+    it('treats a blank version string like an undefined version', () => {
+      const rule = makeRule({
+        severity: 'info',
+        appliesTo: { minVersion: '3.3.0', engine: 'calcite' },
+      });
+      expect(appliesTo(rule, '', true)).toBe(true);
+      expect(appliesTo(rule, '   ', true)).toBe(true);
+    });
   });
 });
