@@ -23,4 +23,17 @@ export const sharedEditorOptions: IEditorConstructionOptions = {
   overviewRulerLanes: 0,
   hideCursorInOverviewRuler: true,
   fixedOverflowWidgets: true,
+  // With `fixedOverflowWidgets`, the lint hover card renders in the
+  // `.overflowingContentWidgets` container, which sits OUTSIDE the editor's
+  // `.overflow-guard` (the node Monaco binds mouse-leave to). Monaco's mouse-
+  // *move* handler applies a `hidingDelay` grace period so the pointer can
+  // travel from the marker onto the card, but its mouse-*leave* handler has no
+  // such grace — so once the pointer is on the card and then exits the query
+  // box, the card is hidden instantly, reading as a flicker/disappear. `sticky`
+  // (default true, set explicitly) keeps it open while the pointer is over it,
+  // and a longer `hidingDelay` widens the grace window on the move path.
+  hover: {
+    sticky: true,
+    hidingDelay: 600,
+  },
 };

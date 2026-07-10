@@ -136,6 +136,7 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     grammarRefresh: { current: undefined },
     lintContext: { current: undefined },
     lintGrammarRefresh: { current: undefined },
+    lintHoverPersistence: { current: undefined },
   });
   // Cache of derived field metadata per dataset id, populated asynchronously.
   // Field-aware lint rules self-suppress until this resolves.

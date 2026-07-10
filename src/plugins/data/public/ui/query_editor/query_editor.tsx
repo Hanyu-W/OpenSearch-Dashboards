@@ -99,6 +99,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     grammarRefresh: { current: undefined },
     lintContext: { current: undefined },
     lintGrammarRefresh: { current: undefined },
+    lintHoverPersistence: { current: undefined },
   });
   // Cache of derived field metadata per dataset id, populated asynchronously.
   const lintFieldsRef = useRef<LintFieldsCache>({});

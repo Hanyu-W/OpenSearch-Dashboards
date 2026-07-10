@@ -12,6 +12,7 @@ import {
 } from '@osd/monaco';
 import { MutableRefObject } from 'react';
 import { attachPPLGrammarRefresh, attachPPLValidationContext } from './validation_context';
+import { attachPPLLintHoverPersistence } from './lint_hover_persistence';
 
 function applyLintContext(
   model: monaco.editor.ITextModel | null | undefined,
@@ -93,6 +94,7 @@ export interface PPLDetachRefs {
   grammarRefresh: DetachRef;
   lintContext: DetachRef;
   lintGrammarRefresh: DetachRef;
+  lintHoverPersistence: DetachRef;
 }
 
 /**
@@ -123,7 +125,9 @@ export function attachPPLContexts(
 
   refs.lintContext.current?.();
   refs.lintGrammarRefresh.current?.();
+  refs.lintHoverPersistence.current?.();
   refs.lintContext.current = attachPPLLintContext(editor, getLintContext);
+  refs.lintHoverPersistence.current = attachPPLLintHoverPersistence(editor);
   refs.lintGrammarRefresh.current = attachPPLLintGrammarRefresh(
     editor,
     getLintContext,
@@ -145,4 +149,6 @@ export function cleanupPPLContexts(refs: PPLDetachRefs): void {
   refs.lintContext.current = undefined;
   refs.lintGrammarRefresh.current?.();
   refs.lintGrammarRefresh.current = undefined;
+  refs.lintHoverPersistence.current?.();
+  refs.lintHoverPersistence.current = undefined;
 }
