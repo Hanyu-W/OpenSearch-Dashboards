@@ -119,7 +119,15 @@ export function renderPPLLintFixAction({
   onApprove,
   onReject,
 }: PPLLintFixRenderProps) {
-  const session = args?.requestId ? getActivePPLLintFixSession(args.requestId) : undefined;
+  // Read the diagnostic from the active session immediately rather than gating on
+  // the streamed `args.requestId`: the tool args arrive incrementally over the
+  // AG-UI stream, so keying on `args.requestId` leaves the rule info blank until
+  // the whole args JSON lands. There is only ever one active lint-fix session, so
+  // fall back to it (unkeyed) while args are still streaming, then prefer the
+  // request-matched session once the id is present.
+  const session = args?.requestId
+    ? getActivePPLLintFixSession(args.requestId)
+    : getActivePPLLintFixSession();
   const diagnostic = session?.request.diagnostic;
   const statusMessage = result?.message ?? error?.message;
 
@@ -138,7 +146,7 @@ export function renderPPLLintFixAction({
       {args?.fixedQuery ? (
         <>
           <EuiSpacer size="s" />
-          <EuiCodeBlock language="ppl" paddingSize="s" isCopyable={true}>
+          <EuiCodeBlock language="sql" paddingSize="s" isCopyable={true}>
             {args.fixedQuery}
           </EuiCodeBlock>
         </>

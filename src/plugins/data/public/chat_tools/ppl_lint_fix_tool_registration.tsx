@@ -206,7 +206,7 @@ const PPLLintFixToolRenderer: React.FC<RenderProps<PPLLintFixToolArgs>> = ({
         <>
           <EuiSpacer size="s" />
           <EuiCodeBlock
-            language="ppl"
+            language="sql"
             fontSize="s"
             paddingSize="s"
             data-test-subj="pplLintFixToolFixedQuery"
