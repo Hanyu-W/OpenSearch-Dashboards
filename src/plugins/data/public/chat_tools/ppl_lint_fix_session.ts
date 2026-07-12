@@ -31,11 +31,14 @@ export function storePPLLintFixSession(session: PPLLintFixSession): void {
   activeSession = session;
 }
 
-export function getPPLLintFixSession(requestId: string): PPLLintFixSession | undefined {
-  if (activeSession?.request.requestId !== requestId) {
-    return undefined;
+export function getPPLLintFixSession(requestId?: string): PPLLintFixSession | undefined {
+  // With no requestId, return the single active session. Callers no longer key on
+  // a model-provided requestId (weak models fill it with wrong values); the active
+  // session is the source of truth and staleness is checked against its own query.
+  if (!requestId) {
+    return activeSession;
   }
-  return activeSession;
+  return activeSession?.request.requestId === requestId ? activeSession : undefined;
 }
 
 export function clearPPLLintFixSession(): void {

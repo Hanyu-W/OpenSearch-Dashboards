@@ -62,18 +62,13 @@ export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProp
   useAssistantActionHook<PPLLintFixToolArgs>({
     name: PPL_LINT_FIX_DATA_TOOL_NAME,
     description:
-      'Proposes a corrected OpenSearch PPL query for the active data editor lint-fix request. This tool does not execute the query. The UI will ask the user to approve before the editor is updated.',
+      'Proposes a corrected OpenSearch PPL query for the active data editor lint-fix request. ' +
+      'This tool does not execute the query; the UI asks the user to approve before the editor ' +
+      'is updated. Call it directly with the corrected query — the active request is tracked by ' +
+      'the UI, so no request id or hash is needed.',
     parameters: {
       type: 'object',
       properties: {
-        requestId: {
-          type: 'string',
-          description: 'The active PPL lint fix request id.',
-        },
-        sourceQueryHash: {
-          type: 'string',
-          description: 'The source query hash from the lint fix request.',
-        },
         fixedQuery: {
           type: 'string',
           description: 'The complete corrected OpenSearch PPL query.',
@@ -83,30 +78,22 @@ export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProp
           description: 'A short explanation of the correction.',
         },
       },
-      required: ['requestId', 'sourceQueryHash', 'fixedQuery'],
+      required: ['fixedQuery'],
     },
     requiresConfirmation: true,
     useCustomRenderer: true,
     handler: async (args) => {
-      if (!args?.requestId) {
-        return failure(
-          'missing-request',
-          'The active PPL lint fix request is no longer available.'
-        );
-      }
-
-      const session = getPPLLintFixSession(args.requestId);
+      // Match against the single active session rather than a model-provided
+      // requestId/sourceQueryHash: weaker models often fill those args with the
+      // wrong values (rule name, query text), which used to trip a false
+      // missing-request/hash-mismatch and — since the failure prompts a retry —
+      // send the model into a tool-call loop. Staleness is enforced below by
+      // comparing the live editor query to the one captured at request time.
+      const session = getPPLLintFixSession();
       if (!session) {
         return failure(
           'missing-request',
           'The active PPL lint fix request is no longer available.'
-        );
-      }
-
-      if (args.sourceQueryHash !== session.request.sourceQueryHash) {
-        return failure(
-          'hash-mismatch',
-          'The proposed fix does not match the active PPL lint fix request.'
         );
       }
 
@@ -118,7 +105,7 @@ export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProp
         );
       }
 
-      if (typeof args.fixedQuery !== 'string') {
+      if (typeof args.fixedQuery !== 'string' || !args.fixedQuery.trim()) {
         return failure('invalid-candidate', 'The proposed PPL query is missing.');
       }
 
@@ -168,7 +155,10 @@ const PPLLintFixToolRenderer: React.FC<RenderProps<PPLLintFixToolArgs>> = ({
   onApprove,
   onReject,
 }) => {
-  const session = args?.requestId ? getPPLLintFixSession(args.requestId) : undefined;
+  // Read the active session directly (not keyed on the streamed/model-provided
+  // requestId) so the diagnostic info shows immediately and regardless of what
+  // the model put in the args.
+  const session = getPPLLintFixSession();
   const showActions = (status === 'pending' || status === 'executing') && !!args;
   const failedMessage =
     result?.message ||

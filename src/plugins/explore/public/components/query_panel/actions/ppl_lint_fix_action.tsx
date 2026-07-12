@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   EuiButton,
   EuiButtonEmpty,
@@ -25,6 +25,9 @@ import {
   PPL_LINT_FIX_CONTEXT_ID_PREFIX,
   clearActivePPLLintFixSession,
   getActivePPLLintFixSession,
+  markPPLLintFixApplied,
+  isPPLLintFixApplied,
+  subscribePPLLintFixApplied,
 } from './ppl_lint_fix_session';
 
 interface ApplyPPLLintFixArgs {
@@ -61,18 +64,13 @@ const buildFailureResult = (
 export const APPLY_PPL_LINT_FIX_EXPLORE_TOOL_DEFINITION = {
   name: APPLY_PPL_LINT_FIX_EXPLORE_TOOL_NAME,
   description:
-    'Proposes a corrected OpenSearch PPL query for the active Explore lint-fix request. This tool does not execute the query. The UI will ask the user to approve before the editor is updated.',
+    'Proposes a corrected OpenSearch PPL query for the active Explore lint-fix request. ' +
+    'This tool does not execute the query; the UI asks the user to approve before the editor ' +
+    'is updated. Call it directly with the corrected query — the active request is tracked by ' +
+    'the UI, so no request id or hash is needed.',
   parameters: {
     type: 'object' as const,
     properties: {
-      requestId: {
-        type: 'string',
-        description: 'The active PPL lint fix request id.',
-      },
-      sourceQueryHash: {
-        type: 'string',
-        description: 'The source query hash from the active lint fix request.',
-      },
       fixedQuery: {
         type: 'string',
         description: 'The proposed corrected OpenSearch PPL query.',
@@ -82,7 +80,7 @@ export const APPLY_PPL_LINT_FIX_EXPLORE_TOOL_DEFINITION = {
         description: 'A short explanation of the correction.',
       },
     },
-    required: ['requestId', 'sourceQueryHash', 'fixedQuery'],
+    required: ['fixedQuery'],
   },
   requiresConfirmation: true,
   useCustomRenderer: true,
@@ -112,14 +110,21 @@ export function registerDisabledPPLLintFixAction(
   });
 }
 
-export function renderPPLLintFixAction({
+// Rendered as a component (not a bare function call) so it can use hooks: it
+// subscribes to the apply-state so the otherwise-idle card re-renders and flips
+// to "Query updated" the instant the fix lands in the editor, rather than waiting
+// on the framework's tool-call status (which trails the model's follow-up turn).
+const PPLLintFixCard: React.FC<PPLLintFixRenderProps> = ({
   status,
   args,
   result,
   error,
   onApprove,
   onReject,
-}: PPLLintFixRenderProps) {
+}) => {
+  const [, forceRender] = useState(0);
+  useEffect(() => subscribePPLLintFixApplied(() => forceRender((n) => n + 1)), []);
+
   // Read the diagnostic from the active session immediately rather than gating on
   // the streamed `args.requestId`: the tool args arrive incrementally over the
   // AG-UI stream, so keying on `args.requestId` leaves the rule info blank until
@@ -131,6 +136,10 @@ export function renderPPLLintFixAction({
     : getActivePPLLintFixSession();
   const diagnostic = session?.request.diagnostic;
   const statusMessage = result?.message ?? error?.message;
+  // Show success as soon as the fix is applied to the editor, without waiting for
+  // the framework's tool-call status to flip to 'complete' (that flip trails the
+  // model's follow-up turn over the AG-UI round-trip, which can lag or hang).
+  const applied = status === 'complete' || isPPLLintFixApplied(args?.fixedQuery);
 
   return (
     <div data-test-subj="pplLintFixExploreActionRenderer">
@@ -153,7 +162,7 @@ export function renderPPLLintFixAction({
         </>
       ) : null}
 
-      {status === 'pending' || status === 'executing' ? (
+      {!applied && (status === 'pending' || status === 'executing') ? (
         <>
           <EuiSpacer size="s" />
           <EuiFlexGroup gutterSize="s" responsive={false}>
@@ -184,7 +193,7 @@ export function renderPPLLintFixAction({
         </>
       ) : null}
 
-      {status === 'complete' ? (
+      {applied ? (
         <>
           <EuiSpacer size="s" />
           <EuiCallOut
@@ -197,7 +206,7 @@ export function renderPPLLintFixAction({
         </>
       ) : null}
 
-      {status === 'failed' ? (
+      {!applied && status === 'failed' ? (
         <>
           <EuiSpacer size="s" />
           <EuiCallOut
@@ -214,6 +223,13 @@ export function renderPPLLintFixAction({
       ) : null}
     </div>
   );
+};
+
+// The assistant-action framework calls the registered `render` as a plain
+// function; return the card as an element so React mounts it as a component and
+// its hooks (the apply-state subscription) work.
+export function renderPPLLintFixAction(props: PPLLintFixRenderProps) {
+  return <PPLLintFixCard {...props} />;
 }
 
 export function usePPLLintFixAction(
@@ -237,41 +253,40 @@ export function usePPLLintFixAction(
       ...APPLY_PPL_LINT_FIX_EXPLORE_TOOL_DEFINITION,
       handler: async (args: ApplyPPLLintFixArgs = {} as ApplyPPLLintFixArgs) => {
         try {
+          // Match against the single active session directly rather than trusting
+          // model-provided requestId/sourceQueryHash. Weaker models frequently fill
+          // those args with the wrong values (e.g. the rule name or the query text),
+          // which used to trip a false stale-request/hash-mismatch and, because the
+          // failure result prompts a retry, sent the model into a tool-call loop.
+          // Staleness is instead enforced below by comparing the live editor query
+          // to the query captured when the fix was requested — which needs no model
+          // input and is the check that actually matters.
           const session = getActivePPLLintFixSession();
           if (!session) {
             return buildFailureResult(
-              args?.requestId,
+              session?.request.requestId,
               'missing-request',
               'No active Explore PPL lint fix request was found.'
-            );
-          }
-
-          if (session.request.requestId !== args.requestId) {
-            return buildFailureResult(
-              args.requestId,
-              'stale-request',
-              'The active Explore PPL lint fix request has changed.'
-            );
-          }
-
-          if (session.request.sourceQueryHash !== args.sourceQueryHash) {
-            return buildFailureResult(
-              args.requestId,
-              'hash-mismatch',
-              'The proposed fix does not match the active source query hash.'
             );
           }
 
           const currentQuery = session.getCurrentQuery() ?? '';
           if (currentQuery !== session.request.query) {
             return buildFailureResult(
-              args.requestId,
+              session.request.requestId,
               'stale-query',
               'The query changed after the fix request was opened. Ask for a fresh fix.'
             );
           }
 
-          const fixedQuery = args.fixedQuery.trim();
+          const fixedQuery = (args.fixedQuery ?? '').trim();
+          if (!fixedQuery) {
+            return buildFailureResult(
+              session.request.requestId,
+              'invalid-candidate',
+              'No corrected query was provided.'
+            );
+          }
           const validation = validatePPLLintFixCandidate({
             originalQuery: session.request.query,
             fixedQuery,
@@ -281,7 +296,7 @@ export function usePPLLintFixAction(
 
           if (!validation.accepted) {
             return buildFailureResult(
-              args.requestId,
+              session.request.requestId,
               validation.reason ?? 'invalid-candidate',
               'The proposed fix did not pass PPL lint validation.',
               { validation }
@@ -289,19 +304,20 @@ export function usePPLLintFixAction(
           }
 
           setEditorTextWithQuery(fixedQuery);
-          removeFixContext(args.requestId);
-          clearActivePPLLintFixSession(args.requestId);
+          markPPLLintFixApplied(fixedQuery);
+          removeFixContext(session.request.requestId);
+          clearActivePPLLintFixSession(session.request.requestId);
 
           return {
             success: true,
             applied: true,
-            requestId: args.requestId,
+            requestId: session.request.requestId,
             query: fixedQuery,
             message: 'Applied the PPL lint fix to the Explore query editor.',
           };
         } catch (handlerError) {
           return buildFailureResult(
-            args?.requestId,
+            getActivePPLLintFixSession()?.request.requestId,
             'unexpected-error',
             handlerError instanceof Error ? handlerError.message : 'Unknown error'
           );
