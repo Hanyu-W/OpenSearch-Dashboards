@@ -8,6 +8,14 @@ import type { Query } from '../../common';
 
 export const PPL_LINT_FIX_DATA_TOOL_NAME = 'apply_ppl_lint_fix_data';
 
+/**
+ * Prefix for the assistant-context-store entry carrying a fix request's
+ * out-of-band metadata (correlation ids + tool instructions). Keyed by requestId
+ * so it can be added when chat opens and removed once the fix is applied. Shared
+ * between the query editor (adds it) and the tool registration (removes it).
+ */
+export const PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX = 'ppl-lint-fix-data-';
+
 export type { AskPPLLintFixRequest } from '@osd/monaco';
 
 export interface PPLLintFixSession {

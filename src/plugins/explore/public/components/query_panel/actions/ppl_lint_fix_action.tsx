@@ -22,6 +22,7 @@ import { ExploreServices } from '../../../types';
 import { useSetEditorTextWithQuery } from '../../../application/hooks';
 import {
   APPLY_PPL_LINT_FIX_EXPLORE_TOOL_NAME,
+  PPL_LINT_FIX_CONTEXT_ID_PREFIX,
   clearActivePPLLintFixSession,
   getActivePPLLintFixSession,
 } from './ppl_lint_fix_session';
@@ -221,6 +222,14 @@ export function usePPLLintFixAction(
   const { services } = useOpenSearchDashboards<ExploreServices>();
   const registerAction = services.contextProvider?.actions?.registerAssistantAction;
 
+  // Drop the out-of-band fix-context entry the editor pushed for this request so
+  // it does not linger in the conversation after the fix is applied/dismissed.
+  const removeFixContext = (requestId?: string) => {
+    if (!requestId) return;
+    const store = services.contextProvider?.getAssistantContextStore?.();
+    store?.removeContextById?.(PPL_LINT_FIX_CONTEXT_ID_PREFIX + requestId);
+  };
+
   useMount(() => {
     if (!registerAction) return;
 
@@ -280,6 +289,7 @@ export function usePPLLintFixAction(
           }
 
           setEditorTextWithQuery(fixedQuery);
+          removeFixContext(args.requestId);
           clearActivePPLLintFixSession(args.requestId);
 
           return {
@@ -305,6 +315,7 @@ export function usePPLLintFixAction(
     if (registerAction) {
       registerDisabledPPLLintFixAction(registerAction);
     }
+    removeFixContext(getActivePPLLintFixSession()?.request.requestId);
     clearActivePPLLintFixSession();
   });
 }

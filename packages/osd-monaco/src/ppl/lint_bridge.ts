@@ -108,7 +108,15 @@ export interface AskPPLLintFixRequest {
   };
   datasetTitle?: string;
   dataSourceId?: string;
+  /** Short, human-facing chat bubble shown to the user (rule + offending query). */
   chatMessage: string;
+  /**
+   * Out-of-band context for the model: correlation ids + tool-calling
+   * instructions. The host pushes this into the assistant context store so the
+   * model receives it while the chat UI renders nothing for it. Keeps the
+   * machine plumbing out of the visible transcript.
+   */
+  chatContext?: string;
   lintContext?: LintRunContext;
 }
 

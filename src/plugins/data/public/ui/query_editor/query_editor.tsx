@@ -52,7 +52,11 @@ import { buildPPLLintContext, LintFieldsCache } from '../../ppl_lint/lint_contex
 import { fetchDisabledObjectFields } from '../../ppl_lint/disabled_object_fields';
 import { calciteSettingsCache } from '../../ppl_lint/calcite_settings';
 import { fetchVisibleIndices } from '../../ppl_lint/visible_indices';
-import { storePPLLintFixSession, withTimeout } from '../../chat_tools/ppl_lint_fix_session';
+import {
+  storePPLLintFixSession,
+  withTimeout,
+  PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX,
+} from '../../chat_tools/ppl_lint_fix_session';
 import type { AskPPLLintFixRequest } from '../../chat_tools/ppl_lint_fix_session';
 
 export interface QueryEditorProps {
@@ -174,10 +178,27 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
       return;
     }
 
+    // Send the fix request's machine plumbing (correlation ids + tool-calling
+    // instructions) out-of-band via the assistant context store so the model
+    // receives it without it rendering as a chat bubble. The visible bubble is
+    // the short human message (request.chatMessage). Keyed by requestId.
+    const contextStore = services.contextProvider?.getAssistantContextStore?.();
+    const contextId = PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX + request.requestId;
+    if (request.chatContext && contextStore) {
+      contextStore.addContext({
+        id: contextId,
+        description: 'OpenSearch PPL lint quick-fix request details',
+        value: request.chatContext,
+        label: 'PPL lint fix request',
+        categories: ['chat', 'ppl-lint-fix'],
+      });
+    }
+
     void withTimeout(
       chat.sendMessageWithWindow(request.chatMessage, [], { clearConversation: true }),
       ASK_AI_FIX_CHAT_TIMEOUT_MS
     ).catch(() => {
+      contextStore?.removeContextById?.(contextId);
       services.notifications.toasts.addWarning(
         i18n.translate('data.pplLint.aiFix.openChatError', {
           defaultMessage: 'Could not open Olly for this PPL lint fix.',

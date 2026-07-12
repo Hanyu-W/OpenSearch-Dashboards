@@ -59,6 +59,7 @@ import {
 } from '../../../../../../data/public';
 import {
   APPLY_PPL_LINT_FIX_EXPLORE_TOOL_NAME,
+  PPL_LINT_FIX_CONTEXT_ID_PREFIX,
   setActivePPLLintFixSession,
 } from '../../actions/ppl_lint_fix_session';
 
@@ -181,6 +182,22 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
         return;
       }
 
+      // Push the fix request's machine plumbing (correlation ids + tool-calling
+      // instructions) into the assistant context store so the model receives it
+      // via the AG-UI `context` array without it rendering as a chat bubble. The
+      // visible bubble stays the short human message (request.chatMessage).
+      // Keyed by requestId so the apply handler can drop it once the fix lands.
+      const contextStore = services.contextProvider?.getAssistantContextStore?.();
+      if (request.chatContext && contextStore) {
+        contextStore.addContext({
+          id: PPL_LINT_FIX_CONTEXT_ID_PREFIX + request.requestId,
+          description: 'OpenSearch PPL lint quick-fix request details',
+          value: request.chatContext,
+          label: 'PPL lint fix request',
+          categories: ['chat', 'explore', 'ppl-lint-fix'],
+        });
+      }
+
       void withTimeout({
         promise: chat.sendMessageWithWindow(request.chatMessage, [], { clearConversation: true }),
         timeout: 4000,
@@ -188,6 +205,9 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
           defaultMessage: 'Timed out opening Olly chat for this PPL fix.',
         }),
       }).catch((error) => {
+        // On failure to open chat, drop the context entry we just added so it does
+        // not leak into an unrelated future conversation.
+        contextStore?.removeContextById?.(PPL_LINT_FIX_CONTEXT_ID_PREFIX + request.requestId);
         services.notifications?.toasts?.addWarning(
           error instanceof Error
             ? error.message
@@ -197,7 +217,7 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
         );
       });
     },
-    [chat, editorRef, services.notifications?.toasts]
+    [chat, editorRef, services.notifications?.toasts, services.contextProvider]
   );
 
   const aiFixHooks = useMemo<PPLLintAiFixHooks | undefined>(

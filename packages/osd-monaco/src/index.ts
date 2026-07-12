@@ -51,6 +51,7 @@ export {
   DEFAULT_PPL_LINT_FIX_TOOL_NAME,
   hashPPLLintFixSource,
   buildChatFixMessage,
+  buildChatFixContext,
   validatePPLLintFixCandidate,
   compiledLintFacts,
   compiledPipelineShape,

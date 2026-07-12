@@ -17,6 +17,7 @@ import { LintRunContext } from '../types';
 import { AI_FIX_COMMAND_ID, AiFixCommandArgs } from './ai_fix_command_id';
 import {
   buildChatFixMessage,
+  buildChatFixContext,
   DEFAULT_PPL_LINT_FIX_TOOL_NAME,
   hashPPLLintFixSource,
 } from './build_chat_fix_message';
@@ -82,6 +83,7 @@ export function handleAiFixCommand(
   const request: AskPPLLintFixRequest = {
     ...requestWithoutMessage,
     chatMessage: buildChatFixMessage(requestWithoutMessage),
+    chatContext: buildChatFixContext(requestWithoutMessage),
     lintContext,
   };
   context.onAskAiFix(request);

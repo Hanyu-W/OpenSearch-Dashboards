@@ -42,6 +42,7 @@ export {
   DEFAULT_PPL_LINT_FIX_TOOL_NAME,
   hashPPLLintFixSource,
   buildChatFixMessage,
+  buildChatFixContext,
 } from './lint/ai_fix/build_chat_fix_message';
 export {
   validatePPLLintFixCandidate,
