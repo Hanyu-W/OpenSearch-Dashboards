@@ -3,12 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import * as osdMonaco from '@osd/monaco';
 import React from 'react';
 import { PPLLintFixToolRegistration } from './ppl_lint_fix_tool_registration';
 import {
   clearPPLLintFixSession,
+  getPPLLintFixOutcome,
   PPL_LINT_FIX_DATA_TOOL_NAME,
   storePPLLintFixSession,
 } from './ppl_lint_fix_session';
@@ -234,5 +235,72 @@ describe('PPLLintFixToolRegistration', () => {
 
     expect(onApprove).toHaveBeenCalledTimes(1);
     expect(onReject).toHaveBeenCalledTimes(1);
+  });
+
+  it('flips the card to "Fix dismissed" the moment Dismiss is clicked', () => {
+    storeSession();
+    const config = renderRegistration();
+
+    render(
+      <>
+        {config.render({
+          status: 'executing',
+          args: {
+            requestId: 'request-1',
+            sourceQueryHash: 'hash-1',
+            fixedQuery: 'source=logs | where status_code = 500',
+          },
+          onApprove: jest.fn(),
+          onReject: jest.fn(),
+        })}
+      </>
+    );
+
+    // Buttons up, no terminal message yet.
+    expect(screen.getByText('Apply to editor')).toBeInTheDocument();
+    expect(screen.queryByText('Fix dismissed.')).not.toBeInTheDocument();
+
+    // Clicking Dismiss records the outcome locally and the (subscribed) card
+    // re-renders to its terminal state without waiting on the AG-UI round-trip.
+    fireEvent.click(screen.getByText('Dismiss'));
+
+    expect(getPPLLintFixOutcome()).toEqual({ kind: 'dismissed' });
+    expect(screen.getByText('Fix dismissed.')).toBeInTheDocument();
+    expect(screen.queryByText('Apply to editor')).not.toBeInTheDocument();
+  });
+
+  it('flips the card to applied the moment the handler applies the fix', async () => {
+    storeSession();
+    mockValidate.mockReturnValue({ accepted: true });
+    const config = renderRegistration();
+
+    render(
+      <>
+        {config.render({
+          status: 'executing',
+          args: {
+            requestId: 'request-1',
+            sourceQueryHash: 'hash-1',
+            fixedQuery: 'source=logs | where status_code = 500',
+          },
+          onApprove: jest.fn(),
+          onReject: jest.fn(),
+        })}
+      </>
+    );
+
+    // The apply handler runs when the confirmation is approved; it records the
+    // applied outcome, which the subscribed card reflects on re-render. Wrap in
+    // act() so the subscriber-triggered state update flushes before asserting.
+    await act(async () => {
+      await config.handler({
+        requestId: 'request-1',
+        sourceQueryHash: 'hash-1',
+        fixedQuery: 'source=logs | where status_code = 500',
+      });
+    });
+
+    expect(getPPLLintFixOutcome()).toEqual({ kind: 'applied' });
+    expect(screen.queryByText('Apply to editor')).not.toBeInTheDocument();
   });
 });
