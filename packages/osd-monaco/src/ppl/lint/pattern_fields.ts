@@ -3,11 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-const CAPTURE_GROUP_OPENER = /\(\?P?<([^>]*)>/g;
-
-// Only names the engine would accept. A name that fails this test never
-// becomes a runtime field — registering it would mask a real downstream typo.
-const VALID_JAVA_GROUP_NAME = /^[A-Za-z][A-Za-z0-9]*$/;
+// Matches named capture groups: (?<name>) and (?P<name>). The name charset
+// (letter followed by alphanumerics) excludes lookbehind openers (?<=...) and
+// (?<!...) by construction, so `lastIndex` never skips real groups after them.
+const CAPTURE_GROUP_OPENER = /\(\?P?<([A-Za-z][A-Za-z0-9]*)>/g;
 
 // grok semantics: `%{SYNTAX:name}`. Underscores are legal here (unlike Java
 // groups), so `%{IP:client_ip}` correctly creates field `client_ip`.
@@ -24,9 +23,7 @@ export function extractCreatedFieldNames(literalRaw: string): string[] {
   CAPTURE_GROUP_OPENER.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = CAPTURE_GROUP_OPENER.exec(literalRaw)) !== null) {
-    if (VALID_JAVA_GROUP_NAME.test(m[1])) {
-      names.push(m[1]);
-    }
+    names.push(m[1]);
   }
 
   GROK_SEMANTIC.lastIndex = 0;

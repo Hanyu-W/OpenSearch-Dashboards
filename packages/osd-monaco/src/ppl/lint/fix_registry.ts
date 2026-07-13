@@ -33,6 +33,7 @@ interface MarkerKeyParts {
   endLineNumber: number;
   endColumn: number;
   message: string;
+  code?: string | { value?: string };
 }
 
 interface FixRegistryState {
@@ -77,12 +78,15 @@ function getState(): FixRegistryState {
  * service preserves verbatim, so the provider can re-associate the fix.
  */
 export function markerFixKey(marker: MarkerKeyParts): string {
+  const code = marker.code;
+  const ruleId = typeof code === 'string' ? code : code?.value ?? '';
   return [
     marker.startLineNumber,
     marker.startColumn,
     marker.endLineNumber,
     marker.endColumn,
     marker.message,
+    ruleId,
   ].join(':');
 }
 

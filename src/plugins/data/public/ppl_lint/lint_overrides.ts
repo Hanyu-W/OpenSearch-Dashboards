@@ -62,7 +62,7 @@ export function buildOverridesFromSettings(uiSettings: IUiSettingsClient): Bundl
       patch.enabled = ruleSetting.enabled;
     }
 
-    if (ruleSetting.severity) {
+    if (ruleSetting.severity && ruleSetting.severity in SEV_RANK) {
       // Clamp up to the silent-failure floor first, then emit only if the
       // effective severity still differs from the catalog default — a downgrade
       // clamped back to the default contributes nothing (sparse).

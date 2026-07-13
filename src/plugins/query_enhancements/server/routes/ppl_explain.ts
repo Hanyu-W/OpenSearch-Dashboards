@@ -17,24 +17,25 @@ function callExplain(client: OpenSearchClient, query: string, useJsonTree: boole
   });
 }
 
-function explainErrorMessage(err: unknown): string {
-  const e = err as { message?: string; body?: unknown; meta?: { body?: unknown } };
-  return [e.message, e.body, e.meta?.body]
-    .map((value) => {
-      if (typeof value === 'string') {
-        return value;
-      }
-      try {
-        return JSON.stringify(value ?? '');
-      } catch {
-        return '';
-      }
-    })
-    .join(' ');
+function extractTopLevelMessages(err: unknown): string {
+  const e = err as {
+    message?: string;
+    body?: { error?: { reason?: string; type?: string }; message?: string };
+    meta?: { body?: { error?: { reason?: string; type?: string }; message?: string } };
+  };
+  const parts: string[] = [];
+  if (typeof e.message === 'string') parts.push(e.message);
+  if (typeof e.body?.error?.reason === 'string') parts.push(e.body.error.reason);
+  if (typeof e.body?.error?.type === 'string') parts.push(e.body.error.type);
+  if (typeof e.body?.message === 'string') parts.push(e.body.message);
+  if (typeof e.meta?.body?.error?.reason === 'string') parts.push(e.meta.body.error.reason);
+  if (typeof e.meta?.body?.error?.type === 'string') parts.push(e.meta.body.error.type);
+  if (typeof e.meta?.body?.message === 'string') parts.push(e.meta.body.message);
+  return parts.join(' ');
 }
 
 function isUnsupportedJsonTreeError(err: unknown): boolean {
-  const message = explainErrorMessage(err).toLowerCase();
+  const message = extractTopLevelMessages(err).toLowerCase();
   return (
     message.includes('json_tree') &&
     (message.includes('unknown response format') ||

@@ -151,9 +151,9 @@ function getGlobalLintState(): PPLLintGlobalState {
     globalScope[PPL_LINT_GLOBAL_STATE_KEY] = {
       bridge: undefined,
       contexts: new WeakMap<monaco.editor.IModel, PPLLintContext>(),
-      // Default enabled; the host (data plugin) may disable via the
-      // QUERY_ENHANCEMENTS_PPL_LINT setting (R1).
-      enabled: true,
+      // Default disabled until the host explicitly enables via
+      // setPPLLintEnabled(true) from the data plugin's start().
+      enabled: false,
     };
   }
 

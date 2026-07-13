@@ -94,7 +94,6 @@ class ExplainCache {
         query: dataSourceId ? { dataSourceId } : {},
       })
       .then(toExplainPlan)
-      .catch(() => EMPTY)
       .then((plan) => {
         // Evict the oldest entry (insertion order) once the cap is reached.
         if (this.cache.size >= MAX_ENTRIES) {
@@ -106,6 +105,10 @@ class ExplainCache {
         this.cache.set(k, plan);
         this.pending.delete(k);
         return plan;
+      })
+      .catch(() => {
+        this.pending.delete(k);
+        return EMPTY;
       });
 
     this.pending.set(k, promise);

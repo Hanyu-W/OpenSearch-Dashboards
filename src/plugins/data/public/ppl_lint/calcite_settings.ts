@@ -39,11 +39,14 @@ class CalciteSettingsCache {
         isCalcite: res.calciteEnabled ?? true,
         allJoinTypesAllowed: res.allJoinTypesAllowed ?? false,
       }))
-      .catch(() => SAFE_DEFAULTS)
       .then((settings: CalciteSettings) => {
         this.cache.set(k, settings);
         this.pending.delete(k);
         return settings;
+      })
+      .catch(() => {
+        this.pending.delete(k);
+        return SAFE_DEFAULTS;
       });
 
     this.pending.set(k, promise);
