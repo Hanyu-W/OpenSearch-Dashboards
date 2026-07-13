@@ -28,6 +28,9 @@
  *  - `advisory`         — query runs and may return data, but the command can
  *                         silently behave differently than intended on this
  *                         input; the check is a heads-up, not a hard outcome.
+ *  - `slow-path`        — query returns correct results, but on a slower
+ *                         execution path (a coordinator fallback or a
+ *                         per-document script); the cost grows with index size.
  */
 export type FailureClass =
   | 'silent-null'
@@ -35,7 +38,8 @@ export type FailureClass =
   | 'engine-throw'
   | 'nondeterministic'
   | 'fallback'
-  | 'advisory';
+  | 'advisory'
+  | 'slow-path';
 
 export interface RuleHoverContent {
   /** One precise sentence: what the engine does at runtime. */
@@ -155,6 +159,20 @@ export const ENGINE_OUTCOMES: Record<string, RuleHoverContent> = {
     verifiedVersion: '3.7',
     safeToIgnoreWhen:
       'you only read the field from _source after fetch, never filtering/aggregating/sorting on it.',
+  },
+  'operation-not-pushed': {
+    engineBehavior:
+      "OpenSearch can't evaluate this operation on the data nodes, so it fetches the matching rows to the coordinator and finishes the work there — filters and sorts run after a full scan, aggregations run in memory.",
+    failureClass: 'slow-path',
+    safeToIgnoreWhen:
+      'the number of rows reaching this operation is small, so the extra coordinator pass is negligible.',
+  },
+  'operation-pushed-as-script': {
+    engineBehavior:
+      'OpenSearch compiles a small Painless script and runs it per document instead of using the index directly, so the cost scales with the number of documents scanned.',
+    failureClass: 'slow-path',
+    safeToIgnoreWhen:
+      'the query already matches few documents, so running the script per document is cheap.',
   },
 };
 

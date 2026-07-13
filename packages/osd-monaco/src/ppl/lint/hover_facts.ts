@@ -38,4 +38,10 @@ export interface HoverFacts {
   candidateIndices?: string[];
   /** Count of visible indices checked, for "matched 0 of N". */
   totalIndices?: number;
+  /**
+   * Which pushdown-relevant pipeline clause a perf finding is about, for the
+   * explain-backed rules (operation-not-pushed / operation-pushed-as-script).
+   * Drives the "Your query" line so the card names the clause, not just the rule.
+   */
+  operation?: 'filter' | 'aggregation' | 'sort';
 }

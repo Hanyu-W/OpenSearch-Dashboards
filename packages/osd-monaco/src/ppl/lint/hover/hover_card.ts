@@ -63,6 +63,8 @@ const FAILURE_CLASS_EXPLAINER: Record<FailureClass, string> = {
     'the primary engine cannot run this natively and falls back to a secondary engine — it succeeds, but on a slower path.',
   advisory:
     'the query runs and may return data, but the command can behave differently than intended on this input — this is a heads-up, not a guaranteed outcome.',
+  'slow-path':
+    'the query returns correct results, but the engine cannot push this operation into the index, so it runs on a slower path — the cost grows with index size.',
 };
 
 /**
@@ -119,6 +121,29 @@ function renderFactsLine(facts: HoverFacts): string | undefined {
       return `${head} Did you mean one of: ${facts.candidateIndices.map(code).join(', ')}?`;
     }
     return head;
+  }
+
+  // Pushdown/perf rules: name the offending clause (and, when the resolver found
+  // it, the field it acts on) so the card is about the user's query. The clause
+  // label comes first because these findings may carry no `field` (e.g. a
+  // multi-field predicate the resolver could not isolate).
+  const clauseLabel: Record<'filter' | 'aggregation' | 'sort', string> = {
+    filter: 'filter',
+    aggregation: 'aggregation',
+    sort: 'sort',
+  };
+  if (facts.operation !== undefined) {
+    const parts: string[] = [];
+    const clause = clauseLabel[facts.operation];
+    parts.push(
+      facts.field !== undefined
+        ? `The ${clause} on ${code(facts.field)} runs on a slower path.`
+        : `The ${clause} runs on a slower path.`
+    );
+    if (facts.literal !== undefined) {
+      parts.push(`Compared to ${code(facts.literal)}.`);
+    }
+    return parts.join(' ');
   }
 
   // Field/type-centric rules.

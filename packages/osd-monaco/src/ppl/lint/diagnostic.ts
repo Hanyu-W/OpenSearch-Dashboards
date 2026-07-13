@@ -72,6 +72,14 @@ export interface Diagnostic {
    * instance-specific detail worth surfacing.
    */
   hoverFacts?: DiagnosticHoverFacts;
+  /**
+   * Internal hint for the explain/perf quick-fix flow: which pipeline operation
+   * this finding relates to and the fields it involves. Set by the explain
+   * detectors (which read a plan, not a parse tree) and consumed by the runtime
+   * layer's range/fix resolver to narrow the whole-query range to the offending
+   * command and to derive a safe rewrite. Not rendered in the UI directly.
+   */
+  explainTarget?: { operation: 'filter' | 'aggregation' | 'sort'; fields: string[] };
 }
 
 /**

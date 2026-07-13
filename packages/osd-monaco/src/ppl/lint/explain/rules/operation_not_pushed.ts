@@ -25,7 +25,17 @@ interface NotPushedSignal {
   pushedAs: string[];
   /** Tree-first residual detector for json_tree payloads. */
   hasTreeResidual: (plan: Parameters<ExplainDetector>[0]) => boolean;
-  /** Context-specific message so the user knows which operation to fix. */
+  /**
+   * Which pipeline clause this signal is about. Rides the diagnostic as
+   * `hoverFacts.operation` and `explainTarget.operation` so the hover card can
+   * name the clause and the range resolver can find the offending command.
+   */
+  operation: 'filter' | 'aggregation' | 'sort';
+  /**
+   * Context-specific message. Leads with the user-visible consequence and names
+   * the operation; the engine-internal "why" (coordinator fallback) lives in the
+   * hover card's Engine-behavior line, not the inline squiggle.
+   */
   message: string;
 }
 
@@ -39,22 +49,25 @@ const SIGNALS: NotPushedSignal[] = [
     residual: '$condition=',
     pushedAs: ['FILTER->', 'SCRIPT->'],
     hasTreeResidual: relTreeContainsCondition,
+    operation: 'filter',
     message:
-      'A filter in this query could not be pushed to OpenSearch and runs in the coordinator after a full index scan. Consider rewriting to avoid arithmetic or functions in the predicate.',
+      "This filter can't use the index, so OpenSearch scans every matching row to apply it — slow on large indexes.",
   },
   {
     residual: 'EnumerableAggregate',
     pushedAs: ['AGGREGATION->'],
     hasTreeResidual: (plan) => hasRelOp(plan, 'EnumerableAggregate'),
+    operation: 'aggregation',
     message:
-      'An aggregation in this query could not be pushed to OpenSearch and runs in the coordinator. An unsupported function or expression may be forcing in-engine aggregation.',
+      'This aggregation runs in memory over all fetched rows instead of on the data nodes — slow and memory-heavy on large indexes.',
   },
   {
     residual: 'EnumerableSort',
     pushedAs: ['SORT->', 'SORT_EXPR->'],
     hasTreeResidual: (plan) => hasRelOp(plan, 'EnumerableSort'),
+    operation: 'sort',
     message:
-      'A sort in this query could not be pushed to OpenSearch and runs in the coordinator after fetching all matching rows.',
+      'This sort runs after every matching row is fetched, instead of on the index — slow on large result sets.',
   },
 ];
 
@@ -80,8 +93,13 @@ export const operationNotPushedDetector: ExplainDetector = (plan, config, contex
         ruleId: config.id,
         severity: config.severity,
         message: signal.message,
+        // Whole-query range by default; the tree-aware resolver in the runtime
+        // layer narrows this to the offending command via `explainTarget` when a
+        // parse tree is available (design §6).
         range: wholeQueryRange(context.query),
         docUrl: config.docUrl,
+        hoverFacts: { operation: signal.operation },
+        explainTarget: { operation: signal.operation, fields: [] },
       });
     }
   }

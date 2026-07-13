@@ -293,16 +293,54 @@ describe('explain detectors against captured and json_tree payloads', () => {
     expect(operationPushedAsScriptDetector(nonCalcite, PUSHED_AS_SCRIPT_CONFIG, CTX)).toEqual([]);
   });
 
-  it('emits a context-specific message and a whole-query range', () => {
+  it('emits a plain-language, operation-named message and a whole-query range', () => {
     const [diag] = operationNotPushedDetector(TREE_FIXTURES.aggNotPushedValues, NOT_PUSHED_CONFIG, {
       query: 'source=accounts | stats values(state)',
     });
     expect(diag.message).toContain('aggregation');
-    // Whole-query range: starts at line 1 col 0, ends at a concrete in-bounds col.
+    // Leads with the user-visible consequence, no engine-internal jargon inline.
+    expect(diag.message).not.toContain('coordinator');
+    expect(diag.message).not.toContain('pushed');
+    // Whole-query range by default (the tree-aware resolver narrows it later):
+    // starts at line 1 col 0, ends at a concrete in-bounds col.
     expect(diag.range.startLine).toBe(1);
     expect(diag.range.startColumn).toBe(0);
     expect(diag.range.endColumn).toBe('source=accounts | stats values(state)'.length);
     expect(Number.isFinite(diag.range.endColumn)).toBe(true);
+  });
+
+  it('tags each finding with hoverFacts.operation and an explainTarget', () => {
+    const [notPushed] = operationNotPushedDetector(
+      TREE_FIXTURES.filterNotPushedWindow,
+      NOT_PUSHED_CONFIG,
+      CTX
+    );
+    expect(notPushed.hoverFacts?.operation).toBe('filter');
+    expect(notPushed.explainTarget).toEqual({ operation: 'filter', fields: [] });
+
+    const [aggNotPushed] = operationNotPushedDetector(
+      TREE_FIXTURES.aggNotPushedValues,
+      NOT_PUSHED_CONFIG,
+      CTX
+    );
+    expect(aggNotPushed.hoverFacts?.operation).toBe('aggregation');
+    expect(aggNotPushed.explainTarget?.operation).toBe('aggregation');
+
+    const [script] = operationPushedAsScriptDetector(
+      TREE_FIXTURES.filterScript,
+      PUSHED_AS_SCRIPT_CONFIG,
+      CTX
+    );
+    expect(script.hoverFacts?.operation).toBe('filter');
+    expect(script.explainTarget?.operation).toBe('filter');
+
+    const [sortScript] = operationPushedAsScriptDetector(
+      TREE_FIXTURES.sortEval,
+      PUSHED_AS_SCRIPT_CONFIG,
+      CTX
+    );
+    expect(sortScript.hoverFacts?.operation).toBe('sort');
+    expect(sortScript.explainTarget?.operation).toBe('sort');
   });
 });
 

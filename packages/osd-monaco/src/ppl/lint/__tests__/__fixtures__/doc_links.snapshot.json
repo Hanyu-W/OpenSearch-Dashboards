@@ -1,6 +1,10 @@
 {
   "_comment": "Pinned per-rule doc-link metadata. Tier-1 (doc_links.test.ts, offline, always-on) asserts catalog<->snapshot parity, no legacy URL, and URL-shape/specificity invariants. Tier-2 (doc_links.live.test.ts, env-gated) additionally fetches `page` and checks liveness + `anchor`. `quality`: exact|close|weak|gap. `gap` rules are listed in `expectedUnpublished` and intentionally point at a page root until upstream publishes the page. `excerpt`/`contentHash` are filled by scripts/capture_doc_snapshot.ts once the live tier is wired; absent here.",
-  "expectedUnpublished": ["union-min-datasets"],
+  "expectedUnpublished": [
+    "union-min-datasets",
+    "operation-not-pushed",
+    "operation-pushed-as-script"
+  ],
   "rules": {
     "invalid-capture-group-name": {
       "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/rex/#parameters",
@@ -100,16 +104,18 @@
       "quality": "close"
     },
     "operation-not-pushed": {
-      "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/",
-      "page": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/",
+      "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/",
+      "page": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/",
       "anchor": "",
-      "quality": "weak"
+      "quality": "gap",
+      "futureDocUrl": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/#pushdown-optimization"
     },
     "operation-pushed-as-script": {
-      "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/",
-      "page": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/",
+      "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/",
+      "page": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/",
       "anchor": "",
-      "quality": "weak"
+      "quality": "gap",
+      "futureDocUrl": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/#pushdown-optimization"
     }
   }
 }

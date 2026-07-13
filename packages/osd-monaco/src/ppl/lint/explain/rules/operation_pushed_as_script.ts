@@ -18,7 +18,17 @@ interface ScriptSignal {
   pushTag: string;
   /** Must ALSO be present to confirm a real script push (guards false positives). */
   discriminator: string;
-  /** Context-specific message so the user knows which operation to fix. */
+  /**
+   * Which pipeline clause this signal is about. Rides the diagnostic as
+   * `hoverFacts.operation` and `explainTarget.operation` so the hover card can
+   * name the clause and the range resolver can find the offending command.
+   */
+  operation: 'filter' | 'sort';
+  /**
+   * Context-specific message. Leads with the user-visible consequence and names
+   * the operation; the engine-internal "why" (per-document script) lives in the
+   * hover card's Engine-behavior line, not the inline squiggle.
+   */
   message: string;
 }
 
@@ -31,14 +41,16 @@ const SIGNALS: ScriptSignal[] = [
   {
     pushTag: 'SCRIPT->',
     discriminator: 'opensearch_compounded_script',
+    operation: 'filter',
     message:
-      'A filter in this query was pushed as a Painless script, meaning every document is evaluated by a script instead of a native index lookup. Consider simplifying the predicate to use direct field comparisons.',
+      'This filter runs a script on every document instead of using the index directly — much slower than a plain comparison.',
   },
   {
     pushTag: 'SORT_EXPR->',
     discriminator: 'opensearch_compounded_script',
+    operation: 'sort',
     message:
-      'A sort in this query was pushed as a Painless script sort. Every matching document will be scored by a script. Consider sorting on a stored field or a pre-computed value.',
+      'This sort runs a script on every matching document instead of sorting on a stored value — slow on large result sets.',
   },
 ];
 
@@ -65,8 +77,13 @@ export const operationPushedAsScriptDetector: ExplainDetector = (plan, config, c
         ruleId: config.id,
         severity: config.severity,
         message: signal.message,
+        // Whole-query range by default; the tree-aware resolver in the runtime
+        // layer narrows this to the offending command via `explainTarget` when a
+        // parse tree is available (design §6).
         range: wholeQueryRange(context.query),
         docUrl: config.docUrl,
+        hoverFacts: { operation: signal.operation },
+        explainTarget: { operation: signal.operation, fields: [] },
       });
     }
   }

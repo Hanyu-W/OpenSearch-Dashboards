@@ -11,12 +11,16 @@ import type { LintResult, PPLLintContext, PPLLintBridgeRequest, LintRunContext }
 // are unavailable. Importing the leaf modules keeps the runtime lint engine
 // usable on both the browser thread and under Jest.
 import { runLint } from '@osd/monaco/target/ppl/lint/lint_runner';
-import { createRuntimeRuleNameToIndex } from '@osd/monaco/target/ppl/lint/rule_index';
+import {
+  createRuntimeRuleNameToIndex,
+  RuleNameToIndex,
+} from '@osd/monaco/target/ppl/lint/rule_index';
 import { PIPE_FIRST_PREFIX, remapPipeFirstColumns } from '@osd/monaco/target/ppl/lint/range_utils';
 import {
   hasExplainRules,
   runExplainLint,
 } from '@osd/monaco/target/ppl/lint/explain/run_explain_lint';
+import { resolveExplainRanges } from '@osd/monaco/target/ppl/lint/explain/resolve_explain_ranges';
 import {
   CharStream,
   CommonTokenStream,
@@ -96,6 +100,12 @@ function buildRuntimeTree(query: string, grammar: CachedGrammar): ParserRuleCont
 interface GrammarLintOutcome {
   result: LintResult;
   tree: ParserRuleContext | undefined;
+  /**
+   * The rule-name→index resolver for the grammar the tree was parsed with.
+   * Handed to the explain range resolver so it can walk the same tree. Present
+   * whenever `tree` is.
+   */
+  ruleNameToIndex: RuleNameToIndex | undefined;
 }
 
 function canAttemptExplain(context: PPLLintContext): boolean {
@@ -116,16 +126,17 @@ function lintWithGrammar(
   context: PPLLintContext | undefined
 ): GrammarLintOutcome {
   if (!query.trim()) {
-    return { result: { diagnostics: [] }, tree: undefined };
+    return { result: { diagnostics: [] }, tree: undefined, ruleNameToIndex: undefined };
   }
 
   const tree = buildRuntimeTree(query, grammar);
   if (!tree) {
-    return { result: { diagnostics: [] }, tree: undefined };
+    return { result: { diagnostics: [] }, tree: undefined, ruleNameToIndex: undefined };
   }
 
+  const ruleNameToIndex = createRuntimeRuleNameToIndex(grammar.runtimeRuleNameToIndex);
   const diagnostics = runLint(tree, {
-    ruleNameToIndex: createRuntimeRuleNameToIndex(grammar.runtimeRuleNameToIndex),
+    ruleNameToIndex,
     dataSourceVersion: context?.dataSourceVersion,
     // Declare the surface so the field-slot shape pass fires here: on the
     // runtime bundle `grok field=body` is a silent misparse (no syntax error).
@@ -147,6 +158,7 @@ function lintWithGrammar(
   return {
     result: { diagnostics: isPipeFirst ? remapPipeFirstColumns(diagnostics) : diagnostics },
     tree,
+    ruleNameToIndex,
   };
 }
 
@@ -157,11 +169,18 @@ function lintWithGrammar(
  * the source is Calcite, an http client is present, and at least one explain
  * rule is enabled and applicable — so the `_explain` round-trip is skipped
  * whenever it could produce nothing.
+ *
+ * When a parse tree (and its rule index) is available, the explain diagnostics'
+ * whole-query ranges are narrowed to the offending command via
+ * `resolveExplainRanges` before merging. On the compiled-fallback path no tree
+ * is threaded, so they keep their whole-query range — honest degradation.
  */
 async function layerExplainLint(
   query: string,
   staticResult: LintResult,
-  context: PPLLintContext
+  context: PPLLintContext,
+  tree?: ParserRuleContext,
+  ruleNameToIndex?: RuleNameToIndex
 ): Promise<LintResult> {
   const http = context.http;
   if (!http || !canAttemptExplain(context)) {
@@ -173,7 +192,7 @@ async function layerExplainLint(
     if (!plan.isCalcite) {
       return staticResult;
     }
-    const explainDiagnostics = runExplainLint(plan, {
+    let explainDiagnostics = runExplainLint(plan, {
       query,
       overrides: context.overrides,
       dataSourceVersion: context.dataSourceVersion,
@@ -181,6 +200,26 @@ async function layerExplainLint(
     });
     if (explainDiagnostics.length === 0) {
       return staticResult;
+    }
+    // Narrow the whole-query ranges to the offending command when the parse tree
+    // is in hand (the runtime-grammar path); no-op without a tree. `typeMap`
+    // (field → esType) gates the divisive quick-fix to floating-point fields.
+    if (tree && ruleNameToIndex) {
+      explainDiagnostics = resolveExplainRanges(
+        explainDiagnostics,
+        tree,
+        ruleNameToIndex,
+        context.typeMap
+      );
+    }
+    // Explain diagnostics were appended after the tree pass' own pipe-first
+    // remap, so they never passed through it. Once ranges are precise this
+    // matters: a pipe-first query would shift squiggles by the synthetic
+    // `source=t ` prefix. Remap them here (harmless for a still-whole-query
+    // range, which starts at column 0).
+    const isPipeFirst = query.trimStart().startsWith('|');
+    if (isPipeFirst) {
+      explainDiagnostics = remapPipeFirstColumns(explainDiagnostics);
     }
     return { diagnostics: [...staticResult.diagnostics, ...explainDiagnostics] };
   } catch (e) {
@@ -245,12 +284,14 @@ export async function lintRuntimePPLQuery(
     return lintCompiledFallbackWithExplain(request);
   }
 
-  const { result, tree } = lintWithGrammar(content, grammar, context);
+  const { result, tree, ruleNameToIndex } = lintWithGrammar(content, grammar, context);
 
   // The tree's presence is the clean-parse guard: skip explain on empty or
-  // unparseable input so a half-typed query never triggers a round-trip.
+  // unparseable input so a half-typed query never triggers a round-trip. The
+  // tree + rule index also let the explain layer narrow whole-query ranges to
+  // the offending command.
   if (tree) {
-    return layerExplainLint(content, result, context);
+    return layerExplainLint(content, result, context, tree, ruleNameToIndex);
   }
   return result;
 }

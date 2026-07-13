@@ -30,6 +30,38 @@ describe('renderHoverCard', () => {
     );
   });
 
+  it('renders the slow-path engine behavior and clause line for operation-not-pushed', () => {
+    const md = renderHoverCard({
+      ruleId: 'operation-not-pushed',
+      severityLabel: 'Warning',
+      message:
+        "This filter can't use the index, so OpenSearch scans every matching row to apply it — slow on large indexes.",
+      docUrl: 'https://docs.opensearch.org/latest/sql-and-ppl/limitation/',
+      content: getRuleHoverContent('operation-not-pushed'),
+      facts: { operation: 'filter', field: 'balance' },
+    });
+    expect(md).toContain('**operation-not-pushed** · Warning');
+    expect(md).toContain('**Engine behavior** —');
+    expect(md).toContain('coordinator');
+    expect(md).toContain('**Your query** — The filter on `balance` runs on a slower path.');
+    expect(md).toContain('**Why warning** —');
+    expect(md).toContain('slower path');
+    expect(md).toContain('**Safe to ignore** —');
+  });
+
+  it('names only the clause when the resolver could not isolate a field', () => {
+    const md = renderHoverCard({
+      ruleId: 'operation-pushed-as-script',
+      severityLabel: 'Info',
+      message:
+        'This filter runs a script on every document instead of using the index directly — much slower than a plain comparison.',
+      content: getRuleHoverContent('operation-pushed-as-script'),
+      facts: { operation: 'filter' },
+    });
+    expect(md).toContain('**Your query** — The filter runs on a slower path.');
+    expect(md).not.toContain('undefined');
+  });
+
   it('renders a field/type "Your query" line for agg-on-text', () => {
     const md = renderHoverCard({
       ruleId: 'agg-on-text',
