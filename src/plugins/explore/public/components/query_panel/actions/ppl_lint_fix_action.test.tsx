@@ -108,7 +108,10 @@ describe('usePPLLintFixAction', () => {
     expect(action.name).toBe('apply_ppl_lint_fix_explore');
     expect(action.requiresConfirmation).toBe(true);
     expect(action.useCustomRenderer).toBe(true);
-    expect(action.parameters.required).toEqual(['requestId', 'sourceQueryHash', 'fixedQuery']);
+    // The schema requires only fixedQuery: the model no longer echoes a
+    // requestId/sourceQueryHash (weak models filled them wrong and tripped a
+    // false mismatch loop). The UI tracks the single active request instead.
+    expect(action.parameters.required).toEqual(['fixedQuery']);
     expect(action.render).toBe(renderPPLLintFixAction);
   });
 
@@ -160,19 +163,25 @@ describe('usePPLLintFixAction', () => {
     expect(mockSetEditorTextWithQuery).not.toHaveBeenCalled();
   });
 
-  it('rejects stale source hash requests', async () => {
+  it('ignores a wrong model-provided sourceQueryHash and applies against the active session', async () => {
+    // Hash-matching was removed by design: the handler trusts the single active
+    // session (staleness is checked by comparing the live editor query, below),
+    // so a bogus hash from a weak model must NOT block a valid fix.
     setSession();
     const action = renderAndGetAction();
 
     const result = await action.handler({
-      requestId: 'req-1',
+      requestId: 'wrong-id',
       sourceQueryHash: 'old-hash',
-      fixedQuery: 'source=logs',
+      fixedQuery: 'source=logs | where response_status = 500',
     });
 
-    expect(result.reason).toBe('hash-mismatch');
-    expect(mockValidatePPLLintFixCandidate).not.toHaveBeenCalled();
-    expect(mockSetEditorTextWithQuery).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({ success: true, applied: true, requestId: 'req-1' })
+    );
+    expect(mockSetEditorTextWithQuery).toHaveBeenCalledWith(
+      'source=logs | where response_status = 500'
+    );
   });
 
   it('rejects when the editor text changed after the request opened', async () => {

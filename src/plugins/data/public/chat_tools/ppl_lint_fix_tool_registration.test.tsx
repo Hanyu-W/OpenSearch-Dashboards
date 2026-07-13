@@ -84,7 +84,9 @@ describe('PPLLintFixToolRegistration', () => {
         requiresConfirmation: true,
         useCustomRenderer: true,
         parameters: expect.objectContaining({
-          required: ['requestId', 'sourceQueryHash', 'fixedQuery'],
+          // Only fixedQuery is required: the model no longer echoes a
+          // requestId/sourceQueryHash — the UI tracks the single active request.
+          required: ['fixedQuery'],
         }),
         handler: expect.any(Function),
         render: expect.any(Function),
@@ -111,23 +113,22 @@ describe('PPLLintFixToolRegistration', () => {
     expect(queryString.setQuery).not.toHaveBeenCalled();
   });
 
-  it('rejects a hash mismatch', async () => {
+  it('ignores a wrong model-provided sourceQueryHash and applies against the active session', async () => {
+    // Hash-matching was removed by design: the handler trusts the single active
+    // session (staleness is checked against the live editor query), so a bogus
+    // hash from a weak model must NOT block a valid fix.
     storeSession();
+    mockValidate.mockReturnValue({ accepted: true });
     const config = renderRegistration();
 
     const result = await config.handler({
-      requestId: 'request-1',
+      requestId: 'wrong-id',
       sourceQueryHash: 'hash-2',
       fixedQuery: 'source=logs | where status_code = 500',
     });
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        success: false,
-        reason: 'hash-mismatch',
-      })
-    );
-    expect(queryString.setQuery).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({ success: true }));
+    expect(queryString.setQuery).toHaveBeenCalled();
   });
 
   it('rejects a stale editor query', async () => {
