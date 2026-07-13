@@ -18,7 +18,15 @@ import { validatePPLLintFixCandidate } from '@osd/monaco';
 import React from 'react';
 import type { ContextProviderStart, RenderProps } from '../../../context_provider/public';
 import type { QueryStringContract } from '../query/query_string';
-import { getPPLLintFixSession, PPL_LINT_FIX_DATA_TOOL_NAME } from './ppl_lint_fix_session';
+import {
+  getPPLLintFixSession,
+  getPPLLintFixOutcome,
+  markPPLLintFixApplied,
+  markPPLLintFixDismissed,
+  markPPLLintFixFailed,
+  subscribePPLLintFixOutcome,
+  PPL_LINT_FIX_DATA_TOOL_NAME,
+} from './ppl_lint_fix_session';
 
 export interface PPLLintFixToolArgs {
   requestId: string;
@@ -46,12 +54,18 @@ const failure = (
   reason: NonNullable<PPLLintFixToolResult['reason']>,
   message: string,
   extra?: Pick<PPLLintFixToolResult, 'validationReason'>
-): PPLLintFixToolResult => ({
-  success: false,
-  reason,
-  message,
-  ...extra,
-});
+): PPLLintFixToolResult => {
+  // Flip the card to its terminal failure state immediately (rather than waiting
+  // on the framework's tool-call status, which lags the AG-UI round-trip) while
+  // still returning the machine-readable result the model needs.
+  markPPLLintFixFailed(message);
+  return {
+    success: false,
+    reason,
+    message,
+    ...extra,
+  };
+};
 
 export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProps> = ({
   queryString,
@@ -135,6 +149,7 @@ export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProp
         },
         true
       );
+      markPPLLintFixApplied();
 
       return {
         success: true,
@@ -155,16 +170,46 @@ const PPLLintFixToolRenderer: React.FC<RenderProps<PPLLintFixToolArgs>> = ({
   onApprove,
   onReject,
 }) => {
+  // Re-render on outcome changes so the (otherwise idle) card reaches its
+  // terminal state the instant the user acts, rather than waiting on the
+  // framework's tool-call status — that only flips after the chat plugin
+  // finishes the model's follow-up AG-UI turn, which is slow (60–128s observed)
+  // and can hang, which used to leave both buttons looking dead.
+  const [, forceRender] = React.useState(0);
+  React.useEffect(() => subscribePPLLintFixOutcome(() => forceRender((n) => n + 1)), []);
+
   // Read the active session directly (not keyed on the streamed/model-provided
   // requestId) so the diagnostic info shows immediately and regardless of what
   // the model put in the args.
   const session = getPPLLintFixSession();
-  const showActions = (status === 'pending' || status === 'executing') && !!args;
+
+  // Prefer the local outcome (set synchronously by the click / apply handler)
+  // over the framework status, which lags the AG-UI round-trip.
+  const outcome = getPPLLintFixOutcome();
+  const applied = outcome?.kind === 'applied' || (status === 'complete' && !!result?.success);
+  const dismissed = outcome?.kind === 'dismissed';
+  const failed = outcome?.kind === 'failed' || (!outcome && status === 'failed');
+  const terminal = applied || dismissed || failed;
+  const showActions = !terminal && (status === 'pending' || status === 'executing') && !!args;
+  const appliedMessage =
+    result?.message ||
+    i18n.translate('data.pplLint.fixTool.appliedMessage', {
+      defaultMessage: 'Applied the PPL lint fix to the editor.',
+    });
   const failedMessage =
+    (outcome?.kind === 'failed' ? outcome.message : undefined) ||
     result?.message ||
     i18n.translate('data.pplLint.fixTool.failedMessage', {
       defaultMessage: 'The proposed PPL lint fix could not be applied.',
     });
+
+  // Reject runs no handler (the tool is rejected before execution), so mark the
+  // dismissal locally, then delegate so the confirmation promise still resolves.
+  // Approve needs no local marking — the apply handler records the outcome.
+  const handleReject = () => {
+    markPPLLintFixDismissed();
+    onReject?.();
+  };
 
   return (
     <EuiPanel paddingSize="s" data-test-subj="pplLintFixToolCall">
@@ -211,7 +256,11 @@ const PPLLintFixToolRenderer: React.FC<RenderProps<PPLLintFixToolArgs>> = ({
           <EuiSpacer size="s" />
           <EuiFlexGroup gutterSize="s" responsive={false} justifyContent="flexEnd">
             <EuiFlexItem grow={false}>
-              <EuiButtonEmpty size="s" onClick={onReject} data-test-subj="pplLintFixDismissButton">
+              <EuiButtonEmpty
+                size="s"
+                onClick={handleReject}
+                data-test-subj="pplLintFixDismissButton"
+              >
                 {i18n.translate('data.pplLint.fixTool.dismissButton', {
                   defaultMessage: 'Dismiss',
                 })}
@@ -228,16 +277,27 @@ const PPLLintFixToolRenderer: React.FC<RenderProps<PPLLintFixToolArgs>> = ({
         </>
       )}
 
-      {status === 'complete' && result?.success && (
+      {applied && (
         <>
           <EuiSpacer size="xs" />
           <EuiText size="xs" color="success">
-            {result.message}
+            {appliedMessage}
           </EuiText>
         </>
       )}
 
-      {status === 'failed' && (
+      {dismissed && (
+        <>
+          <EuiSpacer size="xs" />
+          <EuiText size="xs" color="subdued">
+            {i18n.translate('data.pplLint.fixTool.dismissedMessage', {
+              defaultMessage: 'Fix dismissed.',
+            })}
+          </EuiText>
+        </>
+      )}
+
+      {failed && (
         <>
           <EuiSpacer size="xs" />
           <EuiText size="xs" color="danger">

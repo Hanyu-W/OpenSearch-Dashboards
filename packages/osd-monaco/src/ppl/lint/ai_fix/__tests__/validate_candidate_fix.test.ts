@@ -112,6 +112,95 @@ describe('validateCandidateFix', () => {
     expect(validateCandidateFix(original, candidate, ruleId, deps).reason).toBe('shape-changed');
   });
 
+  // The canonical head-without-sort repair inserts a `sort` before `head`; the
+  // exact-equality shape check used to reject it as 'shape-changed', which made
+  // "Apply to editor" silently no-op for the single most common lint rule.
+  it('accepts a fix that inserts a sort (the head-without-sort repair)', () => {
+    const headOriginal = 'source=logs | head 10';
+    const candidate = 'source=logs | sort @timestamp | head 10';
+    const deps = makeDeps({
+      [headOriginal]: {
+        ruleIds: ['head-without-sort'],
+        shape: ['searchCommand', 'headCommand'],
+      },
+      [candidate]: { ruleIds: [], shape: ['searchCommand', 'sortCommand', 'headCommand'] },
+    });
+    expect(validateCandidateFix(headOriginal, candidate, 'head-without-sort', deps)).toEqual({
+      accepted: true,
+    });
+  });
+
+  // A sort inserted at the front (before search would be invalid PPL, but the
+  // guard only cares that every original command survives in order) is fine.
+  it('accepts a sort inserted anywhere as long as original commands stay in order', () => {
+    const headOriginal = 'source=logs | where status = 500 | head 10';
+    const candidate = 'source=logs | where status = 500 | sort @timestamp | head 10';
+    const deps = makeDeps({
+      [headOriginal]: {
+        ruleIds: ['head-without-sort'],
+        shape: ['searchCommand', 'whereCommand', 'headCommand'],
+      },
+      [candidate]: {
+        ruleIds: [],
+        shape: ['searchCommand', 'whereCommand', 'sortCommand', 'headCommand'],
+      },
+    });
+    expect(validateCandidateFix(headOriginal, candidate, 'head-without-sort', deps)).toEqual({
+      accepted: true,
+    });
+  });
+
+  // Only a row-reordering `sort` may be inserted — a filter/aggregation changes
+  // the result contents and must still be rejected.
+  it('rejects a fix that inserts a non-sort command (e.g. where)', () => {
+    const headOriginal = 'source=logs | head 10';
+    const candidate = 'source=logs | where status = 500 | head 10';
+    const deps = makeDeps({
+      [headOriginal]: {
+        ruleIds: ['head-without-sort'],
+        shape: ['searchCommand', 'headCommand'],
+      },
+      [candidate]: { ruleIds: [], shape: ['searchCommand', 'whereCommand', 'headCommand'] },
+    });
+    expect(validateCandidateFix(headOriginal, candidate, 'head-without-sort', deps).reason).toBe(
+      'shape-changed'
+    );
+  });
+
+  // Dropping an original command (a regeneration that loses the user's where)
+  // is still caught even though the survivors are in order.
+  it('rejects a fix that drops an original command', () => {
+    const whereOriginal = 'source=logs | where status = 500 | head 10';
+    const candidate = 'source=logs | sort @timestamp | head 10';
+    const deps = makeDeps({
+      [whereOriginal]: {
+        ruleIds: ['head-without-sort'],
+        shape: ['searchCommand', 'whereCommand', 'headCommand'],
+      },
+      [candidate]: { ruleIds: [], shape: ['searchCommand', 'sortCommand', 'headCommand'] },
+    });
+    expect(validateCandidateFix(whereOriginal, candidate, 'head-without-sort', deps).reason).toBe(
+      'shape-changed'
+    );
+  });
+
+  // Reordering original commands (search after head) breaks the subsequence and
+  // is rejected.
+  it('rejects a fix that reorders original commands', () => {
+    const reorderOriginal = 'source=logs | where a = 1 | head 10';
+    const candidate = 'source=logs | head 10 | where a = 1';
+    const deps = makeDeps({
+      [reorderOriginal]: {
+        ruleIds: [],
+        shape: ['searchCommand', 'whereCommand', 'headCommand'],
+      },
+      [candidate]: { ruleIds: [], shape: ['searchCommand', 'headCommand', 'whereCommand'] },
+    });
+    expect(validateCandidateFix(reorderOriginal, candidate, 'head-without-sort', deps).reason).toBe(
+      'shape-changed'
+    );
+  });
+
   it('rejects a whole-query regeneration with the same shape but few shared tokens', () => {
     const candidate = 'source=different | where balance = 99';
     const deps = makeDeps({

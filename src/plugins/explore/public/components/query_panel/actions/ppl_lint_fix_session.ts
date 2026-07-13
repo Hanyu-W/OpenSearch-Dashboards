@@ -24,25 +24,34 @@ export interface PPLLintFixSession {
 
 let activeSession: PPLLintFixSession | undefined;
 
-// The last query text successfully applied to the editor, plus subscribers to
-// notify. The card render uses this to show "Query updated" immediately on apply,
-// without waiting for the model's follow-up turn (which flips the framework's
-// tool-call status but can lag or hang on the AG-UI round-trip). A pub/sub is
-// used so the (otherwise idle) card re-renders when the fix is applied. Keyed by
-// the fixedQuery string since the model does not reliably echo the requestId.
-let lastAppliedFixedQuery: string | undefined;
-const appliedSubscribers = new Set<() => void>();
+/**
+ * Terminal outcome of the active fix, driven directly by the card's
+ * Apply/Dismiss click and the apply handler — NOT by the framework's tool-call
+ * status. The framework status only flips after `sendToolResultToAssistant`
+ * completes, which waits on the model's follow-up AG-UI turn (observed at
+ * 60–128s live, and it can hang). Gating the card on that made both buttons look
+ * dead: the query updated (or the dismiss happened) but the card stayed frozen
+ * with its buttons up. This local signal lets the card reach its terminal state
+ * the instant the user acts.
+ */
+export type PPLLintFixOutcome =
+  | { kind: 'applied'; fixedQuery: string }
+  | { kind: 'failed'; message?: string }
+  | { kind: 'dismissed' };
 
-function notifyAppliedSubscribers() {
-  appliedSubscribers.forEach((cb) => cb());
+let lastFixOutcome: PPLLintFixOutcome | undefined;
+const outcomeSubscribers = new Set<() => void>();
+
+function notifyOutcomeSubscribers() {
+  outcomeSubscribers.forEach((cb) => cb());
 }
 
 export function setActivePPLLintFixSession(session: PPLLintFixSession) {
   activeSession = session;
-  // A fresh request starts un-applied so its card shows the Apply/Dismiss buttons
-  // rather than inheriting a previous fix's success state.
-  lastAppliedFixedQuery = undefined;
-  notifyAppliedSubscribers();
+  // A fresh request starts with no outcome so its card shows the Apply/Dismiss
+  // buttons rather than inheriting a previous fix's terminal state.
+  lastFixOutcome = undefined;
+  notifyOutcomeSubscribers();
 }
 
 export function getActivePPLLintFixSession(requestId?: string) {
@@ -61,17 +70,29 @@ export function clearActivePPLLintFixSession(requestId?: string) {
 
 /** Record that a fixed query was applied to the editor, for immediate card feedback. */
 export function markPPLLintFixApplied(fixedQuery: string) {
-  lastAppliedFixedQuery = fixedQuery.trim();
-  notifyAppliedSubscribers();
+  lastFixOutcome = { kind: 'applied', fixedQuery: fixedQuery.trim() };
+  notifyOutcomeSubscribers();
 }
 
-/** True when the given fixed query was the one just applied to the editor. */
-export function isPPLLintFixApplied(fixedQuery?: string) {
-  return !!fixedQuery && lastAppliedFixedQuery === fixedQuery.trim();
+/** Record that the active fix could not be applied, for immediate card feedback. */
+export function markPPLLintFixFailed(message?: string) {
+  lastFixOutcome = { kind: 'failed', message };
+  notifyOutcomeSubscribers();
 }
 
-/** Subscribe to apply-state changes so an idle fix card can re-render on apply. */
-export function subscribePPLLintFixApplied(callback: () => void): () => void {
-  appliedSubscribers.add(callback);
-  return () => appliedSubscribers.delete(callback);
+/** Record that the user dismissed the active fix, for immediate card feedback. */
+export function markPPLLintFixDismissed() {
+  lastFixOutcome = { kind: 'dismissed' };
+  notifyOutcomeSubscribers();
+}
+
+/** The active fix's terminal outcome, or undefined while it is still pending. */
+export function getPPLLintFixOutcome(): PPLLintFixOutcome | undefined {
+  return lastFixOutcome;
+}
+
+/** Subscribe to outcome changes so an idle fix card can re-render when the user acts. */
+export function subscribePPLLintFixOutcome(callback: () => void): () => void {
+  outcomeSubscribers.add(callback);
+  return () => outcomeSubscribers.delete(callback);
 }

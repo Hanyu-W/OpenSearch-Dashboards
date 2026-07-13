@@ -27,8 +27,63 @@ export interface PPLLintFixSession {
 
 let activeSession: PPLLintFixSession | undefined;
 
+/**
+ * Terminal outcome of the active fix, driven directly by the card's
+ * Apply/Dismiss click and the apply handler — NOT by the framework's tool-call
+ * status. The framework status only flips after the chat plugin finishes sending
+ * the tool result, which waits on the model's follow-up AG-UI turn (observed at
+ * 60–128s live, and it can hang). Gating the card on that made both buttons look
+ * dead: the query updated (or the dismiss happened) but the card stayed frozen
+ * with its buttons up. This local signal lets the card reach its terminal state
+ * the instant the user acts.
+ */
+export type PPLLintFixOutcome =
+  | { kind: 'applied' }
+  | { kind: 'failed'; message?: string }
+  | { kind: 'dismissed' };
+
+let lastFixOutcome: PPLLintFixOutcome | undefined;
+const outcomeSubscribers = new Set<() => void>();
+
+function notifyOutcomeSubscribers(): void {
+  outcomeSubscribers.forEach((cb) => cb());
+}
+
 export function storePPLLintFixSession(session: PPLLintFixSession): void {
   activeSession = session;
+  // A fresh request starts with no outcome so its card shows the Apply/Dismiss
+  // buttons rather than inheriting a previous fix's terminal state.
+  lastFixOutcome = undefined;
+  notifyOutcomeSubscribers();
+}
+
+/** Record that the fix was applied to the editor, for immediate card feedback. */
+export function markPPLLintFixApplied(): void {
+  lastFixOutcome = { kind: 'applied' };
+  notifyOutcomeSubscribers();
+}
+
+/** Record that the active fix could not be applied, for immediate card feedback. */
+export function markPPLLintFixFailed(message?: string): void {
+  lastFixOutcome = { kind: 'failed', message };
+  notifyOutcomeSubscribers();
+}
+
+/** Record that the user dismissed the active fix, for immediate card feedback. */
+export function markPPLLintFixDismissed(): void {
+  lastFixOutcome = { kind: 'dismissed' };
+  notifyOutcomeSubscribers();
+}
+
+/** The active fix's terminal outcome, or undefined while it is still pending. */
+export function getPPLLintFixOutcome(): PPLLintFixOutcome | undefined {
+  return lastFixOutcome;
+}
+
+/** Subscribe to outcome changes so an idle fix card can re-render when the user acts. */
+export function subscribePPLLintFixOutcome(callback: () => void): () => void {
+  outcomeSubscribers.add(callback);
+  return () => outcomeSubscribers.delete(callback);
 }
 
 export function getPPLLintFixSession(requestId?: string): PPLLintFixSession | undefined {

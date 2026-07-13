@@ -25,7 +25,10 @@
  *                            `syntaxClean === false`),
  *   2. diagnostic cleared — the original ruleId is no longer raised,
  *   3. no new diagnostics — no ruleId is raised that the original lacked,
- *   4. shape preserved    — same command keywords in the same order,
+ *   4. shape preserved    — every original command kept in the same order; a
+ *                            fix may insert a row-reordering `sort` (the
+ *                            head-without-sort repair) but not drop, reorder, or
+ *                            add an intent-changing command,
  *   5. token overlap      — shares at least `MIN_TOKEN_OVERLAP` of the original's
  *                            non-keyword tokens (catches whole-query regeneration
  *                            even when the shape coincidentally matches).
@@ -127,6 +130,37 @@ function isOperatorInverted(original: string, candidate: string): boolean {
   return false;
 }
 
+/**
+ * Commands a fix may INSERT without it counting as an intent change. A `sort`
+ * only reorders rows — it never drops, filters, or aggregates them — so
+ * inserting one is the canonical repair for `head-without-sort` (and similar
+ * nondeterministic-order diagnostics). Any other inserted command (e.g. a
+ * `stats` aggregation or a `where` filter) changes the result's contents and is
+ * still rejected as `shape-changed`.
+ */
+const INSERTABLE_FIX_COMMANDS = new Set(['sortCommand']);
+
+/**
+ * Shape preservation with room for a fix to add a `sort`. Passes only when every
+ * ORIGINAL command survives in the SAME ORDER (no drop, no reorder — `orig` is a
+ * subsequence of `fix`) AND every extra command in `fix` is in
+ * {@link INSERTABLE_FIX_COMMANDS}. This keeps the intent-guard the exact-equality
+ * check gave (a regeneration that drops the user's `where`/`stats`, or reorders
+ * the pipeline, is still caught) while letting the `head-without-sort` fix —
+ * which must insert a `sort` before `head` — actually apply.
+ */
+export function isShapePreserved(orig: string[], fix: string[]): boolean {
+  let matched = 0;
+  for (const command of fix) {
+    if (matched < orig.length && command === orig[matched]) {
+      matched++; // consumes the next original command, in order
+    } else if (!INSERTABLE_FIX_COMMANDS.has(command)) {
+      return false; // an inserted command that is not a safe reorder
+    }
+  }
+  return matched === orig.length; // every original command was preserved
+}
+
 /** Lowercase content tokens (identifiers/literals), excluding pure punctuation. */
 function contentTokens(query: string): string[] {
   const matches: string[] = query.toLowerCase().match(/[a-z0-9_.]+/g) ?? [];
@@ -178,10 +212,12 @@ export function validateCandidateFix(
     return { accepted: false, reason: 'new-diagnostic' };
   }
 
-  // 4. pipeline shape preserved (same commands in the same order)
+  // 4. pipeline shape preserved (every original command kept, in order); a fix
+  //    may insert a row-reordering `sort` (the head-without-sort repair) but not
+  //    drop, reorder, or add an intent-changing command. See isShapePreserved.
   const origShape = deps.pipelineShape(original);
   const fixShape = deps.pipelineShape(trimmed);
-  if (JSON.stringify(origShape) !== JSON.stringify(fixShape)) {
+  if (!isShapePreserved(origShape, fixShape)) {
     return { accepted: false, reason: 'shape-changed' };
   }
 
