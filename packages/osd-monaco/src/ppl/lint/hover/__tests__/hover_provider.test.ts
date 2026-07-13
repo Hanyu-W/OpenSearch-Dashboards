@@ -9,7 +9,6 @@ import { markerFixKey, MarkerFix, setModelFixes, clearModelFixes } from '../../f
 import { setModelHoverFacts, clearModelHoverFacts, HoverFacts } from '../hover_registry';
 import { pplLintHoverProvider, LINT_OWNER } from '../hover_provider';
 import { setPPLLintContext, clearPPLLintContext, PPLLintContext } from '../../../lint_bridge';
-import { AI_FIX_COMMAND_ID } from '../../ai_fix/ai_fix_command_id';
 
 type Marker = monaco.editor.IMarker;
 
@@ -148,7 +147,7 @@ describe('pplLintHoverProvider', () => {
     expect(md).not.toContain('**Engine behavior**');
   });
 
-  describe('AI "Ask Olly to fix" action on the card', () => {
+  describe('AI "Ask Olly to fix" action is not on the hover card', () => {
     const aiMarker = () =>
       makeMarker({
         code: {
@@ -158,67 +157,18 @@ describe('pplLintHoverProvider', () => {
         message: 'Comparing numeric field to a string literal.',
       });
 
-    it('renders a trusted AI-fix command link for an AI-fixable rule when AI is available', () => {
+    // The AI action was removed from the hover card to avoid offering the same
+    // action twice — it lives solely in the ⌘. quick-fix menu now. Even when the
+    // AI feature is fully available and the rule has no deterministic fix, the
+    // card must not render the action or mark any command trusted.
+    it('never renders the AI action even when AI is available and no fix exists', () => {
       markersByOwner[LINT_OWNER] = [aiMarker()];
       setAiContext();
-      const hover = hoverAt(1, 7);
-      const md = markdownOf(hover);
-      expect(md).toContain('✨ Ask Olly to fix this');
-      expect(md).toContain(`command:${AI_FIX_COMMAND_ID}?`);
-      // The args carry the rule + message so the handler re-validates the fix.
-      const encoded = md.substring(md.indexOf(`command:${AI_FIX_COMMAND_ID}?`)).split(')')[0];
-      const decoded = JSON.parse(decodeURIComponent(encoded.split('?')[1])) as {
-        modelUri: string;
-        ruleId: string;
-        message: string;
-      };
-      expect(decoded.ruleId).toBe('type-mismatch-numeric');
-      expect(decoded.modelUri).toBe(model.uri.toString());
-      // Only that one command is trusted — never a blanket isTrusted:true.
-      expect(trustedOf(hover)).toEqual({ enabledCommands: [AI_FIX_COMMAND_ID] });
-    });
-
-    it('does not offer the AI action when AI features are disabled', () => {
-      markersByOwner[LINT_OWNER] = [aiMarker()];
-      setAiContext({ enableAIFeatures: false });
       const hover = hoverAt(1, 7);
       expect(markdownOf(hover)).not.toContain('Ask Olly to fix this');
+      expect(markdownOf(hover)).not.toContain('command:');
+      // No command link on the card → nothing is trusted.
       expect(trustedOf(hover)).toBe(false);
-    });
-
-    it('does not offer the AI action when no chat opener is wired', () => {
-      markersByOwner[LINT_OWNER] = [aiMarker()];
-      setAiContext({ onAskAiFix: undefined });
-      expect(markdownOf(hoverAt(1, 7))).not.toContain('Ask Olly to fix this');
-    });
-
-    it('offers AI for ANY no-fix rule, including ones outside the old allowlist', () => {
-      // division-by-zero was never in the old AI allowlist, but with no
-      // deterministic fix it now gets the AI fallback under "offer on all".
-      markersByOwner[LINT_OWNER] = [makeMarker()]; // division-by-zero, no fix in table
-      setAiContext();
-      const md = markdownOf(hoverAt(1, 7));
-      expect(md).toContain('✨ Ask Olly to fix this');
-      expect(md).toContain(`command:${AI_FIX_COMMAND_ID}?`);
-    });
-
-    it('prefers a deterministic fix and omits the AI action when one exists', () => {
-      const marker = aiMarker();
-      markersByOwner[LINT_OWNER] = [marker];
-      setAiContext();
-      setModelFixes(
-        model,
-        new Map([[markerFixKey(marker), { title: 'Quote the literal', text: 'age = "30"' }]])
-      );
-      const md = markdownOf(hoverAt(1, 7));
-      expect(md).toContain('**Suggested fix** →');
-      expect(md).not.toContain('Ask Olly to fix this');
-    });
-
-    it('does not offer the AI action when there is no lint context at all', () => {
-      markersByOwner[LINT_OWNER] = [aiMarker()];
-      // no setAiContext() → getPPLLintContext returns undefined
-      expect(markdownOf(hoverAt(1, 7))).not.toContain('Ask Olly to fix this');
     });
   });
 });

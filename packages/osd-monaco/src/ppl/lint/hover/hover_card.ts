@@ -32,14 +32,6 @@ export interface HoverCardInput {
   facts?: HoverFacts;
   /** Quick-fix preview text (the replacement), when a DiagnosticFix exists. */
   fixText?: string;
-  /**
-   * A `command:` link target (already URI-encoded) for the AI ("Ask Olly to
-   * fix") action. Present only when the diagnostic is AI-fixable AND the AI
-   * feature is available; the provider gates this and marks the command trusted.
-   * When present, the card renders a clickable "✨ Ask Olly to fix this" line so
-   * the action is reachable directly from the hover, not only via the ⌘. menu.
-   */
-  aiFixCommandUri?: string;
 }
 
 const SEVERITY_GLYPH: Record<SeverityLabel, string> = {
@@ -191,16 +183,7 @@ function renderFactsLine(facts: HoverFacts): string | undefined {
  * in `{ value, isTrusted: false }` and hands it to Monaco.
  */
 export function renderHoverCard(input: HoverCardInput): string {
-  const {
-    ruleId,
-    severityLabel,
-    message,
-    docUrl,
-    content,
-    facts,
-    fixText,
-    aiFixCommandUri,
-  } = input;
+  const { ruleId, severityLabel, message, docUrl, content, facts, fixText } = input;
   const lines: string[] = [];
 
   // Header: glyph · ruleId · severity.
@@ -242,16 +225,9 @@ export function renderHoverCard(input: HoverCardInput): string {
     lines.push(`**Suggested fix** → ${code(fixText)}`);
   }
 
-  // AI ("Ask Olly to fix") action — a clickable command link, so the action is
-  // reachable directly from the hover card and not only via the ⌘. quick-fix
-  // menu. Rendered only when the provider supplies a (trusted) command URI,
-  // which it does solely for AI-fixable rules when the AI feature is available.
-  // The command target is pre-encoded by the provider; do not escape it here or
-  // the link stops resolving.
-  if (aiFixCommandUri !== undefined) {
-    lines.push('');
-    lines.push(`[✨ Ask Olly to fix this](${aiFixCommandUri})`);
-  }
+  // Note: the AI ("Ask Olly to fix") action is intentionally NOT rendered on the
+  // hover card. It is offered solely through the ⌘. quick-fix menu (see
+  // code_action_provider) to avoid presenting the same action twice.
 
   // Escape hatch — only when present (never for error severity, by data rule).
   // For engine-throw rules the query genuinely would not run, so the only reason
