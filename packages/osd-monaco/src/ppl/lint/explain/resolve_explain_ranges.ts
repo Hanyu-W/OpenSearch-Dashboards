@@ -141,16 +141,18 @@ function narrow(
 
 /**
  * Attempt a Tier-1 quick-fix for a filter finding. The fix is derived from the
- * command's single `comparisonExpression` node — NOT the whole narrowed
- * `where`/`logicalExpression` node — for two reasons:
- *  1. `getText()` concatenates tokens with no whitespace, so reading it off a
+ * comparison node that owns the single `comparisonOperator` in the command — NOT
+ * the whole narrowed `where`/`logicalExpression` node — for three reasons:
+ *  1. `comparisonOperator` exists on BOTH the compiled and the runtime-bundle
+ *     grammar (the runtime grammar has no `comparisonExpression` rule), so this
+ *     works on the live ≥3.6 surface, not just in the compiled-grammar tests.
+ *  2. `getText()` concatenates tokens with no whitespace, so reading it off a
  *     node that includes the `where` / `NOT` keyword would fuse e.g. `NOT`+`age`
- *     into `NOTage`, which the field pattern would wrongly accept — producing a
- *     rewrite that drops the negation. A lone `comparisonExpression` contains no
- *     such keyword.
- *  2. A compound predicate (`a > 1 and b < 2`) has several
- *     `comparisonExpression`s; requiring exactly one declines the compound case,
- *     which the single-comparison rewrite cannot safely handle anyway.
+ *     into `NOTage`, which the field pattern would wrongly accept — dropping the
+ *     negation. The comparison node (the operator's parent) excludes `NOT`.
+ *  3. A compound predicate (`a > 1 and b < 2`) has several comparison operators;
+ *     requiring exactly one declines the compound case, which the
+ *     single-comparison rewrite cannot safely handle anyway.
  *
  * Returns the fix plus the exact source node the fix replaces, or `undefined`.
  */
@@ -159,11 +161,13 @@ function buildFilterFix(
   ruleNameToIndex: RuleNameToIndex,
   typeMap: Map<string, string> | undefined
 ): { fix: ReturnType<typeof buildFilterInversionFix>; node: ParserRuleContext } | undefined {
-  const comparisons = findAllDescendantsByRule(command, ruleNameToIndex, 'comparisonExpression');
-  if (comparisons.length !== 1) {
+  const operators = findAllDescendantsByRule(command, ruleNameToIndex, 'comparisonOperator');
+  if (operators.length !== 1) {
     return undefined;
   }
-  const comparison = comparisons[0];
+  // The comparison expression is the operator's parent (`<left> <op> <right>`),
+  // whose text is the bare predicate — no `where`/`NOT`/`and` tokens to fuse.
+  const comparison = (operators[0].parent as ParserRuleContext | null) ?? operators[0];
   const fix = buildFilterInversionFix(comparison.getText(), typeMap);
   return fix ? { fix, node: comparison } : undefined;
 }
