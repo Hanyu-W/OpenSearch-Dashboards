@@ -5,13 +5,8 @@
 
 import { Diagnostic } from '../../diagnostic';
 import { wholeQueryRange } from '../../range_utils';
-import { ExplainDetector } from '../explain_types';
-import {
-  hasPushDownTag,
-  hasRelOp,
-  physicalPlanText,
-  relTreeContainsCondition,
-} from '../explain_tree_utils';
+import { detectExplainOutcomes } from '../explain_outcomes';
+import { ExplainDetector, ExplainOutcome } from '../explain_types';
 
 /**
  * A "not pushed" signal: a residual marker that, when present in the physical
@@ -19,12 +14,10 @@ import {
  * coordinator after a full fetch.
  */
 interface NotPushedSignal {
-  /** A residual marker in the legacy plan text. */
-  residual: string;
-  /** If ANY of these push tags is present, the operation WAS pushed. */
-  pushedAs: string[];
-  /** Tree-first residual detector for json_tree payloads. */
-  hasTreeResidual: (plan: Parameters<ExplainDetector>[0]) => boolean;
+  outcome: Extract<
+    ExplainOutcome,
+    'filter:coordinator' | 'aggregation:coordinator' | 'sort:coordinator'
+  >;
   /**
    * Which pipeline clause this signal is about. Rides the diagnostic as
    * `hoverFacts.operation` and `explainTarget.operation` so the hover card can
@@ -46,28 +39,21 @@ interface NotPushedSignal {
 // where `$t5` is `CAST($t2):DOUBLE NOT NULL`), which truncates a `[^)]*` regex.
 const SIGNALS: NotPushedSignal[] = [
   {
-    residual: '$condition=',
-    pushedAs: ['FILTER->', 'SCRIPT->'],
-    hasTreeResidual: relTreeContainsCondition,
+    outcome: 'filter:coordinator',
     operation: 'filter',
     message:
-      "This filter can't use the index, so OpenSearch scans every matching row to apply it — slow on large indexes.",
+      'This filter may be slow because it does extra work. Use a simpler filter when possible.',
   },
   {
-    residual: 'EnumerableAggregate',
-    pushedAs: ['AGGREGATION->'],
-    hasTreeResidual: (plan) => hasRelOp(plan, 'EnumerableAggregate'),
+    outcome: 'aggregation:coordinator',
     operation: 'aggregation',
     message:
-      'This aggregation runs in memory over all fetched rows instead of on the data nodes — slow and memory-heavy on large indexes.',
+      'This aggregation may be slow on large amounts of data. Use a simpler calculation when possible.',
   },
   {
-    residual: 'EnumerableSort',
-    pushedAs: ['SORT->', 'SORT_EXPR->'],
-    hasTreeResidual: (plan) => hasRelOp(plan, 'EnumerableSort'),
+    outcome: 'sort:coordinator',
     operation: 'sort',
-    message:
-      'This sort runs after every matching row is fetched, instead of on the index — slow on large result sets.',
+    message: 'This sort may be slow. Sort by an existing field when possible.',
   },
 ];
 
@@ -80,15 +66,10 @@ export const operationNotPushedDetector: ExplainDetector = (plan, config, contex
   if (!plan.isCalcite) {
     return [];
   }
-  const fallbackPhysical = physicalPlanText(plan);
+  const outcomes = new Set(detectExplainOutcomes(plan).map(({ outcome }) => outcome));
   const diagnostics: Diagnostic[] = [];
   for (const signal of SIGNALS) {
-    const hasTreeSignal =
-      signal.hasTreeResidual(plan) && !signal.pushedAs.some((tag) => hasPushDownTag(plan, tag));
-    const hasTextFallbackSignal =
-      fallbackPhysical.includes(signal.residual) &&
-      !signal.pushedAs.some((tag) => fallbackPhysical.includes(tag));
-    if (hasTreeSignal || hasTextFallbackSignal) {
+    if (outcomes.has(signal.outcome)) {
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,
@@ -99,7 +80,7 @@ export const operationNotPushedDetector: ExplainDetector = (plan, config, contex
         range: wholeQueryRange(context.query),
         docUrl: config.docUrl,
         hoverFacts: { operation: signal.operation },
-        explainTarget: { operation: signal.operation, fields: [] },
+        explainTarget: { operation: signal.operation, outcome: signal.outcome, fields: [] },
       });
     }
   }

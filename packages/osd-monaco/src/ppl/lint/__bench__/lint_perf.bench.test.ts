@@ -120,14 +120,14 @@ describeBench('PPL lint performance benchmark', () => {
     );
   });
 
-  it('catalog shape is as documented (16 entries, 7 context-gated)', () => {
+  it('catalog shape is as documented (18 entries, 16 default-enabled, 6 context-gated)', () => {
     const cat = getBundledCatalog();
-    expect(cat.length).toBe(16);
+    expect(cat.length).toBe(18);
     expect(cat.filter((c) => c.enabled).length).toBe(16);
-    expect(cat.filter((c) => c.needsContext).length).toBe(7);
+    expect(cat.filter((c) => c.needsContext).length).toBe(6);
   });
 
-  // ── Axis 1a — compiled-worker path (no context, ~9 rules eligible) ────────
+  // ── Axis 1a — compiled-worker path (no context, ~10 rules eligible) ───────
   describe('Axis 1a: compiled fallback (Web Worker path, no context)', () => {
     const analyzer = new PPLLanguageAnalyzer();
 

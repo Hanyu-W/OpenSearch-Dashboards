@@ -5,8 +5,8 @@
 
 import { Diagnostic } from '../../diagnostic';
 import { wholeQueryRange } from '../../range_utils';
-import { ExplainDetector } from '../explain_types';
-import { hasPushDownTag, physicalPlanText, sourceBuilderText } from '../explain_tree_utils';
+import { detectExplainOutcomes } from '../explain_outcomes';
+import { ExplainDetector, ExplainOutcome } from '../explain_types';
 
 /**
  * A "pushed as script" signal: an operation that WAS pushed into OpenSearch, but
@@ -14,10 +14,7 @@ import { hasPushDownTag, physicalPlanText, sourceBuilderText } from '../explain_
  * sort.
  */
 interface ScriptSignal {
-  /** The PushDownContext tag that indicates script execution. */
-  pushTag: string;
-  /** Must ALSO be present to confirm a real script push (guards false positives). */
-  discriminator: string;
+  outcome: Extract<ExplainOutcome, 'filter:script' | 'sort:script'>;
   /**
    * Which pipeline clause this signal is about. Rides the diagnostic as
    * `hoverFacts.operation` and `explainTarget.operation` so the hover card can
@@ -39,18 +36,16 @@ interface ScriptSignal {
 // on that pushed-aggregation case (design §6.10 finding 3).
 const SIGNALS: ScriptSignal[] = [
   {
-    pushTag: 'SCRIPT->',
-    discriminator: 'opensearch_compounded_script',
+    outcome: 'filter:script',
     operation: 'filter',
     message:
-      'This filter runs a script on every document instead of using the index directly — much slower than a plain comparison.',
+      'This filter may be slow because it does extra calculations. Compare the field directly instead.',
   },
   {
-    pushTag: 'SORT_EXPR->',
-    discriminator: 'opensearch_compounded_script',
+    outcome: 'sort:script',
     operation: 'sort',
     message:
-      'This sort runs a script on every matching document instead of sorting on a stored value — slow on large result sets.',
+      'This sort may be slow because it does extra calculations. Sort by an existing field instead.',
   },
 ];
 
@@ -64,15 +59,10 @@ export const operationPushedAsScriptDetector: ExplainDetector = (plan, config, c
   if (!plan.isCalcite) {
     return [];
   }
-  const sourceText = sourceBuilderText(plan);
-  const fallbackPhysical = physicalPlanText(plan);
+  const outcomes = new Set(detectExplainOutcomes(plan).map(({ outcome }) => outcome));
   const diagnostics: Diagnostic[] = [];
   for (const signal of SIGNALS) {
-    const hasTreeSignal =
-      hasPushDownTag(plan, signal.pushTag) && sourceText.includes(signal.discriminator);
-    const hasTextFallbackSignal =
-      fallbackPhysical.includes(signal.pushTag) && fallbackPhysical.includes(signal.discriminator);
-    if (hasTreeSignal || hasTextFallbackSignal) {
+    if (outcomes.has(signal.outcome)) {
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,
@@ -83,7 +73,7 @@ export const operationPushedAsScriptDetector: ExplainDetector = (plan, config, c
         range: wholeQueryRange(context.query),
         docUrl: config.docUrl,
         hoverFacts: { operation: signal.operation },
-        explainTarget: { operation: signal.operation, fields: [] },
+        explainTarget: { operation: signal.operation, outcome: signal.outcome, fields: [] },
       });
     }
   }

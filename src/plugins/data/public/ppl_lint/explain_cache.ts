@@ -12,6 +12,7 @@ import type {
   ExplainPlan,
   ExplainRelTree,
 } from '@osd/monaco/target/ppl/lint/explain/explain_types';
+import { EXPLAIN_OUTCOME_DETECTOR_VERSION } from '@osd/monaco/target/ppl/lint/explain/explain_outcomes';
 import type { PPLLintHttpClient } from '@osd/monaco/target/ppl/lint_bridge';
 
 // Hardcoded rather than imported from query_enhancements/common to avoid a
@@ -20,9 +21,20 @@ const EXPLAIN_PATH = '/api/enhancements/ppl/explain';
 
 // Bound memory: identical query text is cached, editing produces a new key. A
 // small cap is plenty for an interactive editing session.
-const MAX_ENTRIES = 50;
+const MAX_BASELINE_ENTRIES = 50;
+const MAX_PROBE_ENTRIES = 50;
 
 const EMPTY: ExplainPlan = { isCalcite: false };
+
+export type ExplainResolution =
+  | { status: 'ok'; plan: ExplainPlan }
+  | { status: 'unsupported' }
+  | { status: 'error'; error?: unknown };
+
+export interface ExplainResolveOptions {
+  partition?: 'baseline' | 'probe';
+  signal?: AbortSignal;
+}
 
 function isRelTree(value: unknown): value is ExplainRelTree {
   return !!value && typeof value === 'object' && Array.isArray((value as { rels?: unknown }).rels);
@@ -68,62 +80,95 @@ export function toExplainPlan(res: unknown): ExplainPlan {
  * (query text) is unbounded.
  */
 class ExplainCache {
-  private cache = new Map<string, ExplainPlan>();
-  private pending = new Map<string, Promise<ExplainPlan>>();
+  private baselineCache = new Map<string, ExplainResolution>();
+  private probeCache = new Map<string, ExplainResolution>();
+  private baselinePending = new Map<string, Promise<ExplainResolution>>();
+  private probePending = new Map<string, Promise<ExplainResolution>>();
 
-  private key(query: string, dataSourceId?: string): string {
-    return `${dataSourceId ?? '__local__'}::${query}`;
+  private key(
+    query: string,
+    dataSourceId: string | undefined,
+    partition: 'baseline' | 'probe'
+  ): string {
+    const version = partition === 'probe' ? `::outcomes-${EXPLAIN_OUTCOME_DETECTOR_VERSION}` : '';
+    return `${dataSourceId ?? '__local__'}${version}::${query}`;
   }
 
-  async resolve(
+  async resolveResult(
     http: PPLLintHttpClient,
     query: string,
-    dataSourceId?: string
-  ): Promise<ExplainPlan> {
-    const k = this.key(query, dataSourceId);
-    if (this.cache.has(k)) {
-      return this.cache.get(k)!;
+    dataSourceId?: string,
+    options: ExplainResolveOptions = {}
+  ): Promise<ExplainResolution> {
+    const partition = options.partition ?? 'baseline';
+    const cache = partition === 'probe' ? this.probeCache : this.baselineCache;
+    const pending = partition === 'probe' ? this.probePending : this.baselinePending;
+    const cap = partition === 'probe' ? MAX_PROBE_ENTRIES : MAX_BASELINE_ENTRIES;
+    const k = this.key(query, dataSourceId, partition);
+    if (cache.has(k)) {
+      return cache.get(k)!;
     }
-    if (this.pending.has(k)) {
-      return this.pending.get(k)!;
+    if (pending.has(k)) {
+      return pending.get(k)!;
     }
 
     const promise = http
       .post(EXPLAIN_PATH, {
         body: JSON.stringify({ query }),
         query: dataSourceId ? { dataSourceId } : {},
+        signal: options.signal,
       })
       .then(toExplainPlan)
       .then((plan) => {
-        // Evict the oldest entry (insertion order) once the cap is reached.
-        if (this.cache.size >= MAX_ENTRIES) {
-          const oldest = this.cache.keys().next().value;
+        const resolution: ExplainResolution = plan.isCalcite
+          ? { status: 'ok', plan }
+          : { status: 'unsupported' };
+        if (cache.size >= cap) {
+          const oldest = cache.keys().next().value;
           if (oldest !== undefined) {
-            this.cache.delete(oldest);
+            cache.delete(oldest);
           }
         }
-        this.cache.set(k, plan);
-        this.pending.delete(k);
-        return plan;
+        cache.set(k, resolution);
+        pending.delete(k);
+        return resolution;
       })
-      .catch(() => {
-        this.pending.delete(k);
-        return EMPTY;
+      .catch((error) => {
+        pending.delete(k);
+        // Errors are deliberately not cached. A transient failure must not
+        // become a permanent "no outcome" result for a later control probe.
+        return { status: 'error', error } as ExplainResolution;
       });
 
-    this.pending.set(k, promise);
+    pending.set(k, promise);
     return promise;
   }
 
+  /** Backward-compatible plan-only view used by non-probe callers. */
+  async resolve(
+    http: PPLLintHttpClient,
+    query: string,
+    dataSourceId?: string
+  ): Promise<ExplainPlan> {
+    const result = await this.resolveResult(http, query, dataSourceId);
+    return result.status === 'ok' ? result.plan : EMPTY;
+  }
+
   invalidate(query: string, dataSourceId?: string) {
-    const k = this.key(query, dataSourceId);
-    this.cache.delete(k);
-    this.pending.delete(k);
+    for (const partition of ['baseline', 'probe'] as const) {
+      const k = this.key(query, dataSourceId, partition);
+      const cache = partition === 'probe' ? this.probeCache : this.baselineCache;
+      const pending = partition === 'probe' ? this.probePending : this.baselinePending;
+      cache.delete(k);
+      pending.delete(k);
+    }
   }
 
   clear() {
-    this.cache.clear();
-    this.pending.clear();
+    this.baselineCache.clear();
+    this.probeCache.clear();
+    this.baselinePending.clear();
+    this.probePending.clear();
   }
 }
 

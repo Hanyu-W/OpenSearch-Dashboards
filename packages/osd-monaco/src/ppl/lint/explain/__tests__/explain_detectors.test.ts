@@ -316,7 +316,11 @@ describe('explain detectors against captured and json_tree payloads', () => {
       CTX
     );
     expect(notPushed.hoverFacts?.operation).toBe('filter');
-    expect(notPushed.explainTarget).toEqual({ operation: 'filter', fields: [] });
+    expect(notPushed.explainTarget).toEqual({
+      operation: 'filter',
+      outcome: 'filter:coordinator',
+      fields: [],
+    });
 
     const [aggNotPushed] = operationNotPushedDetector(
       TREE_FIXTURES.aggNotPushedValues,

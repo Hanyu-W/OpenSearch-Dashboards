@@ -70,13 +70,22 @@ export function handleAiFixCommand(
   if (context.enableAIFeatures === false || !context.onAskAiFix) {
     return undefined;
   }
+  const diagnostic = {
+    message: args.message,
+    ruleId: args.ruleId,
+    ...(args.operation ? { operation: args.operation } : {}),
+    ...(args.outcome ? { outcome: args.outcome } : {}),
+    ...(args.targetText ? { targetText: args.targetText } : {}),
+    ...(args.targetRange ? { targetRange: args.targetRange } : {}),
+    ...(args.relatedTexts?.length ? { relatedTexts: args.relatedTexts } : {}),
+  };
   const requestWithoutMessage = {
     requestId: deps?.createRequestId?.() ?? createRequestId(),
     sourceQueryHash: hashPPLLintFixSource(query),
     toolName: context.aiFixToolName || DEFAULT_PPL_LINT_FIX_TOOL_NAME,
     modelUri: args.modelUri,
     query,
-    diagnostic: { message: args.message, ruleId: args.ruleId },
+    diagnostic,
     datasetTitle: context.datasetTitle,
     dataSourceId: context.dataSourceId,
   };

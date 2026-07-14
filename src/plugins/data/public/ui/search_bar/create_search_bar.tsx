@@ -140,6 +140,9 @@ export function createSearchBar({ core, storage, data, contextProvider }: Statef
   // Until it's available, we'll ask the user to provide it for the pre-wired component.
   return (props: StatefulSearchBarProps) => {
     const { useDefaultBehaviors } = props;
+    const pplLintFixEnabled = Boolean(
+      contextProvider?.hooks?.useAssistantAction && props.showQueryInput !== false
+    );
 
     // Handle queries
     const onQuerySubmitRef = useRef(props.onQuerySubmit);
@@ -187,9 +190,7 @@ export function createSearchBar({ core, storage, data, contextProvider }: Statef
           appName: props.appName,
           data,
           storage,
-          pplLintFixToolName: contextProvider?.hooks?.useAssistantAction
-            ? PPL_LINT_FIX_DATA_TOOL_NAME
-            : undefined,
+          pplLintFixToolName: pplLintFixEnabled ? PPL_LINT_FIX_DATA_TOOL_NAME : undefined,
           ...core,
         }}
       >
@@ -202,6 +203,7 @@ export function createSearchBar({ core, storage, data, contextProvider }: Statef
         <PPLLintFixToolRegistration
           queryString={data.query.queryString}
           useAssistantAction={contextProvider?.hooks?.useAssistantAction}
+          enabled={pplLintFixEnabled}
         />
         <SearchBar
           showAutoRefreshOnly={props.showAutoRefreshOnly}

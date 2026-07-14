@@ -8,6 +8,7 @@ import type { PPLValidationContext } from './validation_provider';
 import type { LintResult } from './lint/diagnostic';
 import type { LintPayloadContext, LintRunContext } from './lint/types';
 import type { PPLValidationResult } from './ppl_language_analyzer';
+import type { CompiledPPLLintAnalysis } from './lint/explain/attribution/snapshot';
 
 /**
  * Minimal HTTP client the explain-backed lint pass uses to POST the `_explain`
@@ -22,6 +23,7 @@ export interface PPLLintHttpClient {
     options?: {
       body?: BodyInit | null;
       query?: Record<string, string | number | boolean | undefined>;
+      signal?: AbortSignal;
     }
   ) => Promise<unknown>;
   /**
@@ -105,6 +107,11 @@ export interface AskPPLLintFixRequest {
   diagnostic: {
     message: string;
     ruleId?: string;
+    operation?: 'filter' | 'aggregation' | 'sort';
+    outcome?: string;
+    targetText?: string;
+    targetRange?: { startOffset: number; endOffset: number };
+    relatedTexts?: string[];
   };
   datasetTitle?: string;
   dataSourceId?: string;
@@ -126,6 +133,14 @@ export interface PPLLintBridgeRequest {
   context?: PPLLintContext;
   compiledFallbackLint?: (content: string) => Promise<LintResult>;
   compiledFallbackValidate?: (content: string) => Promise<PPLValidationResult>;
+  compiledFallbackAnalyze?: (content: string) => Promise<CompiledPPLLintAnalysis>;
+  compiledFallbackValidateProbes?: (queries: string[]) => Promise<boolean[]>;
+  /**
+   * Optional guarded publisher for phased lint results. The Monaco lifecycle
+   * owns staleness checks; a bridge can publish static and baseline results
+   * while a later isolation phase is still pending.
+   */
+  publishResult?: (result: LintResult) => void;
 }
 
 export type PPLLintBridge = (
@@ -215,7 +230,10 @@ export async function resolvePPLLintResult(
   model: monaco.editor.IModel,
   content: string,
   fallbackLint: (content: string) => Promise<LintResult>,
-  fallbackValidate?: (content: string) => Promise<PPLValidationResult>
+  fallbackValidate?: (content: string) => Promise<PPLValidationResult>,
+  publishResult?: (result: LintResult) => void,
+  fallbackAnalyze?: (content: string) => Promise<CompiledPPLLintAnalysis>,
+  fallbackValidateProbes?: (queries: string[]) => Promise<boolean[]>
 ): Promise<LintResult> {
   const state = getGlobalLintState();
   if (state.bridge) {
@@ -226,6 +244,9 @@ export async function resolvePPLLintResult(
         context: state.contexts.get(model),
         compiledFallbackLint: fallbackLint,
         compiledFallbackValidate: fallbackValidate,
+        compiledFallbackAnalyze: fallbackAnalyze,
+        compiledFallbackValidateProbes: fallbackValidateProbes,
+        publishResult,
       });
       // A non-null result — even with an empty diagnostics list — is a
       // completed lint that found nothing; do NOT fall back (R2.7).

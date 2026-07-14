@@ -157,7 +157,7 @@
     "detector": "operation-not-pushed",
     "enabled": false,
     "severity": "warning",
-    "message": "An operation in this query could not be pushed to OpenSearch and runs in the coordinator.",
+    "message": "This step may make the query slow. Simplify the highlighted part when possible.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/",
     "appliesTo": { "minVersion": "3.3.0", "engine": "calcite" },
     "needsExplain": true
@@ -167,7 +167,7 @@
     "detector": "operation-pushed-as-script",
     "enabled": false,
     "severity": "info",
-    "message": "An operation in this query was pushed to OpenSearch as a Painless script (per-document evaluation).",
+    "message": "This step may make the query slow. Simplify the highlighted part when possible.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/",
     "appliesTo": { "minVersion": "3.3.0", "engine": "calcite" },
     "needsExplain": true

@@ -120,6 +120,32 @@ describe('explainCache', () => {
     expect(plan).toEqual({ isCalcite: false });
   });
 
+  it('keeps rejected requests distinct from unsupported responses and retries them', async () => {
+    const errorHttp = makeHttp(() => Promise.reject(new Error('boom')));
+    await expect(
+      explainCache.resolveResult(errorHttp as any, 'source=accounts', 'ds-error')
+    ).resolves.toEqual(expect.objectContaining({ status: 'error' }));
+    await explainCache.resolveResult(errorHttp as any, 'source=accounts', 'ds-error');
+    expect(errorHttp.post).toHaveBeenCalledTimes(2);
+
+    const unsupportedHttp = makeHttp(() => Promise.resolve(V2_RESPONSE));
+    await expect(
+      explainCache.resolveResult(unsupportedHttp as any, 'source=accounts', 'ds-unsupported')
+    ).resolves.toEqual({ status: 'unsupported' });
+  });
+
+  it('partitions synthetic probe entries from baseline entries', async () => {
+    const http = makeHttp();
+    await explainCache.resolveResult(http as any, 'source=accounts', 'ds-1');
+    await explainCache.resolveResult(http as any, 'source=accounts', 'ds-1', {
+      partition: 'probe',
+    });
+    await explainCache.resolveResult(http as any, 'source=accounts', 'ds-1', {
+      partition: 'probe',
+    });
+    expect(http.post).toHaveBeenCalledTimes(2);
+  });
+
   it('caches by (dataSourceId, query): a repeat hit makes no second call', async () => {
     const http = makeHttp();
     await explainCache.resolve(http as any, 'source=accounts', 'ds-1');

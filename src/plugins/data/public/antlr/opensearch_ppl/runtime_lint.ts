@@ -11,16 +11,16 @@ import type { LintResult, PPLLintContext, PPLLintBridgeRequest, LintRunContext }
 // are unavailable. Importing the leaf modules keeps the runtime lint engine
 // usable on both the browser thread and under Jest.
 import { runLint } from '@osd/monaco/target/ppl/lint/lint_runner';
-import {
-  createRuntimeRuleNameToIndex,
-  RuleNameToIndex,
-} from '@osd/monaco/target/ppl/lint/rule_index';
+import { createRuntimeRuleNameToIndex } from '@osd/monaco/target/ppl/lint/rule_index';
+import type { RuleNameToIndex } from '@osd/monaco/target/ppl/lint/rule_index';
 import { PIPE_FIRST_PREFIX, remapPipeFirstColumns } from '@osd/monaco/target/ppl/lint/range_utils';
 import {
   hasExplainRules,
   runExplainLint,
 } from '@osd/monaco/target/ppl/lint/explain/run_explain_lint';
-import { resolveExplainRanges } from '@osd/monaco/target/ppl/lint/explain/resolve_explain_ranges';
+import { buildExplainAttributionSnapshot } from '@osd/monaco/target/ppl/lint/explain/attribution/candidates';
+import { validateExplainAttributionSnapshot } from '@osd/monaco/target/ppl/lint/explain/attribution/snapshot';
+import type { ExplainAttributionSnapshot } from '@osd/monaco/target/ppl/lint/explain/attribution/snapshot';
 import {
   CharStream,
   CommonTokenStream,
@@ -32,8 +32,21 @@ import { GeneralErrorListener } from '../shared/general_error_listerner';
 import { CachedGrammar, pplGrammarCache } from './ppl_grammar_cache';
 import { pickStartRuleIndex, resolveSpaceToken } from './runtime_grammar_utils';
 import { explainCache } from '../../ppl_lint/explain_cache';
+import {
+  createExplainAttributionState,
+  runExplainIsolation,
+} from '../../ppl_lint/explain_attribution';
 
-function buildRuntimeTree(query: string, grammar: CachedGrammar): ParserRuleContext | undefined {
+export interface RuntimeParseOutcome {
+  tree: ParserRuleContext;
+  parserSource: string;
+  parserPrefixLength: number;
+}
+
+export function buildRuntimeTree(
+  query: string,
+  grammar: CachedGrammar
+): RuntimeParseOutcome | undefined {
   const isPipeFirst = query.trimStart().startsWith('|');
   const effective = isPipeFirst ? PIPE_FIRST_PREFIX + query : query;
 
@@ -82,7 +95,13 @@ function buildRuntimeTree(query: string, grammar: CachedGrammar): ParserRuleCont
     if (errorListener.errors.length > 0) {
       return undefined;
     }
-    return tree ?? undefined;
+    return tree
+      ? {
+          tree,
+          parserSource: effective,
+          parserPrefixLength: isPipeFirst ? PIPE_FIRST_PREFIX.length : 0,
+        }
+      : undefined;
   } catch {
     // parse() threw before producing a tree (e.g. an internal ATN error);
     // treat as unparseable. Normal ANTLR syntax errors are recovered above and
@@ -99,13 +118,8 @@ function buildRuntimeTree(query: string, grammar: CachedGrammar): ParserRuleCont
  */
 interface GrammarLintOutcome {
   result: LintResult;
-  tree: ParserRuleContext | undefined;
-  /**
-   * The rule-name→index resolver for the grammar the tree was parsed with.
-   * Handed to the explain range resolver so it can walk the same tree. Present
-   * whenever `tree` is.
-   */
-  ruleNameToIndex: RuleNameToIndex | undefined;
+  parse: RuntimeParseOutcome | undefined;
+  snapshot: ExplainAttributionSnapshot | undefined;
 }
 
 function canAttemptExplain(context: PPLLintContext): boolean {
@@ -126,16 +140,16 @@ function lintWithGrammar(
   context: PPLLintContext | undefined
 ): GrammarLintOutcome {
   if (!query.trim()) {
-    return { result: { diagnostics: [] }, tree: undefined, ruleNameToIndex: undefined };
+    return { result: { diagnostics: [] }, parse: undefined, snapshot: undefined };
   }
 
-  const tree = buildRuntimeTree(query, grammar);
-  if (!tree) {
-    return { result: { diagnostics: [] }, tree: undefined, ruleNameToIndex: undefined };
+  const parse = buildRuntimeTree(query, grammar);
+  if (!parse) {
+    return { result: { diagnostics: [] }, parse: undefined, snapshot: undefined };
   }
 
   const ruleNameToIndex = createRuntimeRuleNameToIndex(grammar.runtimeRuleNameToIndex);
-  const diagnostics = runLint(tree, {
+  const diagnostics = runLint(parse.tree, {
     ruleNameToIndex,
     dataSourceVersion: context?.dataSourceVersion,
     // Declare the surface so the field-slot shape pass fires here: on the
@@ -157,9 +171,33 @@ function lintWithGrammar(
   const isPipeFirst = query.trimStart().startsWith('|');
   return {
     result: { diagnostics: isPipeFirst ? remapPipeFirstColumns(diagnostics) : diagnostics },
-    tree,
-    ruleNameToIndex,
+    parse,
+    snapshot:
+      context && canAttemptExplain(context)
+        ? buildExplainAttributionSnapshot(parse.tree, ruleNameToIndex, parse.parserSource, {
+            parserPrefixLength: parse.parserPrefixLength,
+            typeMap: context.typeMap,
+          })
+        : undefined,
   };
+}
+
+function isRequestCurrent(
+  request: PPLLintBridgeRequest,
+  capturedVersion: number | undefined
+): boolean {
+  const model = request.model;
+  if (typeof model.isDisposed === 'function' && model.isDisposed()) {
+    return false;
+  }
+  if (typeof model.getValue === 'function' && model.getValue() !== request.content) {
+    return false;
+  }
+  return (
+    capturedVersion === undefined ||
+    typeof model.getVersionId !== 'function' ||
+    model.getVersionId() === capturedVersion
+  );
 }
 
 /**
@@ -170,29 +208,35 @@ function lintWithGrammar(
  * rule is enabled and applicable — so the `_explain` round-trip is skipped
  * whenever it could produce nothing.
  *
- * When a parse tree (and its rule index) is available, the explain diagnostics'
- * whole-query ranges are narrowed to the offending command via
- * `resolveExplainRanges` before merging. On the compiled-fallback path no tree
- * is threaded, so they keep their whole-query range — honest degradation.
+ * The runtime parse tree is the source authority. Ambiguous findings remain
+ * suppressed until bounded control/treatment probes identify exact candidates.
  */
 async function layerExplainLint(
   query: string,
   staticResult: LintResult,
   context: PPLLintContext,
-  tree?: ParserRuleContext,
-  ruleNameToIndex?: RuleNameToIndex
+  snapshot: ExplainAttributionSnapshot,
+  validateGeneratedQueries: (queries: string[]) => Promise<boolean[]>,
+  request: PPLLintBridgeRequest,
+  capturedVersion?: number
 ): Promise<LintResult> {
   const http = context.http;
   if (!http || !canAttemptExplain(context)) {
     return staticResult;
   }
+  const hasSupportedCandidate = snapshot.candidates.some(
+    ({ operation }) => !snapshot.unsupportedOperations.includes(operation)
+  );
+  if (!hasSupportedCandidate) {
+    return staticResult;
+  }
 
   try {
-    const plan = await explainCache.resolve(http, query, context.dataSourceId);
-    if (!plan.isCalcite) {
+    const resolution = await explainCache.resolveResult(http, query, context.dataSourceId);
+    if (resolution.status !== 'ok' || !isRequestCurrent(request, capturedVersion)) {
       return staticResult;
     }
-    let explainDiagnostics = runExplainLint(plan, {
+    const explainDiagnostics = runExplainLint(resolution.plan, {
       query,
       overrides: context.overrides,
       dataSourceVersion: context.dataSourceVersion,
@@ -201,27 +245,32 @@ async function layerExplainLint(
     if (explainDiagnostics.length === 0) {
       return staticResult;
     }
-    // Narrow the whole-query ranges to the offending command when the parse tree
-    // is in hand (the runtime-grammar path); no-op without a tree. `typeMap`
-    // (field → esType) gates the divisive quick-fix to floating-point fields.
-    if (tree && ruleNameToIndex) {
-      explainDiagnostics = resolveExplainRanges(
-        explainDiagnostics,
-        tree,
-        ruleNameToIndex,
-        context.typeMap
-      );
+
+    const attributionInputs = {
+      query,
+      snapshot,
+      typeMap: context.typeMap,
+      baselineDiagnostics: explainDiagnostics,
+      http,
+      dataSourceId: context.dataSourceId,
+      validateGeneratedQueries,
+      isCurrent: () => isRequestCurrent(request, capturedVersion),
+    };
+    const attributionState = createExplainAttributionState(attributionInputs);
+    const baselineResult = {
+      diagnostics: [...staticResult.diagnostics, ...attributionState.immediateDiagnostics],
+    };
+    request.publishResult?.(baselineResult);
+
+    if (!attributionState.needsIsolation) {
+      return baselineResult;
     }
-    // Explain diagnostics were appended after the tree pass' own pipe-first
-    // remap, so they never passed through it. Once ranges are precise this
-    // matters: a pipe-first query would shift squiggles by the synthetic
-    // `source=t ` prefix. Remap them here (harmless for a still-whole-query
-    // range, which starts at column 0).
-    const isPipeFirst = query.trimStart().startsWith('|');
-    if (isPipeFirst) {
-      explainDiagnostics = remapPipeFirstColumns(explainDiagnostics);
+
+    if (!isRequestCurrent(request, capturedVersion)) {
+      return baselineResult;
     }
-    return { diagnostics: [...staticResult.diagnostics, ...explainDiagnostics] };
+    const isolated = await runExplainIsolation(attributionInputs, attributionState);
+    return { diagnostics: [...staticResult.diagnostics, ...isolated] };
   } catch (e) {
     // Keep the static markers only — explain rules are an enhancement. No live
     // throw path reaches here today (explainCache.resolve and runExplainLint are
@@ -233,9 +282,16 @@ async function layerExplainLint(
 }
 
 async function lintCompiledFallbackWithExplain(
-  request: PPLLintBridgeRequest
+  request: PPLLintBridgeRequest,
+  capturedVersion?: number
 ): Promise<LintResult | null> {
-  const { content, context, compiledFallbackLint, compiledFallbackValidate } = request;
+  const {
+    content,
+    context,
+    compiledFallbackLint,
+    compiledFallbackAnalyze,
+    compiledFallbackValidateProbes,
+  } = request;
   if (!content.trim()) {
     return { diagnostics: [] };
   }
@@ -243,55 +299,98 @@ async function lintCompiledFallbackWithExplain(
     return null;
   }
 
-  const staticResult = await compiledFallbackLint(content);
-  if (!compiledFallbackValidate || !canAttemptExplain(context)) {
+  if (!compiledFallbackAnalyze || !canAttemptExplain(context)) {
+    const staticResult = await compiledFallbackLint(content);
+    request.publishResult?.(staticResult);
     return staticResult;
   }
 
+  let analysis;
   try {
-    const validation = await compiledFallbackValidate(content);
-    if (!validation.isValid) {
-      return staticResult;
-    }
+    analysis = await compiledFallbackAnalyze(content);
   } catch {
+    const staticResult = await compiledFallbackLint(content);
+    request.publishResult?.(staticResult);
     return staticResult;
   }
+  const staticResult = analysis.result;
+  request.publishResult?.(staticResult);
+  if (!isRequestCurrent(request, capturedVersion)) {
+    return staticResult;
+  }
+  const snapshot = validateExplainAttributionSnapshot(analysis.attribution, content);
+  if (!snapshot) {
+    return staticResult;
+  }
+  return layerExplainLint(
+    content,
+    staticResult,
+    context,
+    snapshot,
+    compiledFallbackValidateProbes ??
+      (async () => {
+        throw new Error('compiled probe validation unavailable');
+      }),
+    request,
+    capturedVersion
+  );
+}
 
-  return layerExplainLint(content, staticResult, context);
+async function lintCompiledStaticOnly(request: PPLLintBridgeRequest): Promise<LintResult | null> {
+  const { content, context, compiledFallbackLint } = request;
+  if (!content.trim()) {
+    return { diagnostics: [] };
+  }
+  if (!context || !compiledFallbackLint) {
+    return null;
+  }
+  const result = await compiledFallbackLint(content);
+  request.publishResult?.(result);
+  return result;
 }
 
 /**
  * Main-thread lint bridge. Uses the runtime grammar when available; otherwise
- * delegates to the compiled worker fallback callbacks and, when the compiled
- * query validates cleanly, layers explain-backed rules on top. Returns null only
- * when it has no context/fallback it can use, allowing `resolvePPLLintResult`
- * to run the normal compiled fallback itself.
+ * delegates to the compiled worker fallback callbacks. Returns null only when
+ * it has no context/fallback it can use, allowing `resolvePPLLintResult` to run
+ * the normal compiled fallback itself.
  */
 export async function lintRuntimePPLQuery(
   request: PPLLintBridgeRequest
 ): Promise<LintResult | null> {
   const { content, context } = request;
+  const capturedVersion =
+    typeof request.model.getVersionId === 'function' ? request.model.getVersionId() : undefined;
   if (!context) {
     return null;
   }
 
   if (!context.useRuntimeGrammar) {
-    return lintCompiledFallbackWithExplain(request);
+    return lintCompiledFallbackWithExplain(request, capturedVersion);
   }
 
   const grammar = pplGrammarCache.getCachedGrammar(context.dataSourceId);
   if (!grammar) {
-    return lintCompiledFallbackWithExplain(request);
+    return lintCompiledStaticOnly(request);
   }
 
-  const { result, tree, ruleNameToIndex } = lintWithGrammar(content, grammar, context);
+  const { result, parse, snapshot } = lintWithGrammar(content, grammar, context);
+  request.publishResult?.(result);
 
   // The tree's presence is the clean-parse guard: skip explain on empty or
   // unparseable input so a half-typed query never triggers a round-trip. The
   // tree + rule index also let the explain layer narrow whole-query ranges to
   // the offending command.
-  if (tree) {
-    return layerExplainLint(content, result, context, tree, ruleNameToIndex);
+  if (parse && snapshot) {
+    return layerExplainLint(
+      content,
+      result,
+      context,
+      snapshot,
+      async (queries) => queries.map((query) => !!buildRuntimeTree(query, grammar)),
+      request,
+      capturedVersion
+    );
   }
   return result;
 }

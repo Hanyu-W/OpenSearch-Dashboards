@@ -10,14 +10,18 @@ import type { LintResult } from './lint/diagnostic';
 // hoisted jest.mock factories below.
 const mockLintFallback = jest.fn();
 const mockValidateFallback = jest.fn();
-const mockResolvePPLLintResult = jest.fn(
-  (
-    _model: unknown,
-    content: string,
-    fallback: (q: string) => Promise<LintResult>,
-    _validateFallback?: (q: string) => Promise<unknown>
-  ) => fallback(content)
-);
+const mockAnalyzeFallback = jest.fn();
+const mockValidateQueriesFallback = jest.fn();
+const defaultResolvePPLLintResult = (
+  _model: unknown,
+  content: string,
+  fallback: (q: string) => Promise<LintResult>,
+  _validateFallback?: (q: string) => Promise<unknown>,
+  _publishResult?: (result: LintResult) => void,
+  _analyzeFallback?: (q: string) => Promise<unknown>,
+  _validateQueriesFallback?: (queries: string[]) => Promise<boolean[]>
+) => fallback(content);
+const mockResolvePPLLintResult = jest.fn(defaultResolvePPLLintResult);
 const mockSetModelMarkers = jest.fn();
 let mockLintContext: any;
 let mockValidationResult: any;
@@ -61,8 +65,20 @@ jest.mock('./lint_bridge', () => ({
     model: unknown,
     content: string,
     fallback: (q: string) => Promise<LintResult>,
-    validateFallback?: (q: string) => Promise<unknown>
-  ) => mockResolvePPLLintResult(model, content, fallback, validateFallback),
+    validateFallback?: (q: string) => Promise<unknown>,
+    publishResult?: (result: LintResult) => void,
+    analyzeFallback?: (q: string) => Promise<unknown>,
+    validateQueriesFallback?: (queries: string[]) => Promise<boolean[]>
+  ) =>
+    mockResolvePPLLintResult(
+      model,
+      content,
+      fallback,
+      validateFallback,
+      publishResult,
+      analyzeFallback,
+      validateQueriesFallback
+    ),
 }));
 
 // The worker proxy is set up and its lint/validate methods are exposed through
@@ -72,6 +88,9 @@ jest.mock('./worker_proxy_service', () => ({
     setup = jest.fn();
     lint = (...args: unknown[]) => mockLintFallback(...args);
     validate = (...args: unknown[]) => mockValidateFallback(...args);
+    analyzeLint = (...args: unknown[]) => mockAnalyzeFallback(...args);
+    validateLintQueries = (...args: unknown[]) => mockValidateQueriesFallback(...args);
+    stop = jest.fn();
   },
 }));
 
@@ -148,7 +167,10 @@ describe('processLintHighlighting — generation guard (stale-response drop)', (
     mockSetModelMarkers.mockClear();
     mockLintFallback.mockReset();
     mockValidateFallback.mockReset();
-    mockResolvePPLLintResult.mockClear();
+    mockAnalyzeFallback.mockReset();
+    mockValidateQueriesFallback.mockReset();
+    mockResolvePPLLintResult.mockReset();
+    mockResolvePPLLintResult.mockImplementation(defaultResolvePPLLintResult);
     mockLintContext = undefined;
     mockValidationResult = { isValid: true, errors: [] };
   });
@@ -211,6 +233,9 @@ describe('processLintHighlighting — generation guard (stale-response drop)', (
       model,
       'source=logs | head 5',
       expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
       expect.any(Function)
     );
 
@@ -222,6 +247,45 @@ describe('processLintHighlighting — generation guard (stale-response drop)', (
       errors: [],
     });
     expect(mockValidateFallback).toHaveBeenCalledWith('source=logs');
+
+    mockAnalyzeFallback.mockResolvedValueOnce({ result: { diagnostics: [] } });
+    const analyzeFallback = mockResolvePPLLintResult.mock.calls[0][5] as (
+      query: string
+    ) => Promise<unknown>;
+    await expect(analyzeFallback('source=logs')).resolves.toEqual({
+      result: { diagnostics: [] },
+    });
+
+    mockValidateQueriesFallback.mockResolvedValueOnce([true, false]);
+    const validateQueriesFallback = mockResolvePPLLintResult.mock.calls[0][6] as (
+      queries: string[]
+    ) => Promise<boolean[]>;
+    await expect(validateQueriesFallback(['source=logs', '| where'])).resolves.toEqual([
+      true,
+      false,
+    ]);
+  });
+
+  it('applies guarded phased results before the bridge promise completes', async () => {
+    const model = makeModel('m-phased');
+    mockResolvePPLLintResult.mockImplementationOnce(
+      async (
+        _model,
+        _content,
+        _fallback,
+        _validate,
+        publishResult?: (value: LintResult) => void
+      ) => {
+        publishResult?.(result('static'));
+        await Promise.resolve();
+        return result('isolated');
+      }
+    );
+
+    await revalidatePPLModel(model);
+    await flush();
+
+    expect(lintMarkerCalls().map((call) => call[2][0].code)).toEqual(['static', 'isolated']);
   });
 
   it('keeps generations independent per model', async () => {

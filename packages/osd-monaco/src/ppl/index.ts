@@ -21,6 +21,17 @@ export type {
   PPLValidationProviderRequest,
 } from './validation_provider';
 export type { PPLValidationResult } from './ppl_language_analyzer';
+export { analyzeCompiledPPLLint, validateCompiledPPLLintQueries } from './compiled_worker_api';
+export {
+  EXPLAIN_ATTRIBUTION_SNAPSHOT_VERSION,
+  validateExplainAttributionSnapshot,
+} from './lint/explain/attribution/snapshot';
+export type {
+  CompiledPPLLintAnalysis,
+  ExplainAttributionCandidateSnapshot,
+  ExplainAttributionSnapshot,
+  ExplainProbeKind,
+} from './lint/explain/attribution/snapshot';
 
 export {
   clearPPLLintContext,

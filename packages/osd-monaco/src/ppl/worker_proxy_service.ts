@@ -6,6 +6,7 @@
 import { PPLValidationResult, PPLToken } from './ppl_language_analyzer';
 import { LintResult } from './lint/diagnostic';
 import { WorkerLintContextPayload } from './lint/types';
+import { CompiledPPLLintAnalysis } from './lint/explain/attribution/snapshot';
 import { getWorker } from '../monaco_environment';
 import { WorkerLabels } from '../worker_config';
 
@@ -85,6 +86,23 @@ export class PPLWorkerProxyService {
     }
 
     return this.sendMessage('lint', [content, context]);
+  }
+
+  public async analyzeLint(
+    content: string,
+    context?: WorkerLintContextPayload
+  ): Promise<CompiledPPLLintAnalysis> {
+    if (!this.worker) {
+      throw new Error('PPL Worker Proxy Service has not been setup!');
+    }
+    return this.sendMessage('analyzeLint', [content, context]);
+  }
+
+  public async validateLintQueries(queries: string[]): Promise<boolean[]> {
+    if (!this.worker) {
+      throw new Error('PPL Worker Proxy Service has not been setup!');
+    }
+    return this.sendMessage('validateLintQueries', [queries]);
   }
 
   /**

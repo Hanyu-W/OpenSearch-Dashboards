@@ -13,6 +13,7 @@ import {
 import { LintResult } from '../lint/diagnostic';
 import { WorkerLintContextPayload } from '../lint/types';
 import { hydrateWorkerLintContext } from '../lint/worker_context';
+import { CompiledPPLLintAnalysis } from '../lint/explain/attribution/snapshot';
 
 // Simple worker implementation that doesn't depend on Monaco's internal modules
 class PPLWorkerImpl {
@@ -38,6 +39,23 @@ class PPLWorkerImpl {
     }
     return this.analyzer.lint(content, hydrateWorkerLintContext(context));
   }
+
+  async analyzeLint(
+    content: string,
+    context?: WorkerLintContextPayload
+  ): Promise<CompiledPPLLintAnalysis> {
+    if (!this.analyzer) {
+      this.analyzer = getPPLLanguageAnalyzer();
+    }
+    return this.analyzer.analyzeLint(content, hydrateWorkerLintContext(context));
+  }
+
+  async validateLintQueries(queries: string[]): Promise<boolean[]> {
+    if (!this.analyzer) {
+      this.analyzer = getPPLLanguageAnalyzer();
+    }
+    return this.analyzer.validateLintQueries(queries);
+  }
 }
 
 // Initialize worker
@@ -58,6 +76,12 @@ self.onmessage = async (e: MessageEvent) => {
         break;
       case 'lint':
         result = await worker.lint(args[0], args[1]);
+        break;
+      case 'analyzeLint':
+        result = await worker.analyzeLint(args[0], args[1]);
+        break;
+      case 'validateLintQueries':
+        result = await worker.validateLintQueries(args[0]);
         break;
       default:
         throw new Error(`Unknown method: ${method}`);

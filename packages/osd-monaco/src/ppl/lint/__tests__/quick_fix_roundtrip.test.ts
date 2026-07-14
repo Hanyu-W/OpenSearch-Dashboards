@@ -60,7 +60,7 @@ function stripLikeMonaco(marker: monaco.editor.IMarkerData): monaco.editor.IMark
 // Mirror the extract-into-registry step performed in language.ts before
 // setModelMarkers, returning the markers as Monaco would store them.
 function publishMarkers(diagnostics: Diagnostic[]): monaco.editor.IMarkerData[] {
-  const markers = diagnostics.map(diagnosticToMarker);
+  const markers = diagnostics.map((diagnostic) => diagnosticToMarker(diagnostic));
   const fixes = new Map<string, MarkerFix>();
   for (const marker of markers) {
     const withFix = marker as monaco.editor.IMarkerData & { fix?: MarkerFix };

@@ -669,6 +669,7 @@ export {
 export { calciteSettingsCache, CalciteSettings } from './ppl_lint/calcite_settings';
 export { buildOverridesFromSettings } from './ppl_lint/lint_overrides';
 export { fetchVisibleIndices } from './ppl_lint/visible_indices';
+export { verifyPerformanceFixOutcome } from './ppl_lint/verify_performance_fix_outcome';
 export {
   pplGrammarCache,
   shouldUseRuntimeGrammar,

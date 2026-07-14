@@ -140,6 +140,18 @@ describe('runExplainLint', () => {
     expect(diags).toEqual([]);
   });
 
+  it.each([undefined, '', 'not-a-version'])(
+    'skips explain rules when the data-source version is %p',
+    (dataSourceVersion) => {
+      const diags = runExplainLint(toPlan(filterScript), {
+        ...BASE,
+        catalog: CATALOG,
+        dataSourceVersion,
+      });
+      expect(diags).toEqual([]);
+    }
+  );
+
   it('isolates a throwing rule without dropping the rest', () => {
     registerExplainDetector('operation-pushed-as-script', () => {
       throw new Error('boom');
@@ -169,6 +181,13 @@ describe('hasExplainRules', () => {
       hasExplainRules({ catalog: CATALOG, isCalcite: false, dataSourceVersion: '3.7.0' })
     ).toBe(false);
   });
+
+  it.each([undefined, '', 'not-a-version'])(
+    'is false when the data-source version is %p',
+    (dataSourceVersion) => {
+      expect(hasExplainRules({ catalog: CATALOG, isCalcite: true, dataSourceVersion })).toBe(false);
+    }
+  );
 
   it('is false when overrides disable all explain rules', () => {
     expect(

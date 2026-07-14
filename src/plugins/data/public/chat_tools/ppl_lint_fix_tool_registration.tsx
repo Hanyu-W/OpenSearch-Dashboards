@@ -27,6 +27,7 @@ import {
   subscribePPLLintFixOutcome,
   PPL_LINT_FIX_DATA_TOOL_NAME,
 } from './ppl_lint_fix_session';
+import { verifyPerformanceFixOutcome } from '../ppl_lint/verify_performance_fix_outcome';
 
 export interface PPLLintFixToolArgs {
   requestId: string;
@@ -46,6 +47,7 @@ interface PPLLintFixToolResult {
 interface PPLLintFixToolRegistrationProps {
   queryString: QueryStringContract;
   useAssistantAction?: ContextProviderStart['hooks']['useAssistantAction'];
+  enabled?: boolean;
 }
 
 const noopUseAssistantAction: ContextProviderStart['hooks']['useAssistantAction'] = () => {};
@@ -67,14 +69,18 @@ const failure = (
   };
 };
 
+const PERFORMANCE_RULE_IDS = new Set(['operation-not-pushed', 'operation-pushed-as-script']);
+
 export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProps> = ({
   queryString,
   useAssistantAction,
+  enabled = true,
 }) => {
   const useAssistantActionHook = useAssistantAction || noopUseAssistantAction;
 
   useAssistantActionHook<PPLLintFixToolArgs>({
     name: PPL_LINT_FIX_DATA_TOOL_NAME,
+    enabled,
     description:
       'Proposes a corrected OpenSearch PPL query for the active data editor lint-fix request. ' +
       'This tool does not execute the query; the UI asks the user to approve before the editor ' +
@@ -89,7 +95,7 @@ export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProp
         },
         explanation: {
           type: 'string',
-          description: 'A short explanation of the correction.',
+          description: 'One short plain-language sentence that says what changed and why it helps.',
         },
       },
       required: ['fixedQuery'],
@@ -124,11 +130,12 @@ export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProp
       }
 
       const fixedQuery = args.fixedQuery.trim();
+      const lintContext = session.request.lintContext ?? session.getLintContext();
       const validation = validatePPLLintFixCandidate({
         originalQuery: session.request.query,
         fixedQuery,
         ruleId: session.request.diagnostic.ruleId,
-        lintContext: session.request.lintContext ?? session.getLintContext(),
+        lintContext,
       });
 
       if (!validation.accepted) {
@@ -136,6 +143,31 @@ export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProp
           'invalid-candidate',
           `The proposed query did not pass PPL lint validation: ${validation.reason || 'unknown'}.`,
           { validationReason: validation.reason }
+        );
+      }
+
+      const performanceOutcomeCleared = await verifyPerformanceFixOutcome(
+        session.request.query,
+        fixedQuery,
+        session.request.diagnostic,
+        session.getLintContext(),
+        () =>
+          getPPLLintFixSession() === session &&
+          (session.getCurrentQuery() ?? '') === session.request.query
+      );
+      if (
+        getPPLLintFixSession() !== session ||
+        (session.getCurrentQuery() ?? '') !== session.request.query
+      ) {
+        return failure(
+          'stale-query',
+          'The editor changed while this PPL lint fix was being validated.'
+        );
+      }
+      if (!performanceOutcomeCleared) {
+        return failure(
+          'invalid-candidate',
+          'The proposed query did not clear the attributed performance outcome.'
         );
       }
 
@@ -191,6 +223,11 @@ const PPLLintFixToolRenderer: React.FC<RenderProps<PPLLintFixToolArgs>> = ({
   const failed = outcome?.kind === 'failed' || (!outcome && status === 'failed');
   const terminal = applied || dismissed || failed;
   const showActions = !terminal && (status === 'pending' || status === 'executing') && !!args;
+  const diagnostic = session?.request.diagnostic;
+  const explanation =
+    (diagnostic?.ruleId && PERFORMANCE_RULE_IDS.has(diagnostic.ruleId)
+      ? diagnostic.message
+      : args?.explanation) || diagnostic?.message;
   const appliedMessage =
     result?.message ||
     i18n.translate('data.pplLint.fixTool.appliedMessage', {
@@ -216,24 +253,15 @@ const PPLLintFixToolRenderer: React.FC<RenderProps<PPLLintFixToolArgs>> = ({
       <EuiText size="s">
         <strong>
           {i18n.translate('data.pplLint.fixTool.title', {
-            defaultMessage: 'PPL lint fix',
+            defaultMessage: 'Apply suggested fix',
           })}
         </strong>
       </EuiText>
 
-      {session?.request.diagnostic.message && (
+      {explanation && (
         <>
           <EuiSpacer size="xs" />
-          <EuiText size="xs" color="subdued">
-            {session.request.diagnostic.message}
-          </EuiText>
-        </>
-      )}
-
-      {args?.explanation && (
-        <>
-          <EuiSpacer size="xs" />
-          <EuiText size="s">{args.explanation}</EuiText>
+          <EuiText size="s">{explanation}</EuiText>
         </>
       )}
 

@@ -14,6 +14,7 @@ import { monaco } from '../../monaco';
 export interface MarkerFix {
   title: string;
   text: string;
+  expectedText?: string;
   range?: {
     startLineNumber: number;
     startColumn: number;

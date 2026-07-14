@@ -14,6 +14,9 @@ import { runLint } from './lint/lint_runner';
 import { createCompiledRuleNameToIndex } from './lint/rule_index';
 import { PIPE_FIRST_PREFIX, remapPipeFirstColumns } from './lint/range_utils';
 import { LintRunContext } from './lint/types';
+import { hasExplainRules } from './lint/explain/run_explain_lint';
+import { buildExplainAttributionSnapshot } from './lint/explain/attribution/candidates';
+import { CompiledPPLLintAnalysis } from './lint/explain/attribution/snapshot';
 
 export interface PPLToken {
   type: string;
@@ -62,7 +65,8 @@ export class PPLLanguageAnalyzer {
    * Creates and configures ANTLR parser with error listeners
    */
   private createParserWithErrorHandling(
-    tokenStream: antlr.CommonTokenStream
+    tokenStream: antlr.CommonTokenStream,
+    lexer?: OpenSearchPPLLexer
   ): {
     parser: OpenSearchPPLParser;
     lexerErrorListener: PPLSyntaxErrorListener;
@@ -74,6 +78,10 @@ export class PPLLanguageAnalyzer {
     const lexerErrorListener = new PPLSyntaxErrorListener();
     const parserErrorListener = new PPLSyntaxErrorListener();
 
+    if (lexer) {
+      lexer.removeErrorListeners();
+      lexer.addErrorListener(lexerErrorListener);
+    }
     parser.removeErrorListeners();
     parser.addErrorListener(parserErrorListener);
 
@@ -119,12 +127,11 @@ export class PPLLanguageAnalyzer {
     try {
       const { lexer, tokenStream } = this.createLexerAndTokenStream(code);
 
-      // Add error listener to lexer
-      const lexerErrorListener = new PPLSyntaxErrorListener();
-      lexer.removeErrorListeners();
-      lexer.addErrorListener(lexerErrorListener);
-
-      const { parser, parserErrorListener } = this.createParserWithErrorHandling(tokenStream);
+      const {
+        parser,
+        lexerErrorListener,
+        parserErrorListener,
+      } = this.createParserWithErrorHandling(tokenStream, lexer);
 
       parser.root();
 
@@ -169,33 +176,93 @@ export class PPLLanguageAnalyzer {
    * Any hard throw degrades to an empty diagnostic set (R11.3).
    */
   lint(code: string, context?: LintRunContext): LintResult {
+    return this.analyzeLint(code, context).result;
+  }
+
+  /**
+   * Parse once for static lint and, on a clean applicable query, serialize the
+   * parser-owned source candidates needed for Explain attribution.
+   */
+  analyzeLint(code: string, context?: LintRunContext): CompiledPPLLintAnalysis {
     try {
       const trimmed = code.trimStart();
       const isPipeFirst = trimmed.startsWith('|');
       const effectiveCode = isPipeFirst ? PIPE_FIRST_PREFIX + code : code;
 
-      const { tokenStream } = this.createLexerAndTokenStream(effectiveCode);
-      const { parser } = this.createParserWithErrorHandling(tokenStream);
+      const { lexer, tokenStream } = this.createLexerAndTokenStream(effectiveCode);
+      const {
+        parser,
+        lexerErrorListener,
+        parserErrorListener,
+      } = this.createParserWithErrorHandling(tokenStream, lexer);
+      const ruleNameToIndex = createCompiledRuleNameToIndex();
 
       // The standard generated parser builds parse trees by default.
       const tree = parser.root();
 
       const diagnostics = runLint(tree, {
-        ruleNameToIndex: createCompiledRuleNameToIndex(),
+        ruleNameToIndex,
         dataSourceVersion: context?.dataSourceVersion,
         // Declare the surface and source text so narrow compiled-grammar text
         // detectors can complement the parse-tree rules.
         context: { ...context, sourceText: effectiveCode, grammarSurface: 'compiled-simplified' },
       });
 
-      if (isPipeFirst) {
-        return { diagnostics: remapPipeFirstColumns(diagnostics) };
+      const result = {
+        diagnostics: isPipeFirst ? remapPipeFirstColumns(diagnostics) : diagnostics,
+      };
+      if (
+        !code.trim() ||
+        lexerErrorListener.errors.length > 0 ||
+        parserErrorListener.errors.length > 0 ||
+        !hasExplainRules({
+          overrides: context?.overrides,
+          dataSourceVersion: context?.dataSourceVersion,
+          isCalcite: context?.isCalcite,
+        })
+      ) {
+        return { result };
       }
 
-      return { diagnostics };
+      return {
+        result,
+        attribution: buildExplainAttributionSnapshot(tree, ruleNameToIndex, effectiveCode, {
+          parserPrefixLength: isPipeFirst ? PIPE_FIRST_PREFIX.length : 0,
+          typeMap: context?.typeMap,
+        }),
+      };
     } catch {
-      return { diagnostics: [] };
+      return { result: { diagnostics: [] } };
     }
+  }
+
+  /**
+   * Validate generated lint probes in one worker round trip. Every query uses
+   * the same pipe-first preprocessing as lint attribution.
+   */
+  validateLintQueries(queries: string[]): boolean[] {
+    if (!Array.isArray(queries) || queries.some((query) => typeof query !== 'string')) {
+      throw new TypeError('validateLintQueries expects an array of strings');
+    }
+    return queries.map((query) => {
+      if (!query.trim()) {
+        return false;
+      }
+      try {
+        const isPipeFirst = query.trimStart().startsWith('|');
+        const effectiveCode = isPipeFirst ? PIPE_FIRST_PREFIX + query : query;
+        const { lexer, tokenStream } = this.createLexerAndTokenStream(effectiveCode);
+        const {
+          parser,
+          lexerErrorListener,
+          parserErrorListener,
+        } = this.createParserWithErrorHandling(tokenStream, lexer);
+        parser.root();
+        return lexerErrorListener.errors.length === 0 && parserErrorListener.errors.length === 0;
+      } catch {
+        return false;
+      }
+    });
   }
 
   /**

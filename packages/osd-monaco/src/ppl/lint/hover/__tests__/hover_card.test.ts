@@ -35,7 +35,7 @@ describe('renderHoverCard', () => {
       ruleId: 'operation-not-pushed',
       severityLabel: 'Warning',
       message:
-        "This filter can't use the index, so OpenSearch scans every matching row to apply it — slow on large indexes.",
+        'This filter may be slow because it does extra work. Use a simpler filter when possible.',
       docUrl: 'https://docs.opensearch.org/latest/sql-and-ppl/limitation/',
       content: getRuleHoverContent('operation-not-pushed'),
       facts: { operation: 'filter', field: 'balance' },
@@ -54,7 +54,7 @@ describe('renderHoverCard', () => {
       ruleId: 'operation-pushed-as-script',
       severityLabel: 'Info',
       message:
-        'This filter runs a script on every document instead of using the index directly — much slower than a plain comparison.',
+        'This filter may be slow because it does extra calculations. Compare the field directly instead.',
       content: getRuleHoverContent('operation-pushed-as-script'),
       facts: { operation: 'filter' },
     });

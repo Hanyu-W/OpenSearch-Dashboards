@@ -170,6 +170,34 @@ describe('PPLWorkerProxyService', () => {
     });
   });
 
+  describe('compiled lint attribution RPCs', () => {
+    it('forwards analyzeLint with its context payload', async () => {
+      service.setup();
+      const context = { dataSourceVersion: '3.5.0', isCalcite: true };
+      const promise = service.analyzeLint('source=logs | where bytes > 1', context);
+      const message = mockWorker.postMessage.mock.calls[0][0];
+
+      expect(message.method).toBe('analyzeLint');
+      expect(message.args).toEqual(['source=logs | where bytes > 1', context]);
+      mockWorker.onmessage({
+        data: { id: message.id, result: { result: { diagnostics: [] } } },
+      });
+      await expect(promise).resolves.toEqual({ result: { diagnostics: [] } });
+    });
+
+    it('forwards a validation batch without coercing it', async () => {
+      service.setup();
+      const queries = ['source=logs', '| head 1'];
+      const promise = service.validateLintQueries(queries);
+      const message = mockWorker.postMessage.mock.calls[0][0];
+
+      expect(message.method).toBe('validateLintQueries');
+      expect(message.args).toEqual([queries]);
+      mockWorker.onmessage({ data: { id: message.id, result: [true, true] } });
+      await expect(promise).resolves.toEqual([true, true]);
+    });
+  });
+
   describe('stop', () => {
     it('should clean up worker resources', async () => {
       service.setup();

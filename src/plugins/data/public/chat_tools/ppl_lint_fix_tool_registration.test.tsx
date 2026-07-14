@@ -5,7 +5,9 @@
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import * as osdMonaco from '@osd/monaco';
-import React from 'react';
+import { hasExplainOutcome } from '@osd/monaco/target/ppl/lint/explain/explain_outcomes';
+import { explainCache } from '../ppl_lint/explain_cache';
+import { buildPerformanceFixProbeQueries } from '../ppl_lint/performance_fix_revalidation';
 import { PPLLintFixToolRegistration } from './ppl_lint_fix_tool_registration';
 import {
   clearPPLLintFixSession,
@@ -17,8 +19,22 @@ import {
 jest.mock('@osd/monaco', () => ({
   validatePPLLintFixCandidate: jest.fn(),
 }));
+jest.mock('@osd/monaco/target/ppl/lint/explain/explain_outcomes', () => ({
+  hasExplainOutcome: jest.fn(),
+}));
+jest.mock('../ppl_lint/explain_cache', () => ({
+  explainCache: {
+    resolveResult: jest.fn(),
+  },
+}));
+jest.mock('../ppl_lint/performance_fix_revalidation', () => ({
+  buildPerformanceFixProbeQueries: jest.fn(),
+}));
 
 const mockValidate = (osdMonaco as any).validatePPLLintFixCandidate as jest.Mock;
+const mockHasExplainOutcome = hasExplainOutcome as jest.Mock;
+const mockResolveExplain = explainCache.resolveResult as jest.Mock;
+const mockBuildPerformanceProbes = buildPerformanceFixProbeQueries as jest.Mock;
 
 describe('PPLLintFixToolRegistration', () => {
   const queryState = {
@@ -41,11 +57,12 @@ describe('PPLLintFixToolRegistration', () => {
   let queryString: { getQuery: jest.Mock; setQuery: jest.Mock };
   let mockUseAssistantAction: jest.Mock;
 
-  const renderRegistration = () => {
+  const renderRegistration = (enabled = true) => {
     render(
       <PPLLintFixToolRegistration
         queryString={queryString as any}
         useAssistantAction={mockUseAssistantAction as any}
+        enabled={enabled}
       />
     );
     return mockUseAssistantAction.mock.calls[0][0];
@@ -68,6 +85,13 @@ describe('PPLLintFixToolRegistration', () => {
     };
     mockUseAssistantAction = jest.fn();
     mockValidate.mockReset();
+    mockHasExplainOutcome.mockReset();
+    mockResolveExplain.mockReset();
+    mockBuildPerformanceProbes.mockReset();
+    mockBuildPerformanceProbes.mockReturnValue({
+      originalTreatment: 'source=logs | where status = 500',
+      fixedTreatment: 'source=logs | where status = 200',
+    });
     clearPPLLintFixSession();
   });
 
@@ -93,6 +117,13 @@ describe('PPLLintFixToolRegistration', () => {
       })
     );
     expect(config.name).toBe('apply_ppl_lint_fix_data');
+    expect(config.enabled).toBe(true);
+  });
+
+  it('disables the data-host tool when its query editor is hidden', () => {
+    const config = renderRegistration(false);
+
+    expect(config.enabled).toBe(false);
   });
 
   it('rejects a missing active request', async () => {
@@ -206,6 +237,210 @@ describe('PPLLintFixToolRegistration', () => {
     );
   });
 
+  it('applies a performance fix only after the attributed outcome clears', async () => {
+    const http = {};
+    const originalPlan = { id: 'original' };
+    const fixedPlan = { id: 'fixed' };
+    storeSession({
+      request: {
+        ...request,
+        diagnostic: {
+          message: 'Filter runs as a script',
+          ruleId: 'operation-pushed-as-script',
+          operation: 'filter',
+          outcome: 'filter:script',
+          targetText: 'status = 500',
+          targetRange: { startOffset: 20, endOffset: 32 },
+        },
+      } as any,
+      getLintContext: jest.fn(
+        () => ({ http, dataSourceId: 'ds-live', fields: new Set(['status']) } as any)
+      ),
+    });
+    mockValidate.mockReturnValue({ accepted: true });
+    mockResolveExplain
+      .mockResolvedValueOnce({ status: 'ok', plan: originalPlan })
+      .mockResolvedValueOnce({ status: 'ok', plan: fixedPlan });
+    mockHasExplainOutcome.mockImplementation((plan) => plan === originalPlan);
+    const config = renderRegistration();
+
+    const result = await config.handler({
+      fixedQuery: 'source=logs | where status = 200',
+    });
+
+    expect(mockResolveExplain).toHaveBeenNthCalledWith(
+      1,
+      http,
+      'source=logs | where status = 500',
+      'ds-live',
+      { partition: 'probe' }
+    );
+    expect(mockResolveExplain).toHaveBeenNthCalledWith(
+      2,
+      http,
+      'source=logs | where status = 200',
+      'ds-live',
+      { partition: 'probe' }
+    );
+    expect(result).toEqual(expect.objectContaining({ success: true }));
+    expect(queryString.setQuery).toHaveBeenCalled();
+  });
+
+  it('rejects a performance fix when the attributed outcome is unchanged', async () => {
+    const originalPlan = { id: 'original' };
+    const fixedPlan = { id: 'fixed' };
+    storeSession({
+      request: {
+        ...request,
+        diagnostic: {
+          message: 'Filter runs as a script',
+          ruleId: 'operation-pushed-as-script',
+          operation: 'filter',
+          outcome: 'filter:script',
+          targetText: 'status = 500',
+          targetRange: { startOffset: 20, endOffset: 32 },
+        },
+      } as any,
+      getLintContext: jest.fn(() => ({ http: {}, dataSourceId: 'ds-live' } as any)),
+    });
+    mockValidate.mockReturnValue({ accepted: true });
+    mockResolveExplain
+      .mockResolvedValueOnce({ status: 'ok', plan: originalPlan })
+      .mockResolvedValueOnce({ status: 'ok', plan: fixedPlan });
+    mockHasExplainOutcome.mockReturnValue(true);
+    const config = renderRegistration();
+
+    const result = await config.handler({
+      fixedQuery: 'source=logs | where status = 200',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        reason: 'invalid-candidate',
+      })
+    );
+    expect(queryString.setQuery).not.toHaveBeenCalled();
+  });
+
+  it('rejects a performance fix when explain revalidation fails', async () => {
+    storeSession({
+      request: {
+        ...request,
+        diagnostic: {
+          message: 'Filter runs as a script',
+          ruleId: 'operation-pushed-as-script',
+          operation: 'filter',
+          outcome: 'filter:script',
+          targetText: 'status = 500',
+          targetRange: { startOffset: 20, endOffset: 32 },
+        },
+      } as any,
+      getLintContext: jest.fn(() => ({ http: {}, dataSourceId: 'ds-live' } as any)),
+    });
+    mockValidate.mockReturnValue({ accepted: true });
+    mockResolveExplain
+      .mockResolvedValueOnce({ status: 'ok', plan: { id: 'original' } })
+      .mockResolvedValueOnce({ status: 'error' });
+    const config = renderRegistration();
+
+    const result = await config.handler({
+      fixedQuery: 'source=logs | where status = 200',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        reason: 'invalid-candidate',
+      })
+    );
+    expect(queryString.setQuery).not.toHaveBeenCalled();
+  });
+
+  it('rejects a performance fix when the editor changes during worker validation', async () => {
+    let currentQuery = request.query;
+    let resolveProbes!: (value: { originalTreatment: string; fixedTreatment: string }) => void;
+    mockBuildPerformanceProbes.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveProbes = resolve;
+      })
+    );
+    storeSession({
+      request: {
+        ...request,
+        diagnostic: {
+          message: 'Filter runs as a script',
+          ruleId: 'operation-pushed-as-script',
+          operation: 'filter',
+          outcome: 'filter:script',
+          targetText: 'status = 500',
+          targetRange: { startOffset: 20, endOffset: 32 },
+        },
+      } as any,
+      getCurrentQuery: jest.fn(() => currentQuery),
+      getLintContext: jest.fn(() => ({ http: {}, dataSourceId: 'ds-live' } as any)),
+    });
+    mockValidate.mockReturnValue({ accepted: true });
+    const config = renderRegistration();
+
+    const resultPromise = config.handler({
+      fixedQuery: 'source=logs | where status = 200',
+    });
+    currentQuery = 'source=logs | head 10';
+    resolveProbes({
+      originalTreatment: 'source=logs | where status = 500',
+      fixedTreatment: 'source=logs | where status = 200',
+    });
+
+    await expect(resultPromise).resolves.toEqual(
+      expect.objectContaining({ success: false, reason: 'stale-query' })
+    );
+    expect(mockResolveExplain).not.toHaveBeenCalled();
+    expect(queryString.setQuery).not.toHaveBeenCalled();
+  });
+
+  it('rejects a performance fix when the editor changes during explain revalidation', async () => {
+    let currentQuery = request.query;
+    const originalPlan = { id: 'original' };
+    const fixedPlan = { id: 'fixed' };
+    storeSession({
+      request: {
+        ...request,
+        diagnostic: {
+          message: 'Filter runs as a script',
+          ruleId: 'operation-pushed-as-script',
+          operation: 'filter',
+          outcome: 'filter:script',
+          targetText: 'status = 500',
+          targetRange: { startOffset: 20, endOffset: 32 },
+        },
+      } as any,
+      getCurrentQuery: jest.fn(() => currentQuery),
+      getLintContext: jest.fn(() => ({ http: {}, dataSourceId: 'ds-live' } as any)),
+    });
+    mockValidate.mockReturnValue({ accepted: true });
+    mockResolveExplain
+      .mockResolvedValueOnce({ status: 'ok', plan: originalPlan })
+      .mockImplementationOnce(async () => {
+        currentQuery = 'source=logs | head 10';
+        return { status: 'ok', plan: fixedPlan };
+      });
+    mockHasExplainOutcome.mockImplementation((plan) => plan === originalPlan);
+    const config = renderRegistration();
+
+    const result = await config.handler({
+      fixedQuery: 'source=logs | where status = 200',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        reason: 'stale-query',
+      })
+    );
+    expect(queryString.setQuery).not.toHaveBeenCalled();
+  });
+
   it('renderer wires Apply and Dismiss actions', () => {
     storeSession();
     const config = renderRegistration();
@@ -228,7 +463,8 @@ describe('PPLLintFixToolRegistration', () => {
       </>
     );
 
-    expect(screen.getByText('Unknown field status')).toBeInTheDocument();
+    expect(screen.getByText('Use the mapped field name.')).toBeInTheDocument();
+    expect(screen.queryByText('Unknown field status')).not.toBeInTheDocument();
     expect(screen.getByText('source=logs | where status_code = 500')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Apply to editor'));
@@ -236,6 +472,41 @@ describe('PPLLintFixToolRegistration', () => {
 
     expect(onApprove).toHaveBeenCalledTimes(1);
     expect(onReject).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the short product message for a performance fix card', () => {
+    storeSession({
+      request: {
+        ...request,
+        diagnostic: {
+          message:
+            'This filter may be slow because it does extra calculations. Compare the field directly instead.',
+          ruleId: 'operation-pushed-as-script',
+        },
+      } as any,
+    });
+    const config = renderRegistration();
+
+    render(
+      <>
+        {config.render({
+          status: 'executing',
+          args: {
+            fixedQuery: 'source=logs | where bytes > 6000',
+            explanation: 'Detailed engine-specific explanation that should not be shown.',
+          },
+        })}
+      </>
+    );
+
+    expect(
+      screen.getByText(
+        'This filter may be slow because it does extra calculations. Compare the field directly instead.'
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Detailed engine-specific explanation that should not be shown.')
+    ).not.toBeInTheDocument();
   });
 
   it('flips the card to "Fix dismissed" the moment Dismiss is clicked', () => {

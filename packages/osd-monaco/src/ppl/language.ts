@@ -5,7 +5,6 @@
 
 import { monaco } from '../monaco';
 import { ID, PPL_TOKEN_SETS } from './constants';
-import { PPLWorkerProxyService } from './worker_proxy_service';
 import { getPPLLanguageAnalyzer, PPLValidationResult } from './ppl_language_analyzer';
 import { getPPLDocumentationLink } from './ppl_documentation';
 import { pplRangeFormatProvider } from './formatter';
@@ -25,7 +24,13 @@ import {
 } from './lint/fix_registry';
 import { LINT_OWNER, pplLintHoverProvider } from './lint/hover/hover_provider';
 import { clearModelHoverFacts, HoverFacts, setModelHoverFacts } from './lint/hover/hover_registry';
-import { toWorkerLintContextPayload } from './lint/worker_context';
+import {
+  analyzeCompiledPPLLint,
+  lintCompiledPPL,
+  stopCompiledPPLWorker,
+  validateCompiledPPL,
+  validateCompiledPPLLintQueries,
+} from './compiled_worker_api';
 
 const PPL_LANGUAGE_ID = ID;
 const OWNER = 'PPL_WORKER';
@@ -41,9 +46,6 @@ const lintDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // context-less lint fired on model creation, before the editor attaches the
 // per-model context) can never overwrite a newer pass's markers.
 const lintGenerations = new Map<string, number>();
-
-// PPL worker proxy service for worker-based syntax highlighting
-const pplWorkerProxyService = new PPLWorkerProxyService();
 
 // PPL analyzer for synchronous tokenization (lazy initialization)
 let pplAnalyzer: ReturnType<typeof getPPLLanguageAnalyzer> | undefined;
@@ -156,13 +158,10 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
   try {
     const content = model.getValue();
 
-    // Ensure worker is set up before validation - always call setup as it has internal check
-    pplWorkerProxyService.setup();
-
     const validationResult = (await resolvePPLValidationResult(
       model,
       content,
-      async (query) => (await pplWorkerProxyService.validate(query)) as PPLValidationResult
+      validateCompiledPPL
     )) as PPLValidationResult;
 
     if (validationResult.errors.length > 0) {
@@ -258,58 +257,61 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
 
   const content = model.getValue();
 
-  pplWorkerProxyService.setup();
+  const lintContext = getPPLLintContext(model);
 
-  // The compiled fallback runs in a web worker, so snapshot the serializable
-  // host lint context on the main thread and leave http/runtime flags behind.
-  const workerLintContext = toWorkerLintContextPayload(getPPLLintContext(model));
+  const publishResult = (lintResult: LintResult): void => {
+    // Drop a response that a newer lint pass has superseded (stale context or
+    // stale content), so out-of-order worker responses can't clobber markers.
+    if (
+      lintGenerations.get(model.id) !== generation ||
+      model.isDisposed() ||
+      model.getValue() !== content
+    ) {
+      return;
+    }
+    if (model.getLanguageId() !== PPL_LANGUAGE_ID) {
+      return;
+    }
+    const markers = lintResult.diagnostics.map((diagnostic) =>
+      diagnosticToMarker(diagnostic, model.uri)
+    );
+    // Monaco's MarkerService rebuilds each marker from a fixed field list and
+    // drops the custom `fix` / `hoverFacts` properties, so they would never
+    // reach the code-action or hover providers. Capture each into a side table
+    // keyed by the fields the service preserves, then strip them off the
+    // marker before handing it over.
+    const fixes = new Map<string, MarkerFix>();
+    const hoverFacts = new Map<string, HoverFacts>();
+    for (const marker of markers) {
+      const withExtras = marker as monaco.editor.IMarkerData & {
+        fix?: MarkerFix;
+        hoverFacts?: HoverFacts;
+      };
+      const key = markerFixKey(marker);
+      if (withExtras.fix) {
+        fixes.set(key, withExtras.fix);
+        delete withExtras.fix;
+      }
+      if (withExtras.hoverFacts) {
+        hoverFacts.set(key, withExtras.hoverFacts);
+        delete withExtras.hoverFacts;
+      }
+    }
+    setModelFixes(model, fixes);
+    setModelHoverFacts(model, hoverFacts);
+    monaco.editor.setModelMarkers(model, LINT_OWNER, markers);
+  };
 
   void resolvePPLLintResult(
     model,
     content,
-    async (query) => (await pplWorkerProxyService.lint(query, workerLintContext)) as LintResult,
-    async (query) => (await pplWorkerProxyService.validate(query)) as PPLValidationResult
+    async (query) => lintCompiledPPL(query, lintContext),
+    validateCompiledPPL,
+    publishResult,
+    async (query) => analyzeCompiledPPLLint(query, lintContext),
+    validateCompiledPPLLintQueries
   )
-    .then((lintResult: LintResult) => {
-      // Drop a response that a newer lint pass has superseded (stale context or
-      // stale content), so out-of-order worker responses can't clobber markers.
-      if (
-        lintGenerations.get(model.id) !== generation ||
-        model.isDisposed() ||
-        model.getValue() !== content
-      ) {
-        return;
-      }
-      if (model.getLanguageId() !== PPL_LANGUAGE_ID) {
-        return;
-      }
-      const markers = lintResult.diagnostics.map(diagnosticToMarker);
-      // Monaco's MarkerService rebuilds each marker from a fixed field list and
-      // drops the custom `fix` / `hoverFacts` properties, so they would never
-      // reach the code-action or hover providers. Capture each into a side table
-      // keyed by the fields the service preserves, then strip them off the
-      // marker before handing it over.
-      const fixes = new Map<string, MarkerFix>();
-      const hoverFacts = new Map<string, HoverFacts>();
-      for (const marker of markers) {
-        const withExtras = marker as monaco.editor.IMarkerData & {
-          fix?: MarkerFix;
-          hoverFacts?: HoverFacts;
-        };
-        const key = markerFixKey(marker);
-        if (withExtras.fix) {
-          fixes.set(key, withExtras.fix);
-          delete withExtras.fix;
-        }
-        if (withExtras.hoverFacts) {
-          hoverFacts.set(key, withExtras.hoverFacts);
-          delete withExtras.hoverFacts;
-        }
-      }
-      setModelFixes(model, fixes);
-      setModelHoverFacts(model, hoverFacts);
-      monaco.editor.setModelMarkers(model, LINT_OWNER, markers);
-    })
+    .then(publishResult)
     .catch(() => {
       // Lint is best-effort: never disrupt the editor on failure (R11.3).
     });
@@ -409,7 +411,7 @@ const setupPPLSyntaxHighlighting = () => {
     lintDebounceTimers.forEach(clearTimeout);
     lintDebounceTimers.clear();
     disposables.forEach((d) => d.dispose());
-    pplWorkerProxyService.stop();
+    stopCompiledPPLWorker();
   };
 };
 

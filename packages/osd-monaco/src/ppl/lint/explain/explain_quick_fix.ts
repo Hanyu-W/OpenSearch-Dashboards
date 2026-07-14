@@ -39,13 +39,19 @@
  *    (unknowable-at-lint-time) value sign; on a floating field `/` is IEEE-754
  *    real division, which multiplication does not exactly invert at boundaries.
  *    Neither is exact-by-construction from a type map alone — deferred to Tier 2.
- *  - Integer overflow at the type extreme (Java `long` wraps; this rewrite does
- *    not) is an accepted residual for interactive queries (design open-question
- *    §11.3) — a real value at `Long.MAX_VALUE` is not a case we optimize for.
+ *  - `long` is excluded because a non-zero additive constant can overflow at a
+ *    mapped boundary. Narrow integer mappings are accepted only when their full
+ *    mapped domain plus/minus the constant remains inside signed 64-bit
+ *    arithmetic and the rewritten literal is also in that domain.
  */
 
-/** OpenSearch integer-family numeric types, by `esTypes[0]` as carried in `typeMap`. */
-const INTEGER_TYPES = new Set(['long', 'integer', 'short', 'byte']);
+const LONG_MIN = -(2n ** 63n);
+const LONG_MAX = 2n ** 63n - 1n;
+const INTEGER_BOUNDS = new Map<string, readonly [bigint, bigint]>([
+  ['integer', [-(2n ** 31n), 2n ** 31n - 1n]],
+  ['short', [-(2n ** 15n), 2n ** 15n - 1n]],
+  ['byte', [-(2n ** 7n), 2n ** 7n - 1n]],
+]);
 
 /** A field ref: a dotted path or a backtick-quoted name. No parens (excludes fn calls). */
 const FIELD = '(`[^`]+`|[A-Za-z_][\\w.]*)';
@@ -99,7 +105,8 @@ export function buildFilterInversionFix(
   // Integer field only — the rewrite is exact solely under exact integer
   // arithmetic. Unknown or floating-point type → no fix.
   const esType = typeMap?.get(fieldKey(fieldToken));
-  if (esType === undefined || !INTEGER_TYPES.has(esType)) {
+  const bounds = esType === undefined ? undefined : INTEGER_BOUNDS.get(esType);
+  if (!bounds) {
     return undefined;
   }
 
@@ -108,6 +115,20 @@ export function buildFilterInversionFix(
   const c = BigInt(constant);
   const l = BigInt(literal);
   const result = (sign === '-' ? l + c : l - c).toString();
+  const adjusted = BigInt(result);
+  const [fieldMin, fieldMax] = bounds;
+  const expressionMin = sign === '-' ? fieldMin - c : fieldMin + c;
+  const expressionMax = sign === '-' ? fieldMax - c : fieldMax + c;
+  if (
+    l < LONG_MIN ||
+    l > LONG_MAX ||
+    adjusted < LONG_MIN ||
+    adjusted > LONG_MAX ||
+    expressionMin < LONG_MIN ||
+    expressionMax > LONG_MAX
+  ) {
+    return undefined;
+  }
 
   const rewritten = `${fieldToken} ${cmp} ${result}`;
   return {

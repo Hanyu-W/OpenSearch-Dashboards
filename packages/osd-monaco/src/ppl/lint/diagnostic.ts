@@ -4,6 +4,7 @@
  */
 
 import type { HoverFacts } from './hover_facts';
+import type { ExplainOutcome } from './explain/explain_types';
 
 /**
  * Severity of a lint diagnostic. Mirrors the engine-verified failure class:
@@ -45,6 +46,14 @@ export interface DiagnosticFix {
    * {@link DiagnosticRange} (1-based line, 0-based column, exclusive end).
    */
   range?: DiagnosticRange;
+  /** Exact source slice expected at `range`; guards stale code actions. */
+  expectedText?: string;
+}
+
+export interface DiagnosticAttribution {
+  confidence: 'unique-source' | 'causal-probe';
+  candidateId: string;
+  relatedRanges?: DiagnosticRange[];
 }
 
 /**
@@ -72,6 +81,8 @@ export interface Diagnostic {
    * instance-specific detail worth surfacing.
    */
   hoverFacts?: DiagnosticHoverFacts;
+  /** Source attribution retained inside Dashboards only. */
+  attribution?: DiagnosticAttribution;
   /**
    * Internal hint for the explain/perf quick-fix flow: which pipeline operation
    * this finding relates to and the fields it involves. Set by the explain
@@ -79,7 +90,11 @@ export interface Diagnostic {
    * layer's range/fix resolver to narrow the whole-query range to the offending
    * command and to derive a safe rewrite. Not rendered in the UI directly.
    */
-  explainTarget?: { operation: 'filter' | 'aggregation' | 'sort'; fields: string[] };
+  explainTarget?: {
+    operation: 'filter' | 'aggregation' | 'sort';
+    outcome: ExplainOutcome;
+    fields: string[];
+  };
 }
 
 /**

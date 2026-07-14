@@ -4,6 +4,7 @@
  */
 
 import {
+  buildChatFixContext,
   buildChatFixMessage,
   hashPPLLintFixSource,
   BuildChatFixMessageInput,
@@ -25,17 +26,43 @@ describe('buildChatFixMessage', () => {
     dataSourceId: 'mds-1',
   };
 
-  it('frames the chat request with ids, diagnostic, source query, and apply tool instruction', () => {
+  it('keeps machine plumbing out of the visible message', () => {
     const message = buildChatFixMessage(request);
-    expect(message).toContain('Request id: req-1');
-    expect(message).toContain('Source query hash: abcd1234');
-    expect(message).toContain('Dataset: accounts');
-    expect(message).toContain('Data source id: mds-1');
-    expect(message).toContain('Diagnostic: type-mismatch-numeric - Comparing numeric field');
+    expect(message).toContain('Please fix this query.');
+    expect(message).toContain('Comparing numeric field');
     expect(message).toContain('```ppl');
     expect(message).toContain(request.query);
-    expect(message).toContain('apply_ppl_lint_fix_data');
+    expect(message).not.toContain('type-mismatch-numeric');
+    expect(message).not.toContain('req-1');
+    expect(message).not.toContain('abcd1234');
+    expect(message).not.toContain('apply_ppl_lint_fix_data');
     expect(message).not.toContain('execute_ppl_query');
+  });
+
+  it('puts tool instructions and precise target context out of band', () => {
+    const context = buildChatFixContext({
+      ...request,
+      diagnostic: {
+        ...request.diagnostic,
+        targetText: 'age = "thirty"',
+        relatedTexts: ['eval age = raw_age'],
+      },
+    });
+    const message = buildChatFixMessage({
+      ...request,
+      diagnostic: {
+        ...request.diagnostic,
+        targetText: 'age = "thirty"',
+        relatedTexts: ['eval age = raw_age'],
+      },
+    });
+    expect(message).toContain('Part to fix: `age = "thirty"`');
+    expect(message).not.toContain('Attributed target');
+    expect(context).toContain('apply_ppl_lint_fix_data');
+    expect(context).toContain('age = "thirty"');
+    expect(context).toContain('eval age = raw_age');
+    expect(context).toContain('localized change');
+    expect(context).toContain('one short sentence in plain language');
   });
 
   it('caps long queries before embedding them in the chat prompt', () => {

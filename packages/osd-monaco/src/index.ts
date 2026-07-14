@@ -55,6 +55,10 @@ export {
   validatePPLLintFixCandidate,
   compiledLintFacts,
   compiledPipelineShape,
+  analyzeCompiledPPLLint,
+  validateCompiledPPLLintQueries,
+  EXPLAIN_ATTRIBUTION_SNAPSHOT_VERSION,
+  validateExplainAttributionSnapshot,
 } from './ppl';
 export type {
   AskPPLLintFixRequest,
@@ -65,6 +69,7 @@ export type {
   PPLLintContext,
   PPLLintBridge,
   PPLLintBridgeRequest,
+  PPLLintHttpClient,
   CommandSuggestion,
   Diagnostic,
   DiagnosticRange,
@@ -74,6 +79,10 @@ export type {
   CatalogEntry,
   LintRunContext,
   ValidateCandidateResult,
+  CompiledPPLLintAnalysis,
+  ExplainAttributionCandidateSnapshot,
+  ExplainAttributionSnapshot,
+  ExplainProbeKind,
 } from './ppl';
 
 /* eslint-disable-next-line @osd/eslint/module_migration */

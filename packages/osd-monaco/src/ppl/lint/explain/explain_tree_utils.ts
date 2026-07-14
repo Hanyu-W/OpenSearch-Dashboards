@@ -13,7 +13,7 @@ function safeStringify(value: unknown): string {
   }
 }
 
-function valueText(value: unknown): string {
+export function valueText(value: unknown): string {
   if (typeof value === 'string') {
     return value;
   }
@@ -44,6 +44,10 @@ export function getPushDownContext(rel: ExplainRelNode): string {
   return valueText(rel.PushDownContext);
 }
 
+export function getSourceBuilder(rel: ExplainRelNode): string {
+  return valueText(rel.sourceBuilder);
+}
+
 export function hasPushDownTag(plan: ExplainPlan, tag: string): boolean {
   return getPhysicalRels(plan).some((rel) => getPushDownContext(rel).includes(tag));
 }
@@ -65,11 +69,13 @@ export function physicalPlanText(plan: ExplainPlan): string {
  * fall back to a small JSON-string canary for `$condition`.
  */
 export function relTreeContainsCondition(plan: ExplainPlan): boolean {
-  return getPhysicalRels(plan).some((rel) => {
-    const keys = Object.keys(rel);
-    if (keys.some((key) => key === '$condition' || key.toLowerCase() === 'condition')) {
-      return true;
-    }
-    return safeStringify(rel).includes('$condition');
-  });
+  return getPhysicalRels(plan).some(relContainsCondition);
+}
+
+export function relContainsCondition(rel: ExplainRelNode): boolean {
+  const keys = Object.keys(rel);
+  if (keys.some((key) => key === '$condition' || key.toLowerCase() === 'condition')) {
+    return true;
+  }
+  return safeStringify(rel).includes('$condition');
 }

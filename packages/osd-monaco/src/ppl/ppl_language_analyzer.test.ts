@@ -4,6 +4,7 @@
  */
 
 import { PPLLanguageAnalyzer, getPPLLanguageAnalyzer } from './ppl_language_analyzer';
+import { SimplifiedOpenSearchPPLParser } from '@osd/antlr-grammar';
 
 describe('PPLLanguageAnalyzer', () => {
   let analyzer: PPLLanguageAnalyzer;
@@ -188,6 +189,61 @@ describe('PPLLanguageAnalyzer', () => {
 
       expect(tokenResult.length).toBeGreaterThan(8);
       expect(validationResult.isValid).toBe(true);
+    });
+  });
+
+  describe('Compiled lint analysis', () => {
+    const context = {
+      dataSourceVersion: '3.5.0',
+      isCalcite: true,
+      overrides: {
+        'operation-not-pushed': { enabled: true },
+        'operation-pushed-as-script': { enabled: true },
+      },
+    };
+
+    it('shares one root parse between static lint and attribution', () => {
+      const root = jest.spyOn(SimplifiedOpenSearchPPLParser.prototype, 'root');
+      const query = 'source=logs | where bytes - 10 > 20';
+
+      const analysis = analyzer.analyzeLint(query, context);
+
+      expect(root).toHaveBeenCalledTimes(1);
+      expect(analysis.attribution?.queryLength).toBe(query.length);
+      expect(analysis.attribution?.candidates[0].sourceText).toBe('bytes - 10 > 20');
+      root.mockRestore();
+    });
+
+    it('keeps static lint but omits attribution for a recovery tree', () => {
+      const analysis = analyzer.analyzeLint('source=logs | ', context);
+
+      expect(analysis.result).toEqual(expect.objectContaining({ diagnostics: expect.any(Array) }));
+      expect(analysis.attribution).toBeUndefined();
+    });
+
+    it('does not extract attribution when Explain rules are inapplicable', () => {
+      expect(
+        analyzer.analyzeLint('source=logs | where bytes - 10 > 20', {
+          dataSourceVersion: '2.19.0',
+          isCalcite: true,
+          overrides: context.overrides,
+        }).attribution
+      ).toBeUndefined();
+    });
+
+    it('validates generated queries in order with pipe-first preprocessing', () => {
+      expect(
+        analyzer.validateLintQueries([
+          'source=logs | where bytes > 1',
+          '',
+          '| where bytes > 1',
+          'source=logs | where',
+        ])
+      ).toEqual([true, false, true, false]);
+    });
+
+    it('rejects a malformed validation payload', () => {
+      expect(() => analyzer.validateLintQueries('source=logs' as any)).toThrow('array of strings');
     });
   });
 });

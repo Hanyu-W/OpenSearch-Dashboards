@@ -17,9 +17,11 @@ import {
 
 type LintMarker = monaco.editor.IMarkerData;
 
+let modelSlice = 'target';
 const model = ({
   uri: monaco.Uri.parse('inmemory://model/q.ppl'),
   getVersionId: () => 1,
+  getValueInRange: () => modelSlice,
 } as unknown) as monaco.editor.ITextModel;
 
 function makeMarker(overrides: Partial<LintMarker> = {}): LintMarker {
@@ -63,7 +65,10 @@ function editOf(action: monaco.languages.CodeAction) {
 }
 
 describe('pplLintCodeActionProvider', () => {
-  afterEach(() => clearModelFixes(model));
+  afterEach(() => {
+    modelSlice = 'target';
+    clearModelFixes(model);
+  });
 
   it('produces no action for a lint marker without a registered fix', () => {
     expect(provide([makeMarker()])).toHaveLength(0);
@@ -102,6 +107,21 @@ describe('pplLintCodeActionProvider', () => {
     const edit = editOf(actions[0]);
     expect(edit.text).toBe('');
     expect(edit.range).toEqual(fixRange);
+  });
+
+  it('offers an exact-text fix only while the current source slice still matches', () => {
+    const marker = makeMarker();
+    seedFix(marker, {
+      title: 'Rewrite predicate',
+      text: 'age > 32',
+      expectedText: 'age - 2 > 30',
+    });
+
+    modelSlice = 'age - 2 > 30';
+    expect(provide([marker])).toHaveLength(1);
+
+    modelSlice = 'age - 3 > 30';
+    expect(provide([marker])).toHaveLength(0);
   });
 
   it('emits one action per fixable marker, skipping markers with no registered fix', () => {

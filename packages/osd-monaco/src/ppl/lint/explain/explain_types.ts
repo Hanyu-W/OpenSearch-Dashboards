@@ -6,6 +6,33 @@
 import { Diagnostic } from '../diagnostic';
 import { CatalogEntry } from '../types';
 
+export type ExplainOperation = 'filter' | 'aggregation' | 'sort';
+
+/**
+ * A normalized execution outcome inferred from an explain plan. These values
+ * are internal to Dashboards; they are never sent to or read from OpenSearch.
+ */
+export type ExplainOutcome =
+  | 'filter:native'
+  | 'filter:script'
+  | 'filter:coordinator'
+  | 'aggregation:native'
+  | 'aggregation:coordinator'
+  | 'sort:native'
+  | 'sort:script'
+  | 'sort:coordinator';
+
+export interface ExplainOutcomeEvidence {
+  outcome: ExplainOutcome;
+  /** A tree rel id when available, otherwise the legacy plan-wide scope. */
+  scope: string;
+  format: 'tree' | 'legacy';
+}
+
+export function operationForOutcome(outcome: ExplainOutcome): ExplainOperation {
+  return outcome.slice(0, outcome.indexOf(':')) as ExplainOperation;
+}
+
 /**
  * One rel node from the machine-readable `json_tree` explain format. Keep this
  * permissive: Calcite's RelJsonWriter can add operator-specific fields, and the

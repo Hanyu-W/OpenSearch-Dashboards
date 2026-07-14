@@ -24,4 +24,9 @@ export interface AiFixCommandArgs {
   modelUri: string;
   ruleId?: string;
   message: string;
+  operation?: 'filter' | 'aggregation' | 'sort';
+  outcome?: string;
+  targetText?: string;
+  targetRange?: { startOffset: number; endOffset: number };
+  relatedTexts?: string[];
 }

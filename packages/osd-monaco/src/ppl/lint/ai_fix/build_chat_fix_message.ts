@@ -21,16 +21,19 @@ export function hashPPLLintFixSource(query: string): string {
 
 /**
  * The SHORT, human-facing chat bubble the user sees when they click "Ask Olly to
- * fix". It carries only what reads well in the transcript — the rule and the
- * offending query. The how-to-respond instructions for the model ride out-of-band
- * via {@link buildChatFixContext} so they never clutter the chat.
+ * fix". It carries only a plain-language explanation, the part to fix, and the
+ * query. Technical instructions for the model ride out-of-band via
+ * {@link buildChatFixContext} so they never clutter the chat.
  */
 export function buildChatFixMessage(request: BuildChatFixMessageInput): string {
-  const ruleId = request.diagnostic.ruleId || 'ppl-lint';
   const query = capLength(request.query);
+  const target = request.diagnostic.targetText;
 
   return [
-    `Fix this OpenSearch PPL query — it has a \`${ruleId}\` lint issue: ${request.diagnostic.message}`,
+    'Please fix this query.',
+    '',
+    request.diagnostic.message,
+    ...(target ? ['', `Part to fix: \`${capLength(target, 512)}\``] : []),
     '',
     '```ppl',
     query,
@@ -48,13 +51,30 @@ export function buildChatFixMessage(request: BuildChatFixMessageInput): string {
  */
 export function buildChatFixContext(request: BuildChatFixMessageInput): string {
   const ruleId = request.diagnostic.ruleId || 'ppl-lint';
+  const target = request.diagnostic.targetText;
+  const related = request.diagnostic.relatedTexts?.filter(Boolean) ?? [];
 
   return [
     'You are correcting a PPL query for the OpenSearch Explore lint quick-fix flow.',
     `Diagnostic: ${ruleId} - ${request.diagnostic.message}`,
     '',
-    'Make the smallest correction that clears the diagnostic while preserving the pipeline commands, fields, filters, and user intent.',
+    ...(target
+      ? [
+          `The finding is precisely attributed to this source slice: ${capLength(target, 512)}`,
+          ...(related.length
+            ? [
+                `Related definition/use slice(s): ${related
+                  .map((text) => capLength(text, 256))
+                  .join(', ')}`,
+              ]
+            : []),
+          'Make a localized change to that attributed expression. Do not regenerate unrelated pipeline text.',
+        ]
+      : [
+          'Make the smallest correction that clears the diagnostic while preserving the pipeline commands, fields, filters, and user intent.',
+        ]),
     'Do not execute the query.',
+    'Keep the explanation to one short sentence in plain language. Say what changed and why it helps. Do not mention rule IDs, attribution, Painless scripts, pushdown, indexes, data nodes, coordinators, or per-document evaluation.',
     `When you have the correction, call the ${request.toolName} tool with just the fixedQuery (and optionally a short explanation). Do not ask the user for a request id or hash — the UI already tracks the active request.`,
   ].join('\n');
 }

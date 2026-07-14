@@ -7,13 +7,14 @@ import { buildFilterInversionFix } from '../explain_quick_fix';
 
 const INT_MAP = new Map<string, string>([
   ['age', 'integer'],
-  ['n', 'long'],
-  ['a.b', 'long'],
+  ['n', 'short'],
+  ['a.b', 'integer'],
 ]);
 const FLOAT_MAP = new Map<string, string>([
   ['price', 'double'],
   ['ratio', 'float'],
 ]);
+const LONG_MAP = new Map<string, string>([['age', 'long']]);
 
 describe('buildFilterInversionFix — additive on an integer field (the only Tier-1 case)', () => {
   it('moves a subtracted constant across', () => {
@@ -57,6 +58,13 @@ describe('buildFilterInversionFix — refuses everything not provably exact', ()
   it('REFUSES when the field type is unknown', () => {
     expect(buildFilterInversionFix('mystery-2>30')).toBeUndefined();
     expect(buildFilterInversionFix('mystery-2>30', new Map())).toBeUndefined();
+  });
+
+  it('REFUSES long mappings and arithmetic outside signed 64-bit bounds', () => {
+    expect(buildFilterInversionFix('age-2>30', LONG_MAP)).toBeUndefined();
+    expect(buildFilterInversionFix('age+9223372036854775807>0', INT_MAP)).toBeUndefined();
+    expect(buildFilterInversionFix('age-1>9223372036854775807', INT_MAP)).toBeUndefined();
+    expect(buildFilterInversionFix('age+1>-9223372036854775808', INT_MAP)).toBeUndefined();
   });
 
   it('REFUSES a decimal constant or decimal literal (integer shape only)', () => {

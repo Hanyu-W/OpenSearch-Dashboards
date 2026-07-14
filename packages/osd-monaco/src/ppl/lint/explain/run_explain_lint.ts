@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import semver from 'semver';
 import { Diagnostic } from '../diagnostic';
 import { BundleRuleOverrides, CatalogEntry, LintRunContext } from '../types';
 import { getBundledCatalog } from '../catalog';
@@ -10,6 +11,10 @@ import { mergeConfig } from '../lint_runner';
 import { appliesTo, OSD_KNOWN_VERSION } from '../version_filter';
 import { getExplainDetector } from './explain_registry';
 import { ExplainPlan } from './explain_types';
+
+function hasParseableDataSourceVersion(dataSourceVersion: string | undefined): boolean {
+  return !!dataSourceVersion?.trim() && semver.coerce(dataSourceVersion) !== null;
+}
 
 export interface RunExplainLintOptions
   extends Pick<LintRunContext, 'overrides' | 'dataSourceVersion' | 'isCalcite'> {
@@ -57,6 +62,10 @@ export function hasExplainRules(options: Omit<RunExplainLintOptions, 'query'>): 
     knownVersion = OSD_KNOWN_VERSION,
   } = options;
 
+  if (!hasParseableDataSourceVersion(dataSourceVersion)) {
+    return false;
+  }
+
   return catalog.some((localConfig) =>
     isApplicableExplainEntry(localConfig, overrides, dataSourceVersion, isCalcite, knownVersion)
   );
@@ -77,6 +86,10 @@ export function runExplainLint(plan: ExplainPlan, options: RunExplainLintOptions
     isCalcite,
     knownVersion = OSD_KNOWN_VERSION,
   } = options;
+
+  if (!hasParseableDataSourceVersion(dataSourceVersion)) {
+    return [];
+  }
 
   const diagnostics: Diagnostic[] = [];
 

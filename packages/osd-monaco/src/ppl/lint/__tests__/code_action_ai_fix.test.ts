@@ -9,12 +9,15 @@ import { LINT_MARKER_SOURCE, SYNTAX_MARKER_SOURCE } from '../diagnostic_to_marke
 import { setModelFixes, clearModelFixes, markerFixKey, MarkerFix } from '../fix_registry';
 import { setPPLLintContext, clearPPLLintContext } from '../../lint_bridge';
 import { AI_FIX_COMMAND_ID } from '../ai_fix/ai_fix_command_id';
+import { clearModelHoverFacts, setModelHoverFacts } from '../hover/hover_registry';
 
 type LintMarker = monaco.editor.IMarkerData;
 
 const model = ({
   uri: monaco.Uri.parse('inmemory://model/ai.ppl'),
   getVersionId: () => 1,
+  getValueInRange: () => 'bytes + latency',
+  getOffsetAt: ({ column }: { column: number }) => column - 1,
 } as unknown) as monaco.editor.ITextModel;
 
 // A marker carrying an AI-fixable ruleId on `code` (the object form with a link),
@@ -49,6 +52,7 @@ function provide(markers: LintMarker[]) {
 describe('pplLintCodeActionProvider — AI quick-fix emission', () => {
   afterEach(() => {
     clearModelFixes(model);
+    clearModelHoverFacts(model);
     clearPPLLintContext(model);
   });
 
@@ -109,6 +113,22 @@ describe('pplLintCodeActionProvider — AI quick-fix emission', () => {
     const actions = provide([aiMarker('field-validation')]);
     expect(actions).toHaveLength(1);
     expect((actions[0] as any).isAI).toBe(true);
+  });
+
+  it('passes the exact target and performance outcome to the Olly command', () => {
+    setPPLLintContext(model, { enableAIFeatures: true, onAskAiFix: jest.fn() } as any);
+    const marker = aiMarker('operation-pushed-as-script');
+    setModelHoverFacts(model, new Map([[markerFixKey(marker), { operation: 'sort' }]]));
+
+    const [action] = provide([marker]);
+    expect(action.command?.arguments?.[0]).toEqual(
+      expect.objectContaining({
+        operation: 'sort',
+        outcome: 'sort:script',
+        targetText: 'bytes + latency',
+        targetRange: { startOffset: 4, endOffset: 9 },
+      })
+    );
   });
 
   it('never emits an AI action on the syntax channel', () => {

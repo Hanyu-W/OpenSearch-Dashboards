@@ -87,7 +87,10 @@ function toMarkerSeverity(severity: LintSeverity): monaco.MarkerSeverity {
  *  - sets `source: 'ppl-lint'`,
  *  - sets `code: { value: ruleId, target: docUrl }` when a doc URL is present.
  */
-export function diagnosticToMarker(diagnostic: Diagnostic): monaco.editor.IMarkerData {
+export function diagnosticToMarker(
+  diagnostic: Diagnostic,
+  resource?: monaco.Uri
+): monaco.editor.IMarkerData {
   const { startLineNumber, startColumn, endLineNumber, endColumn } = toMonacoRange(
     diagnostic.range
   );
@@ -119,12 +122,23 @@ export function diagnosticToMarker(diagnostic: Diagnostic): monaco.editor.IMarke
   // the provider falls back to the marker's own range.
   if (diagnostic.fix) {
     (marker as monaco.editor.IMarkerData & {
-      fix?: { title: string; text: string; range?: MonacoRange };
+      fix?: { title: string; text: string; expectedText?: string; range?: MonacoRange };
     }).fix = {
       title: diagnostic.fix.title,
       text: diagnostic.fix.text,
+      ...(diagnostic.fix.expectedText !== undefined
+        ? { expectedText: diagnostic.fix.expectedText }
+        : {}),
       range: diagnostic.fix.range ? toMonacoRange(diagnostic.fix.range) : undefined,
     };
+  }
+
+  if (resource && diagnostic.attribution?.relatedRanges?.length) {
+    marker.relatedInformation = diagnostic.attribution.relatedRanges.map((range) => ({
+      resource,
+      ...toMonacoRange(range),
+      message: 'Related PPL use site',
+    }));
   }
 
   // Attach per-instance hover facts the same way. Like `fix`, this transient

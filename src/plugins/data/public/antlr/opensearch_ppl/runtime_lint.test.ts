@@ -9,6 +9,7 @@ import { CachedGrammar, pplGrammarCache } from './ppl_grammar_cache';
 import { lintRuntimePPLQuery } from './runtime_lint';
 import { explainCache } from '../../ppl_lint/explain_cache';
 import { openSearchPplAutocompleteData as simplifiedPplAutocompleteData } from './simplified_ppl_grammar/opensearch_ppl_autocomplete';
+import { PPLLanguageAnalyzer } from '@osd/monaco/target/ppl/ppl_language_analyzer';
 
 describe('lintRuntimePPLQuery', () => {
   const buildRuntimeGrammar = (overrides: Partial<CachedGrammar> = {}): CachedGrammar => {
@@ -256,7 +257,7 @@ describe('lintRuntimePPLQuery', () => {
       explainCache.clear();
     });
 
-    it('layers explain markers over the compiled fallback for 3.5 Calcite when runtime grammar is off', async () => {
+    it('keeps legacy compiled callers static-only when no snapshot callback is available', async () => {
       const query = 'source=accounts | where age - 2 > 30';
       const http = { post: jest.fn().mockResolvedValue(legacyStringScriptPlan) } as any;
       const compiledFallbackLint = jest.fn().mockResolvedValue(compiledStaticResult());
@@ -277,21 +278,125 @@ describe('lintRuntimePPLQuery', () => {
       });
 
       expect(compiledFallbackLint).toHaveBeenCalledWith(query);
-      expect(compiledFallbackValidate).toHaveBeenCalledWith(query);
-      expect(http.post).toHaveBeenCalledTimes(1);
-      expect(result!.diagnostics.map((d) => d.ruleId)).toEqual(
-        expect.arrayContaining(['compiled-static', 'operation-pushed-as-script'])
+      expect(compiledFallbackValidate).not.toHaveBeenCalled();
+      expect(http.post).not.toHaveBeenCalled();
+      expect(result!.diagnostics.map((d) => d.ruleId)).toEqual(['compiled-static']);
+    });
+
+    it.each(['3.3.0', '3.4.0', '3.5.0'])(
+      'uses a compiled-worker snapshot for exact attribution on %s',
+      async (dataSourceVersion) => {
+        const query = 'source=accounts | where age - 2 > 30';
+        const events: string[] = [];
+        const http = {
+          post: jest.fn(async () => {
+            events.push('explain');
+            return legacyStringScriptPlan;
+          }),
+        } as any;
+        const analyzer = new PPLLanguageAnalyzer();
+        const analysis = analyzer.analyzeLint(query, {
+          dataSourceVersion,
+          isCalcite: true,
+          overrides: baseContext.overrides,
+        });
+        const compiledFallbackAnalyze = jest.fn().mockResolvedValue({
+          ...analysis,
+          result: compiledStaticResult(),
+        });
+        const compiledFallbackLint = jest.fn().mockResolvedValue(compiledStaticResult());
+        const publishResult = jest.fn(() => events.push('publish'));
+
+        const result = await lintRuntimePPLQuery({
+          content: query,
+          context: {
+            ...baseContext,
+            useRuntimeGrammar: false,
+            dataSourceVersion,
+            http,
+            dataSourceId: `ds-compiled-${dataSourceVersion}`,
+          },
+          compiledFallbackLint,
+          compiledFallbackAnalyze,
+          compiledFallbackValidateProbes: jest.fn().mockResolvedValue([true]),
+          publishResult,
+          model: {
+            getValue: () => query,
+            getVersionId: () => 1,
+            isDisposed: () => false,
+          } as any,
+        });
+
+        expect(compiledFallbackAnalyze).toHaveBeenCalledWith(query);
+        expect(compiledFallbackLint).not.toHaveBeenCalled();
+        expect(events[0]).toBe('publish');
+        expect(http.post).toHaveBeenCalledTimes(1);
+        const performance = result!.diagnostics.find(
+          ({ ruleId }) => ruleId === 'operation-pushed-as-script'
+        );
+        expect(performance).toBeDefined();
+        expect(query.slice(performance!.range.startColumn, performance!.range.endColumn)).toBe(
+          'age - 2 > 30'
+        );
+      }
+    );
+
+    it('batch-validates compiled probes and isolates the scripted 3.5 filter', async () => {
+      const query = 'source=accounts | where age > 1 | where age - 2 > 30';
+      const http = {
+        post: jest.fn(async (_path: string, options: { body?: BodyInit | null }) => {
+          const generated = JSON.parse(String(options.body)).query as string;
+          return generated.includes('age - 2 > 30') ? legacyStringScriptPlan : nativeFilterPlan;
+        }),
+      } as any;
+      const analyzer = new PPLLanguageAnalyzer();
+      const analysis = analyzer.analyzeLint(query, {
+        dataSourceVersion: '3.5.0',
+        isCalcite: true,
+        overrides: baseContext.overrides,
+      });
+      const compiledFallbackValidateProbes = jest.fn(async (queries: string[]) =>
+        queries.map(() => true)
+      );
+
+      const result = await lintRuntimePPLQuery({
+        content: query,
+        context: {
+          ...baseContext,
+          useRuntimeGrammar: false,
+          dataSourceVersion: '3.5.0',
+          http,
+          dataSourceId: 'ds-compiled-35-isolation',
+        },
+        compiledFallbackLint: jest.fn().mockResolvedValue(compiledStaticResult()),
+        compiledFallbackAnalyze: jest.fn().mockResolvedValue(analysis),
+        compiledFallbackValidateProbes,
+        model: {
+          getValue: () => query,
+          getVersionId: () => 1,
+          isDisposed: () => false,
+        } as any,
+      });
+
+      expect(compiledFallbackValidateProbes).toHaveBeenCalledTimes(1);
+      expect(compiledFallbackValidateProbes.mock.calls[0][0]).toHaveLength(3);
+      expect(http.post).toHaveBeenCalledTimes(4);
+      const performance = result!.diagnostics.filter(
+        ({ ruleId }) => ruleId === 'operation-pushed-as-script'
+      );
+      expect(performance).toHaveLength(1);
+      expect(query.slice(performance[0].range.startColumn, performance[0].range.endColumn)).toBe(
+        'age - 2 > 30'
       );
     });
 
-    it('keeps compiled static markers and skips explain when compiled validation is invalid', async () => {
+    it('keeps compiled static markers and skips explain when worker analysis has no snapshot', async () => {
       const query = 'source=accounts | ';
       const http = { post: jest.fn().mockResolvedValue(legacyStringScriptPlan) } as any;
       const staticResult = compiledStaticResult('compiled-invalid-static');
       const compiledFallbackLint = jest.fn().mockResolvedValue(staticResult);
-      const compiledFallbackValidate = jest.fn().mockResolvedValue({
-        isValid: false,
-        errors: [{ message: 'invalid', line: 1, column: 0 }],
+      const compiledFallbackAnalyze = jest.fn().mockResolvedValue({
+        result: staticResult,
       });
 
       const result = await lintRuntimePPLQuery({
@@ -304,12 +409,13 @@ describe('lintRuntimePPLQuery', () => {
           dataSourceId: 'ds-compiled-invalid',
         },
         compiledFallbackLint,
-        compiledFallbackValidate,
+        compiledFallbackAnalyze,
         model: {} as any,
       });
 
       expect(result).toBe(staticResult);
-      expect(compiledFallbackValidate).toHaveBeenCalledWith(query);
+      expect(compiledFallbackAnalyze).toHaveBeenCalledWith(query);
+      expect(compiledFallbackLint).not.toHaveBeenCalled();
       expect(http.post).not.toHaveBeenCalled();
     });
 
@@ -319,6 +425,7 @@ describe('lintRuntimePPLQuery', () => {
       const staticResult = compiledStaticResult('compiled-default-static');
       const compiledFallbackLint = jest.fn().mockResolvedValue(staticResult);
       const compiledFallbackValidate = jest.fn().mockResolvedValue({ isValid: true, errors: [] });
+      const compiledFallbackAnalyze = jest.fn();
 
       const result = await lintRuntimePPLQuery({
         content: query,
@@ -331,12 +438,14 @@ describe('lintRuntimePPLQuery', () => {
         },
         compiledFallbackLint,
         compiledFallbackValidate,
+        compiledFallbackAnalyze,
         model: {} as any,
       });
 
       expect(result).toBe(staticResult);
       expect(compiledFallbackLint).toHaveBeenCalledWith(query);
       expect(compiledFallbackValidate).not.toHaveBeenCalled();
+      expect(compiledFallbackAnalyze).not.toHaveBeenCalled();
       expect(http.post).not.toHaveBeenCalled();
     });
 
@@ -344,6 +453,7 @@ describe('lintRuntimePPLQuery', () => {
       const http = { post: jest.fn().mockResolvedValue(legacyStringScriptPlan) } as any;
       const compiledFallbackLint = jest.fn().mockResolvedValue(compiledStaticResult());
       const compiledFallbackValidate = jest.fn().mockResolvedValue({ isValid: true, errors: [] });
+      const compiledFallbackAnalyze = jest.fn();
 
       const result = await lintRuntimePPLQuery({
         content: '   ',
@@ -356,21 +466,24 @@ describe('lintRuntimePPLQuery', () => {
         },
         compiledFallbackLint,
         compiledFallbackValidate,
+        compiledFallbackAnalyze,
         model: {} as any,
       });
 
       expect(result).toEqual({ diagnostics: [] });
       expect(compiledFallbackLint).not.toHaveBeenCalled();
       expect(compiledFallbackValidate).not.toHaveBeenCalled();
+      expect(compiledFallbackAnalyze).not.toHaveBeenCalled();
       expect(http.post).not.toHaveBeenCalled();
     });
 
-    it('uses compiled fallback plus explain when the runtime grammar cache misses', async () => {
+    it('uses only compiled static lint when the runtime grammar cache misses', async () => {
       const query = 'source=accounts | where age - 2 > 30';
       jest.spyOn(pplGrammarCache, 'getCachedGrammar').mockReturnValue(null);
       const http = { post: jest.fn().mockResolvedValue(legacyStringScriptPlan) } as any;
       const compiledFallbackLint = jest.fn().mockResolvedValue(compiledStaticResult());
       const compiledFallbackValidate = jest.fn().mockResolvedValue({ isValid: true, errors: [] });
+      const compiledFallbackAnalyze = jest.fn();
 
       const result = await lintRuntimePPLQuery({
         content: query,
@@ -383,13 +496,110 @@ describe('lintRuntimePPLQuery', () => {
         },
         compiledFallbackLint,
         compiledFallbackValidate,
+        compiledFallbackAnalyze,
         model: {} as any,
       });
 
       expect(compiledFallbackLint).toHaveBeenCalledWith(query);
-      expect(compiledFallbackValidate).toHaveBeenCalledWith(query);
-      expect(http.post).toHaveBeenCalledTimes(1);
-      expect(result!.diagnostics.map((d) => d.ruleId)).toContain('operation-pushed-as-script');
+      expect(compiledFallbackValidate).not.toHaveBeenCalled();
+      expect(compiledFallbackAnalyze).not.toHaveBeenCalled();
+      expect(http.post).not.toHaveBeenCalled();
+      expect(result!.diagnostics.map((d) => d.ruleId)).toEqual(['compiled-static']);
+    });
+
+    it('version-gates compiled Explain attribution below 3.3', async () => {
+      const query = 'source=accounts | where age - 2 > 30';
+      const http = { post: jest.fn() } as any;
+      const staticResult = compiledStaticResult('compiled-219-static');
+      const compiledFallbackLint = jest.fn().mockResolvedValue(staticResult);
+      const compiledFallbackAnalyze = jest.fn();
+
+      const result = await lintRuntimePPLQuery({
+        content: query,
+        context: {
+          ...baseContext,
+          useRuntimeGrammar: false,
+          dataSourceVersion: '2.19.0',
+          http,
+          dataSourceId: 'ds-compiled-219',
+        },
+        compiledFallbackLint,
+        compiledFallbackAnalyze,
+        model: {} as any,
+      });
+
+      expect(result).toBe(staticResult);
+      expect(compiledFallbackLint).toHaveBeenCalledWith(query);
+      expect(compiledFallbackAnalyze).not.toHaveBeenCalled();
+      expect(http.post).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['missing', undefined],
+      ['malformed', 'not-a-version'],
+    ])(
+      'keeps compiled lint static-only when the cluster version is %s',
+      async (_label, dataSourceVersion) => {
+        const query = 'source=accounts | where age - 2 > 30';
+        const http = { post: jest.fn() } as any;
+        const staticResult = compiledStaticResult('compiled-unknown-version-static');
+        const compiledFallbackLint = jest.fn().mockResolvedValue(staticResult);
+        const compiledFallbackAnalyze = jest.fn();
+
+        const result = await lintRuntimePPLQuery({
+          content: query,
+          context: {
+            ...baseContext,
+            useRuntimeGrammar: false,
+            dataSourceVersion,
+            http,
+            dataSourceId: `ds-compiled-${_label}-version`,
+          },
+          compiledFallbackLint,
+          compiledFallbackAnalyze,
+          model: {} as any,
+        });
+
+        expect(result).toBe(staticResult);
+        expect(compiledFallbackLint).toHaveBeenCalledWith(query);
+        expect(compiledFallbackAnalyze).not.toHaveBeenCalled();
+        expect(http.post).not.toHaveBeenCalled();
+      }
+    );
+
+    it('does not explain a compiled snapshot that became stale while the worker ran', async () => {
+      const query = 'source=accounts | where age - 2 > 30';
+      let modelValue = query;
+      const http = { post: jest.fn() } as any;
+      const analyzer = new PPLLanguageAnalyzer();
+      const analysis = analyzer.analyzeLint(query, {
+        dataSourceVersion: '3.5.0',
+        isCalcite: true,
+        overrides: baseContext.overrides,
+      });
+      const compiledFallbackAnalyze = jest.fn(async () => {
+        modelValue = `${query} `;
+        return analysis;
+      });
+
+      await lintRuntimePPLQuery({
+        content: query,
+        context: {
+          ...baseContext,
+          useRuntimeGrammar: false,
+          dataSourceVersion: '3.5.0',
+          http,
+        },
+        compiledFallbackLint: jest.fn().mockResolvedValue(compiledStaticResult()),
+        compiledFallbackAnalyze,
+        model: {
+          getValue: () => modelValue,
+          getVersionId: () => 1,
+          isDisposed: () => false,
+        } as any,
+      });
+
+      expect(http.post).not.toHaveBeenCalled();
     });
 
     it('merges explain markers after static markers when the plan flags an anti-pattern', async () => {

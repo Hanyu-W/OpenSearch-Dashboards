@@ -62,8 +62,9 @@ describe('handleAiFixCommand', () => {
         lintContext,
       })
     );
-    expect(request?.chatMessage).toContain('apply_ppl_lint_fix_data');
-    expect(request?.chatMessage).toContain('req-1');
+    expect(request?.chatMessage).not.toContain('apply_ppl_lint_fix_data');
+    expect(request?.chatMessage).not.toContain('req-1');
+    expect(request?.chatContext).toContain('apply_ppl_lint_fix_data');
     expect(onAskAiFix).toHaveBeenCalledWith(request);
   });
 

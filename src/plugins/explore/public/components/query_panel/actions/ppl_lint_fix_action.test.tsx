@@ -8,6 +8,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { renderHook } from '@testing-library/react';
 import { act } from 'react';
 import { validatePPLLintFixCandidate } from '@osd/monaco';
+import { verifyPerformanceFixOutcome } from '../../../../../data/public';
 import {
   APPLY_PPL_LINT_FIX_EXPLORE_TOOL_DEFINITION,
   registerDisabledPPLLintFixAction,
@@ -25,6 +26,10 @@ const mockSetEditorTextWithQuery = jest.fn();
 
 jest.mock('@osd/monaco', () => ({
   validatePPLLintFixCandidate: jest.fn(),
+}));
+
+jest.mock('../../../../../data/public', () => ({
+  verifyPerformanceFixOutcome: jest.fn(),
 }));
 
 jest.mock('../../../../../opensearch_dashboards_react/public', () => ({
@@ -57,6 +62,7 @@ jest.mock('@elastic/eui', () => ({
 }));
 
 const mockValidatePPLLintFixCandidate = jest.mocked(validatePPLLintFixCandidate);
+const mockVerifyPerformanceFixOutcome = jest.mocked(verifyPerformanceFixOutcome);
 
 const request = {
   requestId: 'req-1',
@@ -79,6 +85,7 @@ describe('usePPLLintFixAction', () => {
     jest.clearAllMocks();
     clearActivePPLLintFixSession();
     mockValidatePPLLintFixCandidate.mockReturnValue({ accepted: true });
+    mockVerifyPerformanceFixOutcome.mockResolvedValue(true);
   });
 
   const renderAndGetAction = () => {
@@ -220,6 +227,115 @@ describe('usePPLLintFixAction', () => {
         reason: 'syntax-error',
       })
     );
+    expect(mockVerifyPerformanceFixOutcome).not.toHaveBeenCalled();
+    expect(mockSetEditorTextWithQuery).not.toHaveBeenCalled();
+  });
+
+  it('revalidates a 3.5 performance fix before applying only the attributed edit', async () => {
+    const originalQuery =
+      'source=logs* | where droppedAttributesCount + 10 > 20 | ' + 'where severityNumber - 10 > 20';
+    const fixedQuery =
+      'source=logs* | where droppedAttributesCount > 10 | ' + 'where severityNumber - 10 > 20';
+    const targetText = 'droppedAttributesCount + 10 > 20';
+    const startOffset = originalQuery.indexOf(targetText);
+    const lintContext = {
+      useRuntimeGrammar: false,
+      dataSourceVersion: '3.5.0',
+      dataSourceId: 'fidelity-test-cluster-os35',
+      http: { post: jest.fn() },
+    } as any;
+    const performanceRequest = {
+      ...request,
+      query: originalQuery,
+      lintContext,
+      diagnostic: {
+        message: 'This filter runs as a script.',
+        ruleId: 'operation-pushed-as-script',
+        operation: 'filter',
+        outcome: 'filter:script',
+        targetText,
+        targetRange: {
+          startOffset,
+          endOffset: startOffset + targetText.length,
+        },
+      },
+    } as any;
+    const session = {
+      request: performanceRequest,
+      getCurrentQuery: () => originalQuery,
+      getLintContext: () => lintContext,
+    };
+    let currentDuringValidation = false;
+    mockVerifyPerformanceFixOutcome.mockImplementationOnce(
+      async (_original, _fixed, _diagnostic, _context, isCurrent) => {
+        currentDuringValidation = isCurrent();
+        return true;
+      }
+    );
+    setActivePPLLintFixSession(session);
+    const action = renderAndGetAction();
+
+    const result = await action.handler({ fixedQuery });
+
+    expect(mockVerifyPerformanceFixOutcome).toHaveBeenCalledWith(
+      originalQuery,
+      fixedQuery,
+      performanceRequest.diagnostic,
+      lintContext,
+      expect.any(Function)
+    );
+    expect(currentDuringValidation).toBe(true);
+    expect(mockSetEditorTextWithQuery).toHaveBeenCalledWith(fixedQuery);
+    expect(result).toEqual(expect.objectContaining({ success: true, applied: true }));
+  });
+
+  it('rejects a performance fix that does not clear the attributed outcome', async () => {
+    setSession();
+    mockVerifyPerformanceFixOutcome.mockResolvedValue(false);
+    const action = renderAndGetAction();
+
+    const result = await action.handler({
+      fixedQuery: 'source=logs | where response_status = 500',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        applied: false,
+        reason: 'invalid-candidate',
+      })
+    );
+    expect(mockSetEditorTextWithQuery).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the editor changes during performance revalidation', async () => {
+    let currentQuery = request.query;
+    let finishValidation!: (value: boolean) => void;
+    mockVerifyPerformanceFixOutcome.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishValidation = resolve;
+      })
+    );
+    setActivePPLLintFixSession({
+      request,
+      getCurrentQuery: () => currentQuery,
+      getLintContext: () => request.lintContext as any,
+    });
+    const action = renderAndGetAction();
+
+    const resultPromise = action.handler({
+      fixedQuery: 'source=logs | where response_status = 500',
+    });
+    currentQuery = 'source=logs | head 10';
+    finishValidation(true);
+
+    await expect(resultPromise).resolves.toEqual(
+      expect.objectContaining({
+        success: false,
+        applied: false,
+        reason: 'stale-query',
+      })
+    );
     expect(mockSetEditorTextWithQuery).not.toHaveBeenCalled();
   });
 
@@ -284,6 +400,8 @@ describe('renderPPLLintFixAction', () => {
       </>
     );
 
+    expect(screen.getByText('Apply suggested fix')).toBeInTheDocument();
+    expect(screen.getByText('Use the mapped status field.')).toBeInTheDocument();
     expect(screen.getByText('source=logs | where response_status = 500')).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('pplLintFixExploreApplyButton'));
@@ -291,5 +409,51 @@ describe('renderPPLLintFixAction', () => {
 
     expect(onApprove).toHaveBeenCalledTimes(1);
     expect(onReject).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the short product message for a performance fix card', () => {
+    setActivePPLLintFixSession({
+      request: {
+        ...request,
+        diagnostic: {
+          message:
+            'This filter may be slow because it does extra calculations. Compare the field directly instead.',
+          ruleId: 'operation-pushed-as-script',
+        },
+      },
+      getCurrentQuery: () => request.query,
+      getLintContext: () => request.lintContext,
+    });
+
+    const props = {
+      status: 'pending' as const,
+      args: {
+        requestId: 'wrong-id',
+        fixedQuery: 'source=logs | where bytes > 6000',
+        explanation: 'Detailed engine-specific explanation that should not be shown.',
+      },
+    };
+    const rendered = render(<>{renderPPLLintFixAction(props)}</>);
+
+    expect(
+      screen.getByText(
+        'This filter may be slow because it does extra calculations. Compare the field directly instead.'
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Detailed engine-specific explanation that should not be shown.')
+    ).not.toBeInTheDocument();
+
+    clearActivePPLLintFixSession();
+    rendered.rerender(<>{renderPPLLintFixAction({ ...props, status: 'complete' as const })}</>);
+
+    expect(
+      screen.getByText(
+        'This filter may be slow because it does extra calculations. Compare the field directly instead.'
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Detailed engine-specific explanation that should not be shown.')
+    ).not.toBeInTheDocument();
   });
 });

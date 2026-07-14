@@ -106,6 +106,38 @@ describe('diagnosticToMarker', () => {
         endColumn: 5,
       });
     });
+
+    it('carries the exact expected source text for stale-action guards', () => {
+      const marker = diagnosticToMarker(
+        makeDiagnostic({
+          fix: { title: 'T', text: 'age > 32', expectedText: 'age - 2 > 30' },
+        })
+      );
+      expect((markerFix(marker) as any).expectedText).toBe('age - 2 > 30');
+    });
+  });
+
+  it('maps attributed related ranges to Monaco related information', () => {
+    const resource = monaco.Uri.parse('inmemory://model/q.ppl');
+    const marker = diagnosticToMarker(
+      makeDiagnostic({
+        attribution: {
+          confidence: 'causal-probe',
+          candidateId: 'sort:1:2',
+          relatedRanges: [{ startLine: 2, startColumn: 3, endLine: 2, endColumn: 4 }],
+        },
+      }),
+      resource
+    );
+    expect(marker.relatedInformation).toEqual([
+      expect.objectContaining({
+        resource,
+        startLineNumber: 2,
+        startColumn: 4,
+        endLineNumber: 2,
+        endColumn: 5,
+      }),
+    ]);
   });
 });
 

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   EuiButton,
   EuiButtonEmpty,
@@ -17,6 +17,7 @@ import {
 import { i18n } from '@osd/i18n';
 import { useMount, useUnmount } from 'react-use';
 import { validatePPLLintFixCandidate } from '@osd/monaco';
+import { verifyPerformanceFixOutcome } from '../../../../../data/public';
 import { useOpenSearchDashboards } from '../../../../../opensearch_dashboards_react/public';
 import { ExploreServices } from '../../../types';
 import { useSetEditorTextWithQuery } from '../../../application/hooks';
@@ -47,6 +48,8 @@ interface PPLLintFixRenderProps {
   onApprove?: () => void;
   onReject?: () => void;
 }
+
+const PERFORMANCE_RULE_IDS = new Set(['operation-not-pushed', 'operation-pushed-as-script']);
 
 const buildFailureResult = (
   requestId: string | undefined,
@@ -79,7 +82,7 @@ export const APPLY_PPL_LINT_FIX_EXPLORE_TOOL_DEFINITION = {
       },
       explanation: {
         type: 'string',
-        description: 'A short explanation of the correction.',
+        description: 'One short plain-language sentence that says what changed and why it helps.',
       },
     },
     required: ['fixedQuery'],
@@ -130,16 +133,11 @@ const PPLLintFixCard: React.FC<PPLLintFixRenderProps> = ({
   const [, forceRender] = useState(0);
   useEffect(() => subscribePPLLintFixOutcome(() => forceRender((n) => n + 1)), []);
 
-  // Read the diagnostic from the active session immediately rather than gating on
-  // the streamed `args.requestId`: the tool args arrive incrementally over the
-  // AG-UI stream, so keying on `args.requestId` leaves the rule info blank until
-  // the whole args JSON lands. There is only ever one active lint-fix session, so
-  // fall back to it (unkeyed) while args are still streaming, then prefer the
-  // request-matched session once the id is present.
-  const session = args?.requestId
-    ? getActivePPLLintFixSession(args.requestId)
-    : getActivePPLLintFixSession();
-  const diagnostic = session?.request.diagnostic;
+  // There is only one active lint-fix session. Read it directly so partial or
+  // inaccurate model-provided arguments cannot hide the diagnostic.
+  const session = getActivePPLLintFixSession();
+  const diagnosticRef = useRef(session?.request.diagnostic);
+  const diagnostic = session?.request.diagnostic ?? diagnosticRef.current;
 
   // Prefer the local outcome (set synchronously by the click / apply handler)
   // over the framework status, which lags the AG-UI round-trip. The apply
@@ -153,6 +151,10 @@ const PPLLintFixCard: React.FC<PPLLintFixRenderProps> = ({
   const failureMessage =
     (outcome?.kind === 'failed' ? outcome.message : undefined) ?? result?.message ?? error?.message;
   const terminal = applied || dismissed || failed;
+  const explanation =
+    (diagnostic?.ruleId && PERFORMANCE_RULE_IDS.has(diagnostic.ruleId)
+      ? diagnostic.message
+      : args?.explanation) || diagnostic?.message;
 
   // Approve needs no local marking — the apply handler records the applied/failed
   // outcome itself. Reject has no handler that runs (the tool is rejected before
@@ -168,11 +170,10 @@ const PPLLintFixCard: React.FC<PPLLintFixRenderProps> = ({
       <EuiText size="s">
         <strong>
           {i18n.translate('explore.pplLintFixAction.title', {
-            defaultMessage: 'Apply PPL lint fix',
+            defaultMessage: 'Apply suggested fix',
           })}
         </strong>
-        {diagnostic?.message ? <p>{diagnostic.message}</p> : null}
-        {args?.explanation ? <p>{args.explanation}</p> : null}
+        {explanation ? <p>{explanation}</p> : null}
       </EuiText>
 
       {args?.fixedQuery ? (
@@ -349,6 +350,33 @@ export function usePPLLintFixAction(
               validation.reason ?? 'invalid-candidate',
               'The proposed fix did not pass PPL lint validation.',
               { validation }
+            );
+          }
+
+          const performanceOutcomeCleared = await verifyPerformanceFixOutcome(
+            session.request.query,
+            fixedQuery,
+            session.request.diagnostic,
+            session.getLintContext(),
+            () =>
+              getActivePPLLintFixSession() === session &&
+              (session.getCurrentQuery() ?? '') === session.request.query
+          );
+          if (
+            getActivePPLLintFixSession() !== session ||
+            (session.getCurrentQuery() ?? '') !== session.request.query
+          ) {
+            return fail(
+              session.request.requestId,
+              'stale-query',
+              'The query changed while this PPL lint fix was being validated.'
+            );
+          }
+          if (!performanceOutcomeCleared) {
+            return fail(
+              session.request.requestId,
+              'invalid-candidate',
+              'The proposed query did not clear the attributed performance outcome.'
             );
           }
 

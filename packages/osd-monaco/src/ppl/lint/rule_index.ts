@@ -130,7 +130,7 @@ export function findAllDescendantsByRule(
     return [];
   }
   const matches: ParserRuleContext[] = [];
-  const stack: ParseTree[] = [...(ctx.children ?? [])];
+  const stack: ParseTree[] = [...(ctx.children ?? [])].reverse();
   while (stack.length > 0) {
     const node = stack.pop()!;
     if (isRuleNode(node)) {
@@ -138,7 +138,8 @@ export function findAllDescendantsByRule(
         matches.push(node as ParserRuleContext);
       }
       if (node.children) {
-        stack.push(...node.children);
+        // Stack is LIFO, so push children in reverse to visit source order.
+        stack.push(...node.children.slice().reverse());
       }
     }
   }
