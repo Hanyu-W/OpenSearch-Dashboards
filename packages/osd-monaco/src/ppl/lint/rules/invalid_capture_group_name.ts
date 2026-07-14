@@ -6,7 +6,8 @@
 import type { ParserRuleContext } from 'antlr4ng';
 import { Diagnostic } from '../diagnostic';
 import { Detector } from '../types';
-import { findAllDescendantsByRule, findChildByRule, RuleNameToIndex } from '../rule_index';
+import { findAllDescendantsByRule } from '../rule_index';
+import { findPatternLiteral } from '../pattern_literal';
 import { rangeFromContext, rangeWithinToken } from '../range_utils';
 
 // Engine ground truth: RegexCommonUtils.isValidJavaRegexGroupName validates
@@ -65,29 +66,6 @@ function extractGroups(literalRaw: string): ExtractedGroup[] {
   return groups;
 }
 
-function findStringLiteral(
-  command: ParserRuleContext,
-  ruleNameToIndex: RuleNameToIndex
-): ParserRuleContext | undefined {
-  // Direct child first (grok/parse), then descendant (rexExpr → stringLiteral).
-  const direct = findChildByRule(command, ruleNameToIndex, 'stringLiteral');
-  if (direct) {
-    return direct;
-  }
-  // The regex pattern is the last string literal in source order; a quoted
-  // field/mode argument, when present, precedes it. findAllDescendantsByRule
-  // yields nodes in DFS pop order (not source order), so select by source
-  // position rather than relying on the array index.
-  const descendants = findAllDescendantsByRule(command, ruleNameToIndex, 'stringLiteral');
-  let pattern: ParserRuleContext | undefined;
-  for (const node of descendants) {
-    if (!pattern || (node.start?.start ?? -1) > (pattern.start?.start ?? -1)) {
-      pattern = node;
-    }
-  }
-  return pattern;
-}
-
 export const invalidCaptureGroupNameDetector: Detector = (
   tree,
   config,
@@ -102,7 +80,7 @@ export const invalidCaptureGroupNameDetector: Detector = (
   }
 
   for (const command of commands) {
-    const literalNode = findStringLiteral(command, ruleNameToIndex);
+    const literalNode = findPatternLiteral(command, ruleNameToIndex);
     if (!literalNode) {
       continue;
     }

@@ -103,6 +103,12 @@
       "anchor": "disabling-object-fields",
       "quality": "close"
     },
+    "rex-scan-cost": {
+      "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/rex/",
+      "page": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/rex/",
+      "anchor": "",
+      "quality": "weak"
+    },
     "operation-not-pushed": {
       "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/",
       "page": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/",

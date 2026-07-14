@@ -174,6 +174,13 @@ export const ENGINE_OUTCOMES: Record<string, RuleHoverContent> = {
     safeToIgnoreWhen:
       'the query already matches few documents, so running the script per document is cheap.',
   },
+  'rex-scan-cost': {
+    engineBehavior:
+      'rex/parse/grok run their pattern over the source field for every row; on a text field the engine loads _source, decompresses, and evaluates per document, so the query returns correct data but can be slow. This is an advisory performance heads-up.',
+    failureClass: 'advisory',
+    safeToIgnoreWhen:
+      'the extracted set is small or the field is not large — the per-row scan cost is not a concern for your data.',
+  },
 };
 
 /** Look up the static hover content for a ruleId, or undefined when none. */
