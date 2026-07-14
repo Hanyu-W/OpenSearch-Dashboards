@@ -20,6 +20,7 @@ import { aggOnTextDetector } from './rules/agg_on_text';
 import { flatObjectSubfieldDetector } from './rules/flat_object_subfield';
 import { typeMismatchNumericDetector } from './rules/type_mismatch_numeric';
 import { enabledFalseObjectDetector } from './rules/enabled_false_object';
+import { rexScanCostDetector } from './rules/rex_scan_cost';
 
 const registry = new Map<string, Detector>();
 
@@ -67,6 +68,7 @@ export function registerBuiltInDetectors(): void {
   registerDetector('flat-object-subfield', flatObjectSubfieldDetector);
   registerDetector('type-mismatch-numeric', typeMismatchNumericDetector);
   registerDetector('enabled-false-object', enabledFalseObjectDetector);
+  registerDetector('rex-scan-cost', rexScanCostDetector);
 }
 
 // Register built-ins at module load.
