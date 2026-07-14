@@ -8,6 +8,7 @@ import { Diagnostic } from '../diagnostic';
 import { Detector } from '../types';
 import { findAllDescendantsByRule, findChildByRule, RuleNameToIndex } from '../rule_index';
 import { collectAlternateSourceSubtrees } from '../pipeline_shape';
+import { decodePatternLiteral, findPatternLiteral, leadingLiteralToken } from '../pattern_literal';
 import { rangeFromContext } from '../range_utils';
 
 // Advisory (no engine throw): `rex`, `parse`, and `grok` extract new fields by
@@ -96,6 +97,54 @@ const EXTRACTION_COMMANDS: readonly ExtractionCommand[] = [
   { rule: 'grokCommand', keyword: 'grok', sourceField: bareFieldSource },
 ];
 
+// Base message: the cost heads-up plus the row-preserving caveat. Always emitted.
+function baseMessage(keyword: string, field: string): string {
+  return (
+    `${keyword} runs its pattern over the text field "${field}" for every row, ` +
+    `which can be expensive on large text fields. A more selective prefilter or a ` +
+    `purpose-built field may reduce the scan. Adding a filter before extraction can ` +
+    `change results, because extraction keeps rows that do not match.`
+  );
+}
+
+// Enrichment appended when the pattern begins with a clean literal token. Names
+// the token and both filter forms with their opposite failure directions, and
+// repeats the verify-it-doesn't-drop-rows caveat. Never asserts either form is
+// safe to paste — the whole rule is advisory (see the header docblock). We show
+// the *analyzed* token, never the raw punctuation-laden run: a `where <field>
+// like '%level%'` is an exact substring but is not pushed down on `text`, while
+// `match_phrase` is pushed down but matches whole analyzer tokens, so it misses
+// values where the token is glued into a larger token.
+function prefilterSentence(field: string, token: string): string {
+  return (
+    ` The pattern begins with the token "${token}". If that token is selective, a ` +
+    `filter before this stage — \`where ${field} like '%${token}%'\` (exact substring, ` +
+    `but not pushed down on text) or \`where match_phrase(${field}, '${token}')\` (pushed ` +
+    `down, but matches whole analyzer tokens, so it can miss values where "${token}" is ` +
+    `part of a larger token) — may cut the scan. Verify first: extraction keeps ` +
+    `non-matching rows with a null value, so a filter can drop rows and change ` +
+    `stats/count/sort results.`
+  );
+}
+
+/**
+ * The candidate prefilter token for one extraction command, or `undefined` when
+ * the pattern has no clean leading literal token. Locates the pattern literal,
+ * decodes the PPL string escaping, and scans the leading literal run. Any step
+ * that cannot produce a provably-safe superset token returns `undefined` — the
+ * safe default, which falls back to the base (unenriched) message.
+ */
+function prefilterToken(
+  command: ParserRuleContext,
+  ruleNameToIndex: RuleNameToIndex
+): string | undefined {
+  const literal = findPatternLiteral(command, ruleNameToIndex);
+  if (!literal) {
+    return undefined;
+  }
+  return leadingLiteralToken(decodePatternLiteral(literal.getText()));
+}
+
 export const rexScanCostDetector: Detector = (tree, config, context, ruleNameToIndex) => {
   const typeMap = context.typeMap;
   if (!typeMap) {
@@ -131,14 +180,19 @@ export const rexScanCostDetector: Detector = (tree, config, context, ruleNameToI
       if (esType === undefined || !TEXT_TYPES.has(esType)) {
         continue;
       }
+      // Enrich the message with a concrete prefilter token when the pattern has
+      // a clean leading literal; keep hoverFacts as { field, esType } — the token
+      // rides the message, not hoverFacts.suggestion (that key renders as
+      // "Closest known field", which would wrongly imply the token replaces the
+      // source field).
+      const token = prefilterToken(command, ruleNameToIndex);
+      const message = token
+        ? baseMessage(keyword, field) + prefilterSentence(field, token)
+        : baseMessage(keyword, field);
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,
-        message:
-          `${keyword} runs its pattern over the text field "${field}" for every row, ` +
-          `which can be expensive on large text fields. A more selective prefilter or a ` +
-          `purpose-built field may reduce the scan. Adding a filter before extraction can ` +
-          `change results, because extraction keeps rows that do not match.`,
+        message,
         range: rangeFromContext(command),
         docUrl: config.docUrl,
         hoverFacts: { field, esType },
