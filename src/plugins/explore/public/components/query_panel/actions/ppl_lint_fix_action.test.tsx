@@ -362,7 +362,7 @@ describe('APPLY_PPL_LINT_FIX_EXPLORE_TOOL_DEFINITION', () => {
 });
 
 describe('registerDisabledPPLLintFixAction', () => {
-  it('registers a disabled action whose handler tells Olly to stop tool calls', async () => {
+  it('registers a disabled action whose handler tells the AI to stop tool calls', async () => {
     const registerAction = jest.fn();
 
     registerDisabledPPLLintFixAction(registerAction);

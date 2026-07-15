@@ -4,10 +4,10 @@
  */
 
 /**
- * Monaco command registration for the AI ("Ask Olly to fix") quick-fix. The
+ * Monaco command registration for the AI ("Ask AI to fix") quick-fix. The
  * command stays inside the leaf Monaco package, but it no longer performs a
  * hidden LLM round trip or applies editor edits. It builds a plain request and
- * asks the host to open Olly chat; the host owns chat services and the
+ * asks the host to open AI chat; the host owns chat services and the
  * confirmation/apply tool.
  */
 

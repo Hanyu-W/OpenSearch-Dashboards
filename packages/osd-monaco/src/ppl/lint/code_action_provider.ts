@@ -33,7 +33,7 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
     const actions: monaco.languages.CodeAction[] = [];
 
     // The AI quick-fix is offered only when AI features are on and the host has
-    // wired the Olly chat opener/apply-tool flow. Computed once per provider
+    // wired the AI chat opener/apply-tool flow. Computed once per provider
     // call so the lightbulb and hover card share the same availability rule.
     const lintCtx = getPPLLintContext(model);
     const aiFixAvailable = lintCtx?.enableAIFeatures !== false && !!lintCtx?.onAskAiFix;
@@ -66,7 +66,7 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
       }
 
       // Deterministic-first, AI-as-fallback: ANY lint marker with no deterministic
-      // fix gets an "✨ Ask Olly to fix" action that dispatches a command (async LLM
+      // fix gets an "✨ Ask AI to fix" action that dispatches a command (async LLM
       // round-trip after the click), distinct from the synchronous edit-carrying
       // quick-fixes below. The trigger is purely "this marker has no template fix"
       // — no per-rule allowlist — because whether a fix exists is decided per
@@ -99,13 +99,13 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
             })
           );
         actions.push({
-          title: '✨ Ask Olly to fix this',
+          title: '✨ Ask AI to fix this',
           diagnostics: [marker],
           kind: 'quickfix',
           isAI: true,
           command: {
             id: AI_FIX_COMMAND_ID,
-            title: 'Ask Olly to fix this',
+            title: 'Ask AI to fix this',
             arguments: [
               {
                 modelUri: model.uri.toString(),

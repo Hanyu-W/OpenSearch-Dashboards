@@ -172,7 +172,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     if (!chat?.sendMessageWithWindow) {
       services.notifications.toasts.addWarning(
         i18n.translate('data.pplLint.aiFix.chatUnavailable', {
-          defaultMessage: 'Olly is not available for this PPL lint fix.',
+          defaultMessage: 'AI is not available for this PPL lint fix.',
         })
       );
       return;
@@ -201,7 +201,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
       contextStore?.removeContextById?.(contextId);
       services.notifications.toasts.addWarning(
         i18n.translate('data.pplLint.aiFix.openChatError', {
-          defaultMessage: 'Could not open Olly for this PPL lint fix.',
+          defaultMessage: 'Could not open AI for this PPL lint fix.',
         })
       );
     });

@@ -212,7 +212,7 @@ describe('renderHoverCard', () => {
   });
 
   it('never renders the AI-fix action on the card (it lives only in the ⌘. menu)', () => {
-    // The "Ask Olly to fix" action was intentionally removed from the hover card
+    // The "Ask AI to fix" action was intentionally removed from the hover card
     // to avoid presenting the same action twice — the quick-fix lightbulb offers
     // it. The card must not carry the action label or any command link.
     const md = renderHoverCard({
@@ -220,7 +220,7 @@ describe('renderHoverCard', () => {
       severityLabel: 'Warning',
       message: 'Comparing numeric field to a string literal.',
     });
-    expect(md).not.toContain('Ask Olly to fix this');
+    expect(md).not.toContain('Ask AI to fix this');
     expect(md).not.toContain('command:');
   });
 });

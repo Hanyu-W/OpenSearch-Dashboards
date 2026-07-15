@@ -147,7 +147,7 @@ describe('pplLintHoverProvider', () => {
     expect(md).not.toContain('**Engine behavior**');
   });
 
-  describe('AI "Ask Olly to fix" action is not on the hover card', () => {
+  describe('AI "Ask AI to fix" action is not on the hover card', () => {
     const aiMarker = () =>
       makeMarker({
         code: {
@@ -165,7 +165,7 @@ describe('pplLintHoverProvider', () => {
       markersByOwner[LINT_OWNER] = [aiMarker()];
       setAiContext();
       const hover = hoverAt(1, 7);
-      expect(markdownOf(hover)).not.toContain('Ask Olly to fix this');
+      expect(markdownOf(hover)).not.toContain('Ask AI to fix this');
       expect(markdownOf(hover)).not.toContain('command:');
       // No command link on the card → nothing is trusted.
       expect(trustedOf(hover)).toBe(false);

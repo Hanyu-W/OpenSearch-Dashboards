@@ -77,7 +77,7 @@ export function buildPPLLintContext(
     visibleIndices: cacheMatchesDataset ? lintFields.visibleIndices : undefined,
     overrides: buildOverridesFromSettings(services.uiSettings),
     http: services.http,
-    // Dataset metadata + AI-feature/chat hooks the "Ask Olly to fix" command
+    // Dataset metadata + AI-feature/chat hooks the "Ask AI to fix" command
     // reads via getPPLLintContext(model). enableAIFeatures hides the action
     // entirely when AI features are off. These ride the runtime bridge path only.
     datasetTitle: dataset?.title,

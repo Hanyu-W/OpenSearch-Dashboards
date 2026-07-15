@@ -20,7 +20,7 @@ export function hashPPLLintFixSource(query: string): string {
 }
 
 /**
- * The SHORT, human-facing chat bubble the user sees when they click "Ask Olly to
+ * The SHORT, human-facing chat bubble the user sees when they click "Ask AI to
  * fix". It carries only a plain-language explanation, the part to fix, and the
  * query. Technical instructions for the model ride out-of-band via
  * {@link buildChatFixContext} so they never clutter the chat.

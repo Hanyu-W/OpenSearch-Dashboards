@@ -4,7 +4,7 @@
  */
 
 /**
- * The Monaco command id the AI ("Ask Olly to fix") quick-fix dispatches.
+ * The Monaco command id the AI ("Ask AI to fix") quick-fix dispatches.
  *
  * Isolated in its own tiny module so the code-action provider can reference the
  * id without importing `ai_fix_command.ts`, which transitively pulls in the

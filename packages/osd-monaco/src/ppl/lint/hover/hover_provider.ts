@@ -110,7 +110,7 @@ export const pplLintHoverProvider: monaco.languages.HoverProvider = {
         {
           value,
           // The card carries only plain https links (the doc "Learn more" link),
-          // no command links, so it needs no trust. The AI ("Ask Olly to fix")
+          // no command links, so it needs no trust. The AI ("Ask AI to fix")
           // action lives solely in the ⌘. quick-fix menu.
           isTrusted: false,
         },

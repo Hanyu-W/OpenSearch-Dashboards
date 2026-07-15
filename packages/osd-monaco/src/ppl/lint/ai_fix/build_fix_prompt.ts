@@ -4,7 +4,7 @@
  */
 
 /**
- * Option 2 — the prompt builder for the AI ("Ask Olly to fix") quick-fix.
+ * Option 2 — the prompt builder for the AI ("Ask AI to fix") quick-fix.
  *
  * Pure and offline: it turns a broken query + its diagnostic into the freetext
  * `question` the `/api/enhancements/assist/generate` route forwards to the

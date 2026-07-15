@@ -60,7 +60,7 @@ describe('pplLintCodeActionProvider — AI quick-fix emission', () => {
     setPPLLintContext(model, { enableAIFeatures: true, onAskAiFix: jest.fn() } as any);
     const actions = provide([aiMarker('type-mismatch-numeric')]);
     expect(actions).toHaveLength(1);
-    expect(actions[0].title).toContain('Ask Olly to fix');
+    expect(actions[0].title).toContain('Ask AI to fix');
     expect((actions[0] as any).isAI).toBe(true);
     expect(actions[0].command?.id).toBe(AI_FIX_COMMAND_ID);
     expect((actions[0].command?.arguments?.[0] as any).ruleId).toBe('type-mismatch-numeric');
@@ -115,7 +115,7 @@ describe('pplLintCodeActionProvider — AI quick-fix emission', () => {
     expect((actions[0] as any).isAI).toBe(true);
   });
 
-  it('passes the exact target and performance outcome to the Olly command', () => {
+  it('passes the exact target and performance outcome to the AI command', () => {
     setPPLLintContext(model, { enableAIFeatures: true, onAskAiFix: jest.fn() } as any);
     const marker = aiMarker('operation-pushed-as-script');
     setModelHoverFacts(model, new Map([[markerFixKey(marker), { operation: 'sort' }]]));

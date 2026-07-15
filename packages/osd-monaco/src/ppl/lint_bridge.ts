@@ -76,7 +76,7 @@ export interface PPLLintContext extends PPLValidationContext, LintPayloadContext
    */
   onAiFixOutcome?: (outcome: AiFixOutcomeSummary) => void;
   /**
-   * Host-supplied opener for the Olly chat-based lint fix flow. The leaf
+   * Host-supplied opener for the AI chat-based lint fix flow. The leaf
    * package cannot import core/chat, so it builds a plain request payload and
    * lets the host open chat plus register the apply tool.
    */

@@ -225,7 +225,7 @@ export function renderHoverCard(input: HoverCardInput): string {
     lines.push(`**Suggested fix** → ${code(fixText)}`);
   }
 
-  // Note: the AI ("Ask Olly to fix") action is intentionally NOT rendered on the
+  // Note: the AI ("Ask AI to fix") action is intentionally NOT rendered on the
   // hover card. It is offered solely through the ⌘. quick-fix menu (see
   // code_action_provider) to avoid presenting the same action twice.
 

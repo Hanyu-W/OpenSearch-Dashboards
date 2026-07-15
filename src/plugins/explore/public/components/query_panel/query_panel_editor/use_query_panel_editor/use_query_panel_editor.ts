@@ -176,7 +176,7 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
       if (!chat?.sendMessageWithWindow) {
         services.notifications?.toasts?.addWarning(
           i18n.translate('explore.queryPanelEditor.pplLintFix.chatUnavailable', {
-            defaultMessage: 'Olly chat is not available for this PPL fix.',
+            defaultMessage: 'AI chat is not available for this PPL fix.',
           })
         );
         return;
@@ -202,7 +202,7 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
         promise: chat.sendMessageWithWindow(request.chatMessage, [], { clearConversation: true }),
         timeout: 4000,
         errorMessage: i18n.translate('explore.queryPanelEditor.pplLintFix.chatTimeout', {
-          defaultMessage: 'Timed out opening Olly chat for this PPL fix.',
+          defaultMessage: 'Timed out opening AI chat for this PPL fix.',
         }),
       }).catch((error) => {
         // On failure to open chat, drop the context entry we just added so it does
@@ -212,7 +212,7 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
           error instanceof Error
             ? error.message
             : i18n.translate('explore.queryPanelEditor.pplLintFix.chatError', {
-                defaultMessage: 'Could not open Olly chat for this PPL fix.',
+                defaultMessage: 'Could not open AI chat for this PPL fix.',
               })
         );
       });

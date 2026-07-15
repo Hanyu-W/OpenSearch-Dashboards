@@ -28,7 +28,7 @@ const args: AiFixCommandArgs = {
 };
 
 describe('handleAiFixCommand', () => {
-  it('dispatches an Olly chat request without applying or generating a fix', () => {
+  it('dispatches an AI chat request without applying or generating a fix', () => {
     const onAskAiFix = jest.fn();
     const lintContext: LintRunContext = {
       fields: new Set(['age']),
