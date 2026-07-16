@@ -510,8 +510,8 @@ function rangeContains(outer: DiagnosticRange, inner: DiagnosticRange): boolean 
 }
 
 /**
- * PASS 3 — internal overlap suppression. Drop any existence (warning) finding
- * whose range is contained within a shape (error) finding's range, so a single
+ * PASS 3 — internal overlap suppression. Drop any existence finding whose
+ * range is contained within a shape finding's range, so a single
  * `grok field=body` surfaces one actionable error rather than a confusing
  * error + "Unknown field 'field'" pair. Shape findings are always kept.
  */
@@ -535,7 +535,8 @@ function suppressContained(
  *    detector on the simplified grammar surface, where that specific backend-
  *    accepted typo otherwise becomes only a generic syntax error.
  *  - PASS 2 (existence): a referenced field must exist on the source. Emits
- *    `warning` (the catalog nominal). Self-gates on an empty field list.
+ *    `error` (the catalog nominal — the query will not run). Self-gates on an
+ *    empty field list.
  * PASS 3 suppresses an existence finding the shape pass already covers.
  */
 export const fieldValidationDetector: Detector = (tree, config, context, ruleNameToIndex) => {

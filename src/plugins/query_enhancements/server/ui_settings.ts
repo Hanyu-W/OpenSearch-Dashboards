@@ -24,7 +24,7 @@ const PPL_LINT_RULE_DEFAULTS: ReadonlyArray<{
   { id: 'multisearch-min-subsearch', enabled: true, severity: 'error' },
   { id: 'disabled-join-type', enabled: true, severity: 'warning' },
   { id: 'head-without-sort', enabled: true, severity: 'info' },
-  { id: 'field-validation', enabled: true, severity: 'warning' },
+  { id: 'field-validation', enabled: true, severity: 'error' },
   { id: 'expand-on-non-array', enabled: true, severity: 'warning' },
   { id: 'wildcard-source-zero-match', enabled: true, severity: 'info' },
   { id: 'division-by-zero', enabled: true, severity: 'warning' },
