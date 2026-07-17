@@ -45,7 +45,6 @@ export function registerRoutes(http: HttpServiceSetup) {
   };
 
   const router = http.createRouter();
-
   router.get(
     {
       path: '/api/index_patterns/_fields_for_wildcard',

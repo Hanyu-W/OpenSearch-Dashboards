@@ -8,10 +8,12 @@ import * as osdMonaco from '@osd/monaco';
 import { hasExplainOutcome } from '@osd/monaco/target/ppl/lint/explain/explain_outcomes';
 import { explainCache } from '../ppl_lint/explain_cache';
 import { buildPerformanceFixProbeQueries } from '../ppl_lint/performance_fix_revalidation';
-import { PPLLintFixToolRegistration } from './ppl_lint_fix_tool_registration';
+import { PPLLintFixToolArgs, PPLLintFixToolRegistration } from './ppl_lint_fix_tool_registration';
 import {
   clearPPLLintFixSession,
   getPPLLintFixOutcome,
+  getPPLLintFixSession,
+  PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX,
   PPL_LINT_FIX_DATA_TOOL_NAME,
   storePPLLintFixSession,
 } from './ppl_lint_fix_session';
@@ -56,12 +58,14 @@ describe('PPLLintFixToolRegistration', () => {
 
   let queryString: { getQuery: jest.Mock; setQuery: jest.Mock };
   let mockUseAssistantAction: jest.Mock;
+  let removeContextById: jest.Mock;
 
   const renderRegistration = (enabled = true) => {
     render(
       <PPLLintFixToolRegistration
         queryString={queryString as any}
         useAssistantAction={mockUseAssistantAction as any}
+        removeContextById={removeContextById}
         enabled={enabled}
       />
     );
@@ -78,12 +82,37 @@ describe('PPLLintFixToolRegistration', () => {
     });
   };
 
+  const bindApprovedArgs = (config: any, args: PPLLintFixToolArgs): PPLLintFixToolArgs => {
+    const card = render(
+      <>
+        {config.render({
+          status: 'executing',
+          args,
+          onApprove: jest.fn(),
+          onReject: jest.fn(),
+        })}
+      </>
+    );
+    fireEvent.click(card.getByText('Apply to editor'));
+    return { ...args, confirmed: true };
+  };
+
+  const executeApproved = async (config: any, args: PPLLintFixToolArgs) => {
+    const approvedArgs = bindApprovedArgs(config, args);
+    let result: unknown;
+    await act(async () => {
+      result = await config.handler(approvedArgs);
+    });
+    return result;
+  };
+
   beforeEach(() => {
     queryString = {
       getQuery: jest.fn(() => queryState),
       setQuery: jest.fn(),
     };
     mockUseAssistantAction = jest.fn();
+    removeContextById = jest.fn();
     mockValidate.mockReset();
     mockHasExplainOutcome.mockReset();
     mockResolveExplain.mockReset();
@@ -92,11 +121,11 @@ describe('PPLLintFixToolRegistration', () => {
       originalTreatment: 'source=logs | where status = 500',
       fixedTreatment: 'source=logs | where status = 200',
     });
-    clearPPLLintFixSession();
+    act(() => clearPPLLintFixSession());
   });
 
   afterEach(() => {
-    clearPPLLintFixSession();
+    act(() => clearPPLLintFixSession());
   });
 
   it('registers the data-host apply tool with confirmation and a custom renderer', () => {
@@ -144,15 +173,35 @@ describe('PPLLintFixToolRegistration', () => {
     expect(queryString.setQuery).not.toHaveBeenCalled();
   });
 
-  it('ignores a wrong model-provided sourceQueryHash and applies against the active session', async () => {
-    // Hash-matching was removed by design: the handler trusts the single active
-    // session (staleness is checked against the live editor query), so a bogus
-    // hash from a weak model must NOT block a valid fix.
+  it('fails closed when a confirmed call has no card approval binding', async () => {
+    storeSession();
+    const activeSession = getPPLLintFixSession();
+    const config = renderRegistration();
+
+    const result = await config.handler({
+      fixedQuery: 'source=logs | where status_code = 500',
+      confirmed: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        reason: 'missing-request',
+      })
+    );
+    expect(getPPLLintFixSession()).toBe(activeSession);
+    expect(queryString.setQuery).not.toHaveBeenCalled();
+  });
+
+  it('ignores a wrong model-provided sourceQueryHash and applies against the card-bound session', async () => {
+    // Hash-matching was removed by design: the handler trusts the request bound
+    // by the approved card, so a bogus hash from a weak model must not block a
+    // valid fix.
     storeSession();
     mockValidate.mockReturnValue({ accepted: true });
     const config = renderRegistration();
 
-    const result = await config.handler({
+    const result = await executeApproved(config, {
       requestId: 'wrong-id',
       sourceQueryHash: 'hash-2',
       fixedQuery: 'source=logs | where status_code = 500',
@@ -166,7 +215,7 @@ describe('PPLLintFixToolRegistration', () => {
     storeSession({ getCurrentQuery: jest.fn(() => 'source=logs | head 10') });
     const config = renderRegistration();
 
-    const result = await config.handler({
+    const result = await executeApproved(config, {
       requestId: 'request-1',
       sourceQueryHash: 'hash-1',
       fixedQuery: 'source=logs | where status_code = 500',
@@ -179,6 +228,10 @@ describe('PPLLintFixToolRegistration', () => {
       })
     );
     expect(queryString.setQuery).not.toHaveBeenCalled();
+    expect(getPPLLintFixSession()).toBeUndefined();
+    expect(removeContextById).toHaveBeenCalledWith(
+      PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX + request.requestId
+    );
   });
 
   it('rejects an invalid candidate', async () => {
@@ -186,7 +239,7 @@ describe('PPLLintFixToolRegistration', () => {
     mockValidate.mockReturnValue({ accepted: false, reason: 'syntax-error' });
     const config = renderRegistration();
 
-    const result = await config.handler({
+    const result = await executeApproved(config, {
       requestId: 'request-1',
       sourceQueryHash: 'hash-1',
       fixedQuery: 'source=logs | where',
@@ -206,6 +259,49 @@ describe('PPLLintFixToolRegistration', () => {
       })
     );
     expect(queryString.setQuery).not.toHaveBeenCalled();
+    expect(getPPLLintFixSession()).toBeDefined();
+    expect(removeContextById).not.toHaveBeenCalled();
+  });
+
+  it('keeps a corrected retry card actionable after an invalid candidate', async () => {
+    storeSession();
+    mockValidate.mockReturnValue({ accepted: false, reason: 'syntax-error' });
+    const config = renderRegistration();
+    const firstArgs = { fixedQuery: 'source=logs | where' };
+
+    render(
+      <>
+        {config.render({
+          status: 'executing',
+          args: firstArgs,
+          onApprove: jest.fn(),
+          onReject: jest.fn(),
+        })}
+      </>
+    );
+    fireEvent.click(screen.getByText('Apply to editor'));
+
+    await expect(
+      config.handler({
+        ...firstArgs,
+        confirmed: true,
+      })
+    ).resolves.toEqual(expect.objectContaining({ success: false, reason: 'invalid-candidate' }));
+
+    render(
+      <>
+        {config.render({
+          status: 'executing',
+          args: { fixedQuery: 'source=logs | where status_code = 500' },
+          onApprove: jest.fn(),
+          onReject: jest.fn(),
+        })}
+      </>
+    );
+
+    expect(screen.getByText('Apply to editor')).toBeInTheDocument();
+    expect(getPPLLintFixSession()).toBeDefined();
+    expect(removeContextById).not.toHaveBeenCalled();
   });
 
   it('applies a valid candidate through queryString.setQuery with force', async () => {
@@ -213,7 +309,7 @@ describe('PPLLintFixToolRegistration', () => {
     mockValidate.mockReturnValue({ accepted: true });
     const config = renderRegistration();
 
-    const result = await config.handler({
+    const result = await executeApproved(config, {
       requestId: 'request-1',
       sourceQueryHash: 'hash-1',
       fixedQuery: ' source=logs | where status_code = 500 ',
@@ -234,6 +330,10 @@ describe('PPLLintFixToolRegistration', () => {
         success: true,
         fixedQuery: 'source=logs | where status_code = 500',
       })
+    );
+    expect(getPPLLintFixSession()).toBeUndefined();
+    expect(removeContextById).toHaveBeenCalledWith(
+      PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX + request.requestId
     );
   });
 
@@ -264,7 +364,7 @@ describe('PPLLintFixToolRegistration', () => {
     mockHasExplainOutcome.mockImplementation((plan) => plan === originalPlan);
     const config = renderRegistration();
 
-    const result = await config.handler({
+    const result = await executeApproved(config, {
       fixedQuery: 'source=logs | where status = 200',
     });
 
@@ -310,7 +410,7 @@ describe('PPLLintFixToolRegistration', () => {
     mockHasExplainOutcome.mockReturnValue(true);
     const config = renderRegistration();
 
-    const result = await config.handler({
+    const result = await executeApproved(config, {
       fixedQuery: 'source=logs | where status = 200',
     });
 
@@ -344,7 +444,7 @@ describe('PPLLintFixToolRegistration', () => {
       .mockResolvedValueOnce({ status: 'error' });
     const config = renderRegistration();
 
-    const result = await config.handler({
+    const result = await executeApproved(config, {
       fixedQuery: 'source=logs | where status = 200',
     });
 
@@ -383,20 +483,28 @@ describe('PPLLintFixToolRegistration', () => {
     mockValidate.mockReturnValue({ accepted: true });
     const config = renderRegistration();
 
-    const resultPromise = config.handler({
-      fixedQuery: 'source=logs | where status = 200',
-    });
+    const resultPromise = config.handler(
+      bindApprovedArgs(config, {
+        fixedQuery: 'source=logs | where status = 200',
+      })
+    );
     currentQuery = 'source=logs | head 10';
     resolveProbes({
       originalTreatment: 'source=logs | where status = 500',
       fixedTreatment: 'source=logs | where status = 200',
     });
 
-    await expect(resultPromise).resolves.toEqual(
-      expect.objectContaining({ success: false, reason: 'stale-query' })
-    );
+    let result: unknown;
+    await act(async () => {
+      result = await resultPromise;
+    });
+    expect(result).toEqual(expect.objectContaining({ success: false, reason: 'stale-query' }));
     expect(mockResolveExplain).not.toHaveBeenCalled();
     expect(queryString.setQuery).not.toHaveBeenCalled();
+    expect(getPPLLintFixSession()).toBeUndefined();
+    expect(removeContextById).toHaveBeenCalledWith(
+      PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX + request.requestId
+    );
   });
 
   it('rejects a performance fix when the editor changes during explain revalidation', async () => {
@@ -428,7 +536,7 @@ describe('PPLLintFixToolRegistration', () => {
     mockHasExplainOutcome.mockImplementation((plan) => plan === originalPlan);
     const config = renderRegistration();
 
-    const result = await config.handler({
+    const result = await executeApproved(config, {
       fixedQuery: 'source=logs | where status = 200',
     });
 
@@ -439,9 +547,13 @@ describe('PPLLintFixToolRegistration', () => {
       })
     );
     expect(queryString.setQuery).not.toHaveBeenCalled();
+    expect(getPPLLintFixSession()).toBeUndefined();
+    expect(removeContextById).toHaveBeenCalledWith(
+      PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX + request.requestId
+    );
   });
 
-  it('renderer wires Apply and Dismiss actions', () => {
+  it('renderer shows both actions and wires Apply', () => {
     storeSession();
     const config = renderRegistration();
     const onApprove = jest.fn();
@@ -466,12 +578,12 @@ describe('PPLLintFixToolRegistration', () => {
     expect(screen.getByText('Use the mapped field name.')).toBeInTheDocument();
     expect(screen.queryByText('Unknown field status')).not.toBeInTheDocument();
     expect(screen.getByText('source=logs | where status_code = 500')).toBeInTheDocument();
+    expect(screen.getByText('Dismiss')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Apply to editor'));
-    fireEvent.click(screen.getByText('Dismiss'));
 
     expect(onApprove).toHaveBeenCalledTimes(1);
-    expect(onReject).toHaveBeenCalledTimes(1);
+    expect(onReject).not.toHaveBeenCalled();
   });
 
   it('uses the short product message for a performance fix card', () => {
@@ -512,16 +624,17 @@ describe('PPLLintFixToolRegistration', () => {
   it('flips the card to "Fix dismissed" the moment Dismiss is clicked', () => {
     storeSession();
     const config = renderRegistration();
+    const args = {
+      requestId: 'request-1',
+      sourceQueryHash: 'hash-1',
+      fixedQuery: 'source=logs | where status_code = 500',
+    };
 
-    render(
+    const card = render(
       <>
         {config.render({
           status: 'executing',
-          args: {
-            requestId: 'request-1',
-            sourceQueryHash: 'hash-1',
-            fixedQuery: 'source=logs | where status_code = 500',
-          },
+          args,
           onApprove: jest.fn(),
           onReject: jest.fn(),
         })}
@@ -536,9 +649,25 @@ describe('PPLLintFixToolRegistration', () => {
     // re-renders to its terminal state without waiting on the AG-UI round-trip.
     fireEvent.click(screen.getByText('Dismiss'));
 
-    expect(getPPLLintFixOutcome()).toEqual({ kind: 'dismissed' });
+    expect(getPPLLintFixOutcome(request.requestId)).toEqual({ kind: 'dismissed' });
+    expect(getPPLLintFixSession()).toBeUndefined();
+    expect(removeContextById).toHaveBeenCalledWith(
+      PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX + request.requestId
+    );
     expect(screen.getByText('Fix dismissed.')).toBeInTheDocument();
     expect(screen.queryByText('Apply to editor')).not.toBeInTheDocument();
+
+    card.rerender(
+      <>
+        {config.render({
+          status: 'failed',
+          args,
+          result: { success: false, message: 'User rejected the tool execution' },
+        })}
+      </>
+    );
+    expect(screen.getByText('Fix dismissed.')).toBeInTheDocument();
+    expect(screen.queryByText('User rejected the tool execution')).not.toBeInTheDocument();
   });
 
   it('flips the card to applied the moment the handler applies the fix', async () => {
@@ -546,15 +675,16 @@ describe('PPLLintFixToolRegistration', () => {
     mockValidate.mockReturnValue({ accepted: true });
     const config = renderRegistration();
 
+    const args = {
+      requestId: 'request-1',
+      sourceQueryHash: 'hash-1',
+      fixedQuery: 'source=logs | where status_code = 500',
+    };
     render(
       <>
         {config.render({
           status: 'executing',
-          args: {
-            requestId: 'request-1',
-            sourceQueryHash: 'hash-1',
-            fixedQuery: 'source=logs | where status_code = 500',
-          },
+          args,
           onApprove: jest.fn(),
           onReject: jest.fn(),
         })}
@@ -564,15 +694,172 @@ describe('PPLLintFixToolRegistration', () => {
     // The apply handler runs when the confirmation is approved; it records the
     // applied outcome, which the subscribed card reflects on re-render. Wrap in
     // act() so the subscriber-triggered state update flushes before asserting.
+    fireEvent.click(screen.getByText('Apply to editor'));
     await act(async () => {
       await config.handler({
-        requestId: 'request-1',
-        sourceQueryHash: 'hash-1',
-        fixedQuery: 'source=logs | where status_code = 500',
+        ...args,
+        confirmed: true,
       });
     });
 
-    expect(getPPLLintFixOutcome()).toEqual({ kind: 'applied' });
+    expect(getPPLLintFixOutcome(request.requestId)).toEqual({ kind: 'applied' });
+    expect(getPPLLintFixSession()).toBeUndefined();
+    expect(removeContextById).toHaveBeenCalledWith(
+      PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX + request.requestId
+    );
     expect(screen.queryByText('Apply to editor')).not.toBeInTheDocument();
+  });
+
+  it('hides an old card after request B replaces request A', () => {
+    storeSession();
+    const config = renderRegistration();
+    const onApprove = jest.fn();
+
+    render(
+      <>
+        {config.render({
+          status: 'executing',
+          args: { fixedQuery: 'source=logs | where status_code = 500' },
+          onApprove,
+          onReject: jest.fn(),
+        })}
+      </>
+    );
+
+    const newerSession = {
+      request: { ...request, requestId: 'request-2' } as any,
+      getCurrentQuery: jest.fn(() => request.query),
+      getCurrentQueryState: jest.fn(() => queryState as any),
+      getLintContext: jest.fn(() => ({ fields: new Set(['fallback']) } as any)),
+    };
+    act(() => {
+      storePPLLintFixSession(newerSession);
+    });
+
+    expect(screen.queryByText('Apply to editor')).not.toBeInTheDocument();
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(queryString.setQuery).not.toHaveBeenCalled();
+    expect(getPPLLintFixSession()).toBe(newerSession);
+    expect(getPPLLintFixOutcome('request-2')).toBeUndefined();
+  });
+
+  it('does not let an unbound old card adopt a newly launched request', () => {
+    const config = renderRegistration();
+
+    render(
+      <>
+        {config.render({
+          status: 'executing',
+          args: { fixedQuery: 'source=logs | where status_code = 500' },
+          onApprove: jest.fn(),
+          onReject: jest.fn(),
+        })}
+      </>
+    );
+
+    act(() => {
+      storePPLLintFixSession({
+        request: { ...request, requestId: 'request-2' } as any,
+        getCurrentQuery: jest.fn(() => request.query),
+        getCurrentQueryState: jest.fn(() => queryState as any),
+        getLintContext: jest.fn(() => ({ fields: new Set(['fallback']) } as any)),
+      });
+    });
+
+    expect(screen.queryByText('Apply to editor')).not.toBeInTheDocument();
+    expect(getPPLLintFixSession('request-2')).toBeDefined();
+  });
+
+  it('does not bind a historical card from another chat thread', () => {
+    storeSession({
+      chatThreadId: 'thread-b',
+      getCurrentChatThreadId: jest.fn(() => 'thread-a'),
+    });
+    const config = renderRegistration();
+    const card = render(
+      <>
+        {config.render({
+          status: 'executing',
+          args: { fixedQuery: 'source=logs | where status_code = 500' },
+          onApprove: jest.fn(),
+          onReject: jest.fn(),
+        })}
+      </>
+    );
+
+    expect(screen.queryByText('Apply to editor')).not.toBeInTheDocument();
+    card.unmount();
+    expect(getPPLLintFixSession()).toBeDefined();
+  });
+
+  it('hides actions when the captured session expires', () => {
+    storeSession();
+    const config = renderRegistration();
+    render(
+      <>
+        {config.render({
+          status: 'executing',
+          args: { fixedQuery: 'source=logs | where status_code = 500' },
+          onApprove: jest.fn(),
+          onReject: jest.fn(),
+        })}
+      </>
+    );
+
+    expect(screen.getByText('Apply to editor')).toBeInTheDocument();
+    act(() => clearPPLLintFixSession(request.requestId));
+    expect(screen.queryByText('Apply to editor')).not.toBeInTheDocument();
+  });
+
+  it('hides request A actions without clearing replacement request B', () => {
+    storeSession();
+    const config = renderRegistration();
+
+    render(
+      <>
+        {config.render({
+          status: 'executing',
+          args: { fixedQuery: 'source=logs | where status_code = 500' },
+          onApprove: jest.fn(),
+          onReject: jest.fn(),
+        })}
+      </>
+    );
+
+    const newerSession = {
+      request: { ...request, requestId: 'request-2' } as any,
+      getCurrentQuery: jest.fn(() => request.query),
+      getCurrentQueryState: jest.fn(() => queryState as any),
+      getLintContext: jest.fn(() => ({ fields: new Set(['fallback']) } as any)),
+    };
+    act(() => {
+      storePPLLintFixSession(newerSession);
+    });
+
+    expect(screen.queryByText('Dismiss')).not.toBeInTheDocument();
+    expect(getPPLLintFixOutcome('request-2')).toBeUndefined();
+    expect(getPPLLintFixSession()).toBe(newerSession);
+  });
+
+  it('cleans an abandoned request when its chat card unmounts', () => {
+    storeSession();
+    const config = renderRegistration();
+    const card = render(
+      <>
+        {config.render({
+          status: 'executing',
+          args: { fixedQuery: 'source=logs | where status_code = 500' },
+          onApprove: jest.fn(),
+          onReject: jest.fn(),
+        })}
+      </>
+    );
+
+    card.unmount();
+
+    expect(getPPLLintFixSession()).toBeUndefined();
+    expect(removeContextById).toHaveBeenCalledWith(
+      PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX + request.requestId
+    );
   });
 });

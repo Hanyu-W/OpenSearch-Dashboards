@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { detectExplainOutcomes, explainOutcomeSet } from '../explain_outcomes';
+import { detectExplainOutcomes } from '../explain_outcomes';
 import { ExplainPlan } from '../explain_types';
 
 describe('detectExplainOutcomes', () => {
@@ -26,7 +26,6 @@ describe('detectExplainOutcomes', () => {
       },
     };
 
-    expect(explainOutcomeSet(plan)).toEqual(new Set(['filter:native', 'filter:coordinator']));
     expect(detectExplainOutcomes(plan)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ outcome: 'filter:native', scope: 'rel:scan' }),
@@ -54,7 +53,9 @@ describe('detectExplainOutcomes', () => {
       },
     };
 
-    expect(explainOutcomeSet(plan)).not.toContain('filter:script');
+    expect(detectExplainOutcomes(plan).map(({ outcome }) => outcome)).not.toContain(
+      'filter:script'
+    );
   });
 
   it('recognizes native, scripted, and coordinator sort outcomes', () => {
@@ -72,9 +73,11 @@ describe('detectExplainOutcomes', () => {
       physicalText: 'EnumerableSort(input=EnumerableCalc)',
     };
 
-    expect(explainOutcomeSet(native)).toContain('sort:native');
-    expect(explainOutcomeSet(script)).toContain('sort:script');
-    expect(explainOutcomeSet(coordinator)).toContain('sort:coordinator');
+    expect(detectExplainOutcomes(native).map(({ outcome }) => outcome)).toContain('sort:native');
+    expect(detectExplainOutcomes(script).map(({ outcome }) => outcome)).toContain('sort:script');
+    expect(detectExplainOutcomes(coordinator).map(({ outcome }) => outcome)).toContain(
+      'sort:coordinator'
+    );
   });
 
   it('fails closed for unknown tree fields and non-Calcite plans', () => {

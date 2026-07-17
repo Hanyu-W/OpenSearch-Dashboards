@@ -12,18 +12,15 @@ import { lintRuntimePPLQuery } from '../../../data/public';
  * default); when off this no-ops the engine so no markers are produced and the
  * worker never spins up.
  *
- * The main-thread bridge lints against the runtime grammar when available and
- * can layer explain-backed diagnostics over the compiled worker fallback. The
- * worker remains responsible for static lint/validation only; `_explain` stays
- * on the main thread where the HTTP client and model context live.
+ * The bridge stays registered whenever the lint capability is enabled and
+ * selects runtime or compiled behavior from the lint context. It can layer
+ * explain-backed diagnostics over the compiled worker fallback; `_explain`
+ * stays on the main thread where the HTTP client and model context live.
  *
  * @returns a disposer that unregisters the bridge, or `undefined` when nothing
  *   was registered (so callers can store and invoke it unconditionally).
  */
-export function registerPplLint(
-  enabled: boolean,
-  _runtimeGrammarEnabled: boolean
-): (() => void) | undefined {
+export function registerPplLint(enabled: boolean): (() => void) | undefined {
   setPPLLintEnabled(enabled);
   if (enabled) {
     return registerPPLLintBridge(lintRuntimePPLQuery);

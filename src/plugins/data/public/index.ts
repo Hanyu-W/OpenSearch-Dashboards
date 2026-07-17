@@ -653,8 +653,6 @@ export {
   syncPPLValidationContext,
 } from './ui/query_editor/validation_context';
 export {
-  attachPPLLintContext,
-  attachPPLLintGrammarRefresh,
   syncPPLLintContext,
   attachPPLContexts,
   cleanupPPLContexts,
@@ -662,16 +660,9 @@ export {
 } from './ui/query_editor/lint_context';
 export { buildPPLLintContext, LintFieldsCache } from './ppl_lint/lint_context_builder';
 export { lintRuntimePPLQuery } from './antlr/opensearch_ppl/runtime_lint';
-export {
-  collectDisabledObjectFields,
-  fetchDisabledObjectFields,
-} from './ppl_lint/disabled_object_fields';
-export { calciteSettingsCache, CalciteSettings } from './ppl_lint/calcite_settings';
+export { fetchDisabledObjectFields } from './ppl_lint/disabled_object_fields';
+export { calciteSettingsCache } from './ppl_lint/calcite_settings';
 export { buildOverridesFromSettings } from './ppl_lint/lint_overrides';
 export { fetchVisibleIndices } from './ppl_lint/visible_indices';
 export { verifyPerformanceFixOutcome } from './ppl_lint/verify_performance_fix_outcome';
-export {
-  pplGrammarCache,
-  shouldUseRuntimeGrammar,
-  deriveIsCalcite,
-} from './antlr/opensearch_ppl/ppl_grammar_cache';
+export { pplGrammarCache, shouldUseRuntimeGrammar } from './antlr/opensearch_ppl/ppl_grammar_cache';

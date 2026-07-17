@@ -52,7 +52,7 @@ describe('lintRuntimePPLQuery', () => {
     jest.restoreAllMocks();
   });
 
-  it('returns null when runtime grammar is not enabled', async () => {
+  it('returns null when no lint context is available', async () => {
     expect(
       await lintRuntimePPLQuery({
         content: 'source=logs | head 10',

@@ -144,26 +144,6 @@ class ExplainCache {
     return promise;
   }
 
-  /** Backward-compatible plan-only view used by non-probe callers. */
-  async resolve(
-    http: PPLLintHttpClient,
-    query: string,
-    dataSourceId?: string
-  ): Promise<ExplainPlan> {
-    const result = await this.resolveResult(http, query, dataSourceId);
-    return result.status === 'ok' ? result.plan : EMPTY;
-  }
-
-  invalidate(query: string, dataSourceId?: string) {
-    for (const partition of ['baseline', 'probe'] as const) {
-      const k = this.key(query, dataSourceId, partition);
-      const cache = partition === 'probe' ? this.probeCache : this.baselineCache;
-      const pending = partition === 'probe' ? this.probePending : this.baselinePending;
-      cache.delete(k);
-      pending.delete(k);
-    }
-  }
-
   clear() {
     this.baselineCache.clear();
     this.probeCache.clear();

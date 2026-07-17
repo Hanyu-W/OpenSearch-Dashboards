@@ -55,11 +55,7 @@ export {
   buildChatFixMessage,
   buildChatFixContext,
 } from './lint/ai_fix/build_chat_fix_message';
-export {
-  validatePPLLintFixCandidate,
-  compiledLintFacts,
-  compiledPipelineShape,
-} from './lint/ai_fix/validate_candidate_fix';
+export { validatePPLLintFixCandidate } from './lint/ai_fix/validate_candidate_fix';
 export type { ValidateCandidateResult } from './lint/ai_fix/validate_candidate_fix';
 export { buildCommandSuggestion } from './command_suggestion';
 export type { CommandSuggestion } from './command_suggestion';

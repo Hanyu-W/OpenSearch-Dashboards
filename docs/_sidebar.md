@@ -234,5 +234,4 @@
   - [TESTING](../TESTING.md)
   - [TRIAGING](../TRIAGING.md)
   - [TYPESCRIPT](../TYPESCRIPT.md)
-  - [Ppl_lint_field_validation_ungate_runtime](../ppl_lint_field_validation_ungate_runtime.md)
   - [Testing_strategy](../testing_strategy.md)

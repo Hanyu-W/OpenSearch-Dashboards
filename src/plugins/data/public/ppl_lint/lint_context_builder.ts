@@ -3,10 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { i18n } from '@osd/i18n';
 import { IUiSettingsClient } from 'opensearch-dashboards/public';
 import { PPLLintContext } from '@osd/monaco';
-import { ENABLE_AI_FEATURES, HttpSetup, NotificationsStart } from '../../../../core/public';
+import { ENABLE_AI_FEATURES, HttpSetup } from '../../../../core/public';
 import {
   deriveIsCalcite,
   shouldUseRuntimeGrammar,
@@ -32,7 +31,7 @@ export interface LintFieldsCache {
  * dataset shape (a `Dataset` or a `Query['dataset']`) satisfies it. */
 interface LintContextDataset {
   id?: string;
-  /** Human-readable dataset name; the index the AI quick-fix generate route needs. */
+  /** Human-readable dataset name included in chat-based lint-fix requests. */
   title?: string;
   dataSource?: { id?: string; version?: string };
 }
@@ -57,7 +56,6 @@ export function buildPPLLintContext(
   services: {
     uiSettings: IUiSettingsClient;
     http: HttpSetup;
-    notifications: NotificationsStart;
   },
   aiFix?: PPLLintAiFixHooks
 ): PPLLintContext {
@@ -84,37 +82,6 @@ export function buildPPLLintContext(
     enableAIFeatures: Boolean(services.uiSettings.get(ENABLE_AI_FEATURES, true)),
     onAskAiFix: aiFix?.onAskAiFix,
     aiFixToolName: aiFix?.aiFixToolName,
-    // Host-owned feedback for the AI fix round-trip. The leaf package can't raise
-    // a toast, so it calls back here. ai-disabled / no-index are expected silent
-    // states (the action wouldn't have shown), so they raise nothing.
-    onAiFixOutcome: (outcome) => {
-      const toasts = services.notifications.toasts;
-      if (outcome.status === 'applied') {
-        toasts.addSuccess(
-          i18n.translate('data.pplLint.aiFix.applied', {
-            defaultMessage: 'Applied the AI-suggested fix.',
-          })
-        );
-      } else if (outcome.status === 'error') {
-        toasts.addWarning(
-          i18n.translate('data.pplLint.aiFix.error', {
-            defaultMessage: 'Could not reach the AI fix service.',
-          })
-        );
-      } else if (outcome.status === 'rejected') {
-        toasts.addWarning(
-          i18n.translate('data.pplLint.aiFix.rejected', {
-            defaultMessage: 'The AI could not produce a safe fix for this query.',
-          })
-        );
-      } else if (outcome.reason === 'no-agent') {
-        toasts.addWarning(
-          i18n.translate('data.pplLint.aiFix.noAgent', {
-            defaultMessage: 'No AI assistant is configured for this data source.',
-          })
-        );
-      }
-    },
   };
   return context;
 }

@@ -145,10 +145,6 @@ export function detectExplainOutcomes(plan: ExplainPlan): ExplainOutcomeEvidence
   return treeEvidence.length > 0 || plan.physicalTree ? treeEvidence : detectLegacyOutcomes(plan);
 }
 
-export function explainOutcomeSet(plan: ExplainPlan): Set<ExplainOutcome> {
-  return new Set(detectExplainOutcomes(plan).map(({ outcome }) => outcome));
-}
-
 export function hasExplainOutcome(plan: ExplainPlan, outcome: ExplainOutcome): boolean {
   return detectExplainOutcomes(plan).some((evidence) => evidence.outcome === outcome);
 }

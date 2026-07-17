@@ -26,18 +26,6 @@ export interface PPLLintHttpClient {
       signal?: AbortSignal;
     }
   ) => Promise<unknown>;
-  /**
-   * GET — used by the AI quick-fix to probe `assist/languages` for a configured
-   * PPL agent before any generate round-trip. Optional so existing callers that
-   * only construct the explain client (`post` only) still satisfy the type;
-   * core's `HttpSetup` provides both.
-   */
-  get?: (
-    path: string,
-    options?: {
-      query?: Record<string, string | number | boolean | undefined>;
-    }
-  ) => Promise<unknown>;
 }
 
 /**
@@ -56,10 +44,8 @@ export interface PPLLintContext extends PPLValidationContext, LintPayloadContext
    */
   http?: PPLLintHttpClient;
   /**
-   * The active dataset's title — the index the AI quick-fix's generate route
-   * requires (`/api/enhancements/assist/generate` takes `index`). Set from
-   * `dataset.title` at the `buildPPLLintContext` call site. Absent suppresses the
-   * AI fix action. Bridge-path only (the worker fallback offers no AI fix).
+   * The active dataset's title, forwarded with chat-based lint-fix requests.
+   * Set from `dataset.title` at the `buildPPLLintContext` call site.
    */
   datasetTitle?: string;
   /**
@@ -67,14 +53,6 @@ export interface PPLLintContext extends PPLValidationContext, LintPayloadContext
    * action is hidden entirely, matching every other Query-Assist surface.
    */
   enableAIFeatures?: boolean;
-  /**
-   * Host-supplied sink for AI-fix outcomes. The leaf package cannot import
-   * core's notifications/toasts, so the host wires this to
-   * `services.notifications.toasts` and the AI-fix command calls it with the
-   * round-trip result, giving the user visible feedback on every non-applied
-   * outcome (rejected / error / no-agent). Bridge-path only.
-   */
-  onAiFixOutcome?: (outcome: AiFixOutcomeSummary) => void;
   /**
    * Host-supplied opener for the AI chat-based lint fix flow. The leaf
    * package cannot import core/chat, so it builds a plain request payload and
@@ -86,15 +64,6 @@ export interface PPLLintContext extends PPLValidationContext, LintPayloadContext
    * Hosts may use distinct names because assistant actions are globally keyed.
    */
   aiFixToolName?: string;
-}
-
-/** A host-facing summary of an AI quick-fix round-trip, for user feedback. */
-export interface AiFixOutcomeSummary {
-  status: 'applied' | 'skipped' | 'rejected' | 'error';
-  /** RunAiFix `skipped.reason` or `rejected.validation.reason`, when present. */
-  reason?: string;
-  /** Error message, for the `error` status. */
-  message?: string;
 }
 
 /** Plain-data request the Monaco command sends to a host chat opener. */

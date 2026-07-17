@@ -12,7 +12,6 @@ import type { LintResult, PPLLintContext, PPLLintBridgeRequest, LintRunContext }
 // usable on both the browser thread and under Jest.
 import { runLint } from '@osd/monaco/target/ppl/lint/lint_runner';
 import { createRuntimeRuleNameToIndex } from '@osd/monaco/target/ppl/lint/rule_index';
-import type { RuleNameToIndex } from '@osd/monaco/target/ppl/lint/rule_index';
 import { PIPE_FIRST_PREFIX, remapPipeFirstColumns } from '@osd/monaco/target/ppl/lint/range_utils';
 import {
   hasExplainRules,
@@ -273,7 +272,7 @@ async function layerExplainLint(
     return { diagnostics: [...staticResult.diagnostics, ...isolated] };
   } catch (e) {
     // Keep the static markers only — explain rules are an enhancement. No live
-    // throw path reaches here today (explainCache.resolve and runExplainLint are
+    // throw path reaches here today (explainCache.resolveResult and runExplainLint are
     // each isolated), so this is defensive; warn for parity with lint_runner.
     // eslint-disable-next-line no-console
     console.warn('[ppl-lint] explain layering failed and was skipped', e);

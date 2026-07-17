@@ -19,22 +19,30 @@ import React from 'react';
 import type { ContextProviderStart, RenderProps } from '../../../context_provider/public';
 import type { QueryStringContract } from '../query/query_string';
 import {
+  cleanupPPLLintFixRequest,
   getPPLLintFixSession,
   getPPLLintFixOutcome,
   markPPLLintFixApplied,
   markPPLLintFixDismissed,
-  markPPLLintFixFailed,
   subscribePPLLintFixOutcome,
   PPL_LINT_FIX_DATA_TOOL_NAME,
 } from './ppl_lint_fix_session';
+import type { RemovePPLLintFixContextById } from './ppl_lint_fix_session';
 import { verifyPerformanceFixOutcome } from '../ppl_lint/verify_performance_fix_outcome';
 
+const PPL_LINT_FIX_UI_BINDING = Symbol('pplLintFixUiBinding');
+
 export interface PPLLintFixToolArgs {
-  requestId: string;
-  sourceQueryHash: string;
+  requestId?: string;
+  sourceQueryHash?: string;
   fixedQuery: string;
   explanation?: string;
+  confirmed?: boolean;
 }
+
+type BoundPPLLintFixToolArgs = PPLLintFixToolArgs & {
+  [PPL_LINT_FIX_UI_BINDING]?: string;
+};
 
 interface PPLLintFixToolResult {
   success: boolean;
@@ -47,6 +55,7 @@ interface PPLLintFixToolResult {
 interface PPLLintFixToolRegistrationProps {
   queryString: QueryStringContract;
   useAssistantAction?: ContextProviderStart['hooks']['useAssistantAction'];
+  removeContextById?: RemovePPLLintFixContextById;
   enabled?: boolean;
 }
 
@@ -56,24 +65,19 @@ const failure = (
   reason: NonNullable<PPLLintFixToolResult['reason']>,
   message: string,
   extra?: Pick<PPLLintFixToolResult, 'validationReason'>
-): PPLLintFixToolResult => {
-  // Flip the card to its terminal failure state immediately (rather than waiting
-  // on the framework's tool-call status, which lags the AG-UI round-trip) while
-  // still returning the machine-readable result the model needs.
-  markPPLLintFixFailed(message);
-  return {
-    success: false,
-    reason,
-    message,
-    ...extra,
-  };
-};
+): PPLLintFixToolResult => ({
+  success: false,
+  reason,
+  message,
+  ...extra,
+});
 
 const PERFORMANCE_RULE_IDS = new Set(['operation-not-pushed', 'operation-pushed-as-script']);
 
 export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProps> = ({
   queryString,
   useAssistantAction,
+  removeContextById,
   enabled = true,
 }) => {
   const useAssistantActionHook = useAssistantAction || noopUseAssistantAction;
@@ -103,22 +107,29 @@ export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProp
     requiresConfirmation: true,
     useCustomRenderer: true,
     handler: async (args) => {
-      // Match against the single active session rather than a model-provided
-      // requestId/sourceQueryHash: weaker models often fill those args with the
-      // wrong values (rule name, query text), which used to trip a false
-      // missing-request/hash-mismatch and — since the failure prompts a retry —
-      // send the model into a tool-call loop. Staleness is enforced below by
-      // comparing the live editor query to the one captured at request time.
-      const session = getPPLLintFixSession();
+      // Confirmation clones the model args before invoking this handler. Bind
+      // that clone back to the request captured by the card's Approve click,
+      // rather than trusting a model-provided request id or object identity.
+      const capturedRequestId = (args as BoundPPLLintFixToolArgs)[PPL_LINT_FIX_UI_BINDING];
+      if (!capturedRequestId) {
+        return failure(
+          'missing-request',
+          'The approved PPL lint fix request is no longer available.'
+        );
+      }
+      const session = getPPLLintFixSession(capturedRequestId);
       if (!session) {
+        cleanupPPLLintFixRequest(capturedRequestId, removeContextById);
         return failure(
           'missing-request',
           'The active PPL lint fix request is no longer available.'
         );
       }
+      const requestId = session.request.requestId;
 
       const currentQueryText = session.getCurrentQuery() ?? '';
       if (currentQueryText !== session.request.query) {
+        cleanupPPLLintFixRequest(requestId, removeContextById);
         return failure(
           'stale-query',
           'The editor changed after this PPL lint fix request was created.'
@@ -152,13 +163,14 @@ export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProp
         session.request.diagnostic,
         session.getLintContext(),
         () =>
-          getPPLLintFixSession() === session &&
+          getPPLLintFixSession(requestId) === session &&
           (session.getCurrentQuery() ?? '') === session.request.query
       );
       if (
-        getPPLLintFixSession() !== session ||
+        getPPLLintFixSession(requestId) !== session ||
         (session.getCurrentQuery() ?? '') !== session.request.query
       ) {
+        cleanupPPLLintFixRequest(requestId, removeContextById);
         return failure(
           'stale-query',
           'The editor changed while this PPL lint fix was being validated.'
@@ -181,7 +193,8 @@ export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProp
         },
         true
       );
-      markPPLLintFixApplied();
+      markPPLLintFixApplied(requestId);
+      cleanupPPLLintFixRequest(requestId, removeContextById);
 
       return {
         success: true,
@@ -189,18 +202,25 @@ export const PPLLintFixToolRegistration: React.FC<PPLLintFixToolRegistrationProp
         fixedQuery,
       };
     },
-    render: (renderProps) => <PPLLintFixToolRenderer {...renderProps} />,
+    render: (renderProps) => (
+      <PPLLintFixToolRenderer {...renderProps} removeContextById={removeContextById} />
+    ),
   });
 
   return null;
 };
 
-const PPLLintFixToolRenderer: React.FC<RenderProps<PPLLintFixToolArgs>> = ({
+interface PPLLintFixToolRendererProps extends RenderProps<PPLLintFixToolArgs> {
+  removeContextById?: RemovePPLLintFixContextById;
+}
+
+const PPLLintFixToolRenderer: React.FC<PPLLintFixToolRendererProps> = ({
   status,
   args,
   result,
   onApprove,
   onReject,
+  removeContextById,
 }) => {
   // Re-render on outcome changes so the (otherwise idle) card reaches its
   // terminal state the instant the user acts, rather than waiting on the
@@ -208,22 +228,48 @@ const PPLLintFixToolRenderer: React.FC<RenderProps<PPLLintFixToolArgs>> = ({
   // finishes the model's follow-up AG-UI turn, which is slow (60–128s observed)
   // and can hang, which used to leave both buttons looking dead.
   const [, forceRender] = React.useState(0);
+  const [submitted, setSubmitted] = React.useState(false);
+  const submittedRef = React.useRef(false);
   React.useEffect(() => subscribePPLLintFixOutcome(() => forceRender((n) => n + 1)), []);
 
-  // Read the active session directly (not keyed on the streamed/model-provided
-  // requestId) so the diagnostic info shows immediately and regardless of what
-  // the model put in the args.
-  const session = getPPLLintFixSession();
+  // Capture the active request once for this card. The model-provided requestId
+  // remains untrusted, but subsequent renders and clicks stay bound to the
+  // request that produced this card even if a newer editor request replaces it.
+  const candidateSession = getPPLLintFixSession();
+  const activeSession =
+    candidateSession?.getCurrentChatThreadId &&
+    (!candidateSession.chatThreadId ||
+      candidateSession.getCurrentChatThreadId() !== candidateSession.chatThreadId)
+      ? undefined
+      : candidateSession;
+  const requestIdRef = React.useRef<string | undefined>(activeSession?.request.requestId);
+  const requestId = requestIdRef.current;
+  const session = requestId ? getPPLLintFixSession(requestId) : undefined;
+  const diagnosticRef = React.useRef(session?.request.diagnostic);
+  const diagnostic = session?.request.diagnostic ?? diagnosticRef.current;
+  React.useEffect(
+    () => () => {
+      if (requestId) {
+        cleanupPPLLintFixRequest(requestId, removeContextById);
+      }
+    },
+    [removeContextById, requestId]
+  );
 
   // Prefer the local outcome (set synchronously by the click / apply handler)
   // over the framework status, which lags the AG-UI round-trip.
-  const outcome = getPPLLintFixOutcome();
+  const outcome = requestId ? getPPLLintFixOutcome(requestId) : undefined;
   const applied = outcome?.kind === 'applied' || (status === 'complete' && !!result?.success);
   const dismissed = outcome?.kind === 'dismissed';
-  const failed = outcome?.kind === 'failed' || (!outcome && status === 'failed');
+  const failed = !outcome && status === 'failed';
   const terminal = applied || dismissed || failed;
-  const showActions = !terminal && (status === 'pending' || status === 'executing') && !!args;
-  const diagnostic = session?.request.diagnostic;
+  const showActions =
+    !submitted &&
+    !terminal &&
+    (status === 'pending' || status === 'executing') &&
+    !!args &&
+    !!requestId &&
+    !!session;
   const explanation =
     (diagnostic?.ruleId && PERFORMANCE_RULE_IDS.has(diagnostic.ruleId)
       ? diagnostic.message
@@ -234,17 +280,36 @@ const PPLLintFixToolRenderer: React.FC<RenderProps<PPLLintFixToolArgs>> = ({
       defaultMessage: 'Applied the PPL lint fix to the editor.',
     });
   const failedMessage =
-    (outcome?.kind === 'failed' ? outcome.message : undefined) ||
     result?.message ||
     i18n.translate('data.pplLint.fixTool.failedMessage', {
       defaultMessage: 'The proposed PPL lint fix could not be applied.',
     });
 
-  // Reject runs no handler (the tool is rejected before execution), so mark the
-  // dismissal locally, then delegate so the confirmation promise still resolves.
-  // Approve needs no local marking — the apply handler records the outcome.
+  // Reject runs no handler (the tool is rejected before execution), so mark and
+  // clean up this exact request before resolving the confirmation. Approval
+  // carries the card-captured id into the handler without trusting model output.
+  const handleApprove = () => {
+    if (submittedRef.current) {
+      return;
+    }
+    submittedRef.current = true;
+    setSubmitted(true);
+    if (requestId && args) {
+      (args as BoundPPLLintFixToolArgs)[PPL_LINT_FIX_UI_BINDING] = requestId;
+    }
+    onApprove?.();
+  };
+
   const handleReject = () => {
-    markPPLLintFixDismissed();
+    if (submittedRef.current) {
+      return;
+    }
+    submittedRef.current = true;
+    setSubmitted(true);
+    if (requestId) {
+      markPPLLintFixDismissed(requestId);
+      cleanupPPLLintFixRequest(requestId, removeContextById);
+    }
     onReject?.();
   };
 
@@ -295,7 +360,12 @@ const PPLLintFixToolRenderer: React.FC<RenderProps<PPLLintFixToolArgs>> = ({
               </EuiButtonEmpty>
             </EuiFlexItem>
             <EuiFlexItem grow={false}>
-              <EuiButton size="s" fill onClick={onApprove} data-test-subj="pplLintFixApplyButton">
+              <EuiButton
+                size="s"
+                fill
+                onClick={handleApprove}
+                data-test-subj="pplLintFixApplyButton"
+              >
                 {i18n.translate('data.pplLint.fixTool.applyButton', {
                   defaultMessage: 'Apply to editor',
                 })}

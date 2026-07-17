@@ -6,7 +6,7 @@
 import { SimplifiedOpenSearchPPLLexer, SimplifiedOpenSearchPPLParser } from '@osd/antlr-grammar';
 import { CharStream, CommonTokenStream, ParserRuleContext } from 'antlr4ng';
 import { createRuntimeRuleNameToIndex } from '../../../rule_index';
-import { extractExplainCandidates } from '../candidates';
+import { buildExplainAttributionSnapshot } from '../candidates';
 import { buildExplainProbeSet } from '../probes';
 
 const ruleNameToIndex = createRuntimeRuleNameToIndex(
@@ -22,7 +22,7 @@ function buildTree(query: string): ParserRuleContext {
 }
 
 function index(query: string, typeMap?: Map<string, string>) {
-  return extractExplainCandidates(buildTree(query), ruleNameToIndex, query, { typeMap });
+  return buildExplainAttributionSnapshot(buildTree(query), ruleNameToIndex, query, { typeMap });
 }
 
 function normalized(query: string): string {

@@ -445,9 +445,9 @@ export const registerPPLLanguage = () => {
     pplLintCodeActionProvider
   );
 
-  // Register the AI ("Ask AI to fix") quick-fix command the provider's
-  // isAI action dispatches. The handler does the LLM round-trip after the
-  // click and applies the re-validated result as undo-aware editor text.
+  // Register the AI ("Ask AI to fix") quick-fix command the provider's isAI
+  // action dispatches. The handler packages the request for the host-owned chat
+  // and confirmation/apply flow.
   const aiFixCommandDisposable = registerAiFixCommand();
 
   // Register the lint hover provider (the rich "view more" card). It reads

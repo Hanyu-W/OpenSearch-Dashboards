@@ -52,12 +52,9 @@ import { buildPPLLintContext, LintFieldsCache } from '../../ppl_lint/lint_contex
 import { fetchDisabledObjectFields } from '../../ppl_lint/disabled_object_fields';
 import { calciteSettingsCache } from '../../ppl_lint/calcite_settings';
 import { fetchVisibleIndices } from '../../ppl_lint/visible_indices';
-import {
-  storePPLLintFixSession,
-  withTimeout,
-  PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX,
-} from '../../chat_tools/ppl_lint_fix_session';
+import { storePPLLintFixSession } from '../../chat_tools/ppl_lint_fix_session';
 import type { AskPPLLintFixRequest } from '../../chat_tools/ppl_lint_fix_session';
+import { addPPLLintFixAssistantContext, PPLLintFixLifecycle } from './ppl_lint_fix_lifecycle';
 
 export interface QueryEditorProps {
   query: Query;
@@ -93,8 +90,6 @@ interface PPLLintFixServiceCapability {
   pplLintFixToolName?: string;
 }
 
-const ASK_AI_FIX_CHAT_TIMEOUT_MS = 4000;
-
 export const QueryEditorUI: React.FC<Props> = (props) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [lineCount, setLineCount] = useState<number | undefined>(undefined);
@@ -125,6 +120,13 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
   const languageManager = queryString.getLanguageService();
   const extensionMap = languageManager.getQueryEditorExtensionMap();
   const services = props.opensearchDashboards.services;
+  const pplLintFixLifecycleRef = useRef<PPLLintFixLifecycle>();
+  if (!pplLintFixLifecycleRef.current) {
+    pplLintFixLifecycleRef.current = new PPLLintFixLifecycle((contextId) => {
+      services.contextProvider?.getAssistantContextStore()?.removeContextById(contextId);
+    });
+  }
+  const pplLintFixLifecycle = pplLintFixLifecycleRef.current;
   const { query } = useQueryStringManager({
     queryString,
   });
@@ -161,15 +163,17 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
   };
 
   function onAskAiFix(request: AskPPLLintFixRequest): void {
-    storePPLLintFixSession({
+    pplLintFixLifecycle.beginRequest(request.requestId);
+    const session = {
       request,
       getCurrentQuery: () => inputRef.current?.getValue() ?? toUser(queryRef.current.query),
       getCurrentQueryState: () => queryString.getQuery(),
       getLintContext,
-    });
+    };
 
     const chat = services.chat;
-    if (!chat?.sendMessageWithWindow) {
+    if (!chat?.sendMessageWithWindow || !(chat.isAvailable?.() ?? true)) {
+      pplLintFixLifecycle.abandonRequest(request.requestId);
       services.notifications.toasts.addWarning(
         i18n.translate('data.pplLint.aiFix.chatUnavailable', {
           defaultMessage: 'AI is not available for this PPL lint fix.',
@@ -183,28 +187,36 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     // receives it without it rendering as a chat bubble. The visible bubble is
     // the short human message (request.chatMessage). Keyed by requestId.
     const contextStore = services.contextProvider?.getAssistantContextStore?.();
-    const contextId = PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX + request.requestId;
-    if (request.chatContext && contextStore) {
-      contextStore.addContext({
-        id: contextId,
-        description: 'OpenSearch PPL lint quick-fix request details',
-        value: request.chatContext,
-        label: 'PPL lint fix request',
-        categories: ['chat', 'ppl-lint-fix'],
-      });
-    }
+    addPPLLintFixAssistantContext(request, contextStore);
 
-    void withTimeout(
-      chat.sendMessageWithWindow(request.chatMessage, [], { clearConversation: true }),
-      ASK_AI_FIX_CHAT_TIMEOUT_MS
-    ).catch(() => {
-      contextStore?.removeContextById?.(contextId);
-      services.notifications.toasts.addWarning(
-        i18n.translate('data.pplLint.aiFix.openChatError', {
-          defaultMessage: 'Could not open AI for this PPL lint fix.',
-        })
-      );
-    });
+    void pplLintFixLifecycle
+      .waitForChatLaunch(request.requestId, () =>
+        chat.sendMessageWithWindow!(request.chatMessage, [], { clearConversation: true })
+      )
+      .then((failure) => {
+        if (!failure) {
+          // Activate only after the fresh chat reset so an older card cannot
+          // capture this request while its previous conversation is still live.
+          if (pplLintFixLifecycle.ownsRequest(request.requestId)) {
+            storePPLLintFixSession({
+              ...session,
+              chatThreadId: chat.getThreadId(),
+              getCurrentChatThreadId: () => chat.getThreadId(),
+            });
+          }
+          return;
+        }
+        // A late failure for a replaced request still cleans that exact context,
+        // but should not warn for or disturb the newer owned request.
+        if (!failure.abandonedOwnedRequest) {
+          return;
+        }
+        services.notifications.toasts.addWarning(
+          i18n.translate('data.pplLint.aiFix.openChatError', {
+            defaultMessage: 'Could not open AI for this PPL lint fix.',
+          })
+        );
+      });
   }
 
   function getLintContext(): PPLLintContext {
@@ -223,7 +235,13 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     );
   }
 
-  useEffect(() => () => cleanupPPLContexts(detachRefs.current), []);
+  useEffect(
+    () => () => {
+      pplLintFixLifecycle.dispose();
+      cleanupPPLContexts(detachRefs.current);
+    },
+    [pplLintFixLifecycle]
+  );
 
   useEffect(() => {
     const subscription = services.application?.currentAppId$?.subscribe?.((appId) => {

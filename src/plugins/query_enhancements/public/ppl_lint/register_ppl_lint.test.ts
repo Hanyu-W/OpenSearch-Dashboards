@@ -5,7 +5,7 @@
 
 const mockSetPPLLintEnabled = jest.fn();
 const mockUnregister = jest.fn();
-const mockRegisterPPLLintBridge = jest.fn(() => mockUnregister);
+const mockRegisterPPLLintBridge = jest.fn((_bridge: unknown) => mockUnregister);
 const mockLintRuntimePPLQuery = jest.fn();
 
 jest.mock('@osd/monaco', () => ({
@@ -25,15 +25,15 @@ describe('registerPplLint', () => {
   });
 
   it('disables the engine and registers no bridge when the capability is off', () => {
-    const disposer = registerPplLint(false, true);
+    const disposer = registerPplLint(false);
 
     expect(mockSetPPLLintEnabled).toHaveBeenCalledWith(false);
     expect(mockRegisterPPLLintBridge).not.toHaveBeenCalled();
     expect(disposer).toBeUndefined();
   });
 
-  it('enables the engine and registers the runtime bridge when both flags are on', () => {
-    const disposer = registerPplLint(true, true);
+  it('enables the engine and registers the lint bridge when the capability is on', () => {
+    const disposer = registerPplLint(true);
 
     expect(mockSetPPLLintEnabled).toHaveBeenCalledWith(true);
     expect(mockRegisterPPLLintBridge).toHaveBeenCalledTimes(1);
@@ -42,19 +42,8 @@ describe('registerPplLint', () => {
     expect(disposer).toBe(mockUnregister);
   });
 
-  it('enables the engine and registers the bridge when runtime grammar is off', () => {
-    // The bridge also layers explain-backed diagnostics over the compiled
-    // worker fallback, so it is registered whenever lint itself is enabled.
-    const disposer = registerPplLint(true, false);
-
-    expect(mockSetPPLLintEnabled).toHaveBeenCalledWith(true);
-    expect(mockRegisterPPLLintBridge).toHaveBeenCalledTimes(1);
-    expect(mockRegisterPPLLintBridge).toHaveBeenCalledWith(expect.any(Function));
-    expect(disposer).toBe(mockUnregister);
-  });
-
   it('returns a disposer that unregisters the bridge', () => {
-    const disposer = registerPplLint(true, true);
+    const disposer = registerPplLint(true);
     disposer?.();
     expect(mockUnregister).toHaveBeenCalledTimes(1);
   });

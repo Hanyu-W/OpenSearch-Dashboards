@@ -72,24 +72,31 @@ describe('explainCache', () => {
 
   it('POSTs to the explain endpoint with the query body and maps a json_tree Calcite plan', async () => {
     const http = makeHttp();
-    const plan = await explainCache.resolve(http as any, 'source=accounts | head 1', 'ds-1');
+    const resolution = await explainCache.resolveResult(
+      http as any,
+      'source=accounts | head 1',
+      'ds-1'
+    );
 
     expect(http.post).toHaveBeenCalledWith('/api/enhancements/ppl/explain', {
       body: JSON.stringify({ query: 'source=accounts | head 1' }),
       query: { dataSourceId: 'ds-1' },
     });
-    expect(plan).toEqual({
-      isCalcite: true,
-      logicalTree: LOGICAL_TREE,
-      physicalTree: PHYSICAL_TREE,
-      logicalText: undefined,
-      physicalText: undefined,
+    expect(resolution).toEqual({
+      status: 'ok',
+      plan: {
+        isCalcite: true,
+        logicalTree: LOGICAL_TREE,
+        physicalTree: PHYSICAL_TREE,
+        logicalText: undefined,
+        physicalText: undefined,
+      },
     });
   });
 
   it('omits the dataSourceId query param for a local cluster', async () => {
     const http = makeHttp();
-    await explainCache.resolve(http as any, 'source=accounts', undefined);
+    await explainCache.resolveResult(http as any, 'source=accounts', undefined);
     expect(http.post).toHaveBeenCalledWith('/api/enhancements/ppl/explain', {
       body: JSON.stringify({ query: 'source=accounts' }),
       query: {},
@@ -98,26 +105,29 @@ describe('explainCache', () => {
 
   it('keeps legacy string explain fallback responses usable', async () => {
     const http = makeHttp(() => Promise.resolve(STRING_RESPONSE));
-    const plan = await explainCache.resolve(http as any, 'source=accounts', 'ds-1');
-    expect(plan).toEqual({
-      isCalcite: true,
-      logicalTree: undefined,
-      physicalTree: undefined,
-      logicalText: 'L',
-      physicalText: 'P-physical-plan',
+    const resolution = await explainCache.resolveResult(http as any, 'source=accounts', 'ds-1');
+    expect(resolution).toEqual({
+      status: 'ok',
+      plan: {
+        isCalcite: true,
+        logicalTree: undefined,
+        physicalTree: undefined,
+        logicalText: 'L',
+        physicalText: 'P-physical-plan',
+      },
     });
   });
 
-  it('maps a v2 (non-Calcite) response to an empty, non-Calcite plan', async () => {
+  it('maps a v2 (non-Calcite) response to an unsupported resolution', async () => {
     const http = makeHttp(() => Promise.resolve(V2_RESPONSE));
-    const plan = await explainCache.resolve(http as any, 'source=accounts', 'ds-1');
-    expect(plan).toEqual({ isCalcite: false });
+    const resolution = await explainCache.resolveResult(http as any, 'source=accounts', 'ds-1');
+    expect(resolution).toEqual({ status: 'unsupported' });
   });
 
-  it('returns an empty plan when the request rejects', async () => {
+  it('returns an error resolution when the request rejects', async () => {
     const http = makeHttp(() => Promise.reject(new Error('boom')));
-    const plan = await explainCache.resolve(http as any, 'source=accounts', 'ds-1');
-    expect(plan).toEqual({ isCalcite: false });
+    const resolution = await explainCache.resolveResult(http as any, 'source=accounts', 'ds-1');
+    expect(resolution).toEqual(expect.objectContaining({ status: 'error' }));
   });
 
   it('keeps rejected requests distinct from unsupported responses and retries them', async () => {
@@ -148,16 +158,16 @@ describe('explainCache', () => {
 
   it('caches by (dataSourceId, query): a repeat hit makes no second call', async () => {
     const http = makeHttp();
-    await explainCache.resolve(http as any, 'source=accounts', 'ds-1');
-    await explainCache.resolve(http as any, 'source=accounts', 'ds-1');
+    await explainCache.resolveResult(http as any, 'source=accounts', 'ds-1');
+    await explainCache.resolveResult(http as any, 'source=accounts', 'ds-1');
     expect(http.post).toHaveBeenCalledTimes(1);
   });
 
   it('keys distinctly by dataSourceId and by query text', async () => {
     const http = makeHttp();
-    await explainCache.resolve(http as any, 'source=accounts', 'ds-1');
-    await explainCache.resolve(http as any, 'source=accounts', 'ds-2'); // different source
-    await explainCache.resolve(http as any, 'source=other', 'ds-1'); // different query
+    await explainCache.resolveResult(http as any, 'source=accounts', 'ds-1');
+    await explainCache.resolveResult(http as any, 'source=accounts', 'ds-2'); // different source
+    await explainCache.resolveResult(http as any, 'source=other', 'ds-1'); // different query
     expect(http.post).toHaveBeenCalledTimes(3);
   });
 
@@ -171,8 +181,8 @@ describe('explainCache', () => {
           })
       ),
     };
-    const p1 = explainCache.resolve(http as any, 'source=accounts', 'ds-1');
-    const p2 = explainCache.resolve(http as any, 'source=accounts', 'ds-1');
+    const p1 = explainCache.resolveResult(http as any, 'source=accounts', 'ds-1');
+    const p2 = explainCache.resolveResult(http as any, 'source=accounts', 'ds-1');
     resolveFn(JSON_TREE_RESPONSE);
     const [r1, r2] = await Promise.all([p1, p2]);
     expect(http.post).toHaveBeenCalledTimes(1);
@@ -183,28 +193,20 @@ describe('explainCache', () => {
     const http = makeHttp();
     // Fill the cache to its cap with 50 distinct queries.
     for (let i = 0; i < 50; i++) {
-      await explainCache.resolve(http as any, `source=q${i}`, 'ds-1');
+      await explainCache.resolveResult(http as any, `source=q${i}`, 'ds-1');
     }
     expect(http.post).toHaveBeenCalledTimes(50);
 
     // One more eviction-triggering query (51st).
-    await explainCache.resolve(http as any, 'source=q50', 'ds-1');
+    await explainCache.resolveResult(http as any, 'source=q50', 'ds-1');
     expect(http.post).toHaveBeenCalledTimes(51);
 
     // q0 (oldest) was evicted → re-resolving it issues a fresh call.
-    await explainCache.resolve(http as any, 'source=q0', 'ds-1');
+    await explainCache.resolveResult(http as any, 'source=q0', 'ds-1');
     expect(http.post).toHaveBeenCalledTimes(52);
 
     // q50 (most recent) is still cached → no new call.
-    await explainCache.resolve(http as any, 'source=q50', 'ds-1');
+    await explainCache.resolveResult(http as any, 'source=q50', 'ds-1');
     expect(http.post).toHaveBeenCalledTimes(52);
-  });
-
-  it('invalidate drops a single cached key', async () => {
-    const http = makeHttp();
-    await explainCache.resolve(http as any, 'source=accounts', 'ds-1');
-    explainCache.invalidate('source=accounts', 'ds-1');
-    await explainCache.resolve(http as any, 'source=accounts', 'ds-1');
-    expect(http.post).toHaveBeenCalledTimes(2);
   });
 });

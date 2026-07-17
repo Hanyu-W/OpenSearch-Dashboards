@@ -11,10 +11,6 @@ import { getBundledCatalog } from './catalog';
 import { getDetector } from './detector_registry';
 import { appliesTo, OSD_KNOWN_VERSION } from './version_filter';
 
-// `BundleRuleOverrides` now lives in `./types` so `LintRunContext` can reference
-// it without a cycle. Re-exported here for existing importers.
-export type { BundleRuleOverrides };
-
 export interface RunLintOptions {
   /** The catalog to iterate; defaults to the bundled catalog. */
   catalog?: CatalogEntry[];

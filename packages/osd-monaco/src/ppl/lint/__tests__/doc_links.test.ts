@@ -11,7 +11,7 @@ import snapshot from './__fixtures__/doc_links.snapshot.json';
 // catalog<->snapshot parity, no regression to the legacy generic URL, and
 // URL-shape/specificity rules. The live tier (doc_links.live.test.ts) adds the
 // network checks (404 / missing anchor) and is env-gated so default CI stays
-// offline. See DIAGNOSTIC_SURFACE_PLAN.md §9.
+// offline.
 
 const DOCS_PREFIX = 'https://docs.opensearch.org/latest/';
 const LEGACY_FRAGMENT = 'search-plugins/sql/ppl';

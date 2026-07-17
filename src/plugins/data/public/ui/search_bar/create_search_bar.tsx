@@ -136,6 +136,11 @@ const overrideDefaultBehaviors = (props: StatefulSearchBarProps) => {
 };
 
 export function createSearchBar({ core, storage, data, contextProvider }: StatefulSearchBarDeps) {
+  const removePPLLintFixContextById = contextProvider
+    ? (contextId: string) =>
+        contextProvider.getAssistantContextStore()?.removeContextById(contextId)
+    : undefined;
+
   // App name should come from the core application service.
   // Until it's available, we'll ask the user to provide it for the pre-wired component.
   return (props: StatefulSearchBarProps) => {
@@ -192,6 +197,7 @@ export function createSearchBar({ core, storage, data, contextProvider }: Statef
           storage,
           pplLintFixToolName: pplLintFixEnabled ? PPL_LINT_FIX_DATA_TOOL_NAME : undefined,
           ...core,
+          contextProvider,
         }}
       >
         {!props.disableTimeRangeTool && (
@@ -203,6 +209,7 @@ export function createSearchBar({ core, storage, data, contextProvider }: Statef
         <PPLLintFixToolRegistration
           queryString={data.query.queryString}
           useAssistantAction={contextProvider?.hooks?.useAssistantAction}
+          removeContextById={removePPLLintFixContextById}
           enabled={pplLintFixEnabled}
         />
         <SearchBar

@@ -53,8 +53,6 @@ export {
   buildChatFixMessage,
   buildChatFixContext,
   validatePPLLintFixCandidate,
-  compiledLintFacts,
-  compiledPipelineShape,
   analyzeCompiledPPLLint,
   validateCompiledPPLLintQueries,
   EXPLAIN_ATTRIBUTION_SNAPSHOT_VERSION,

@@ -6,7 +6,7 @@ import { i18n } from '@osd/i18n';
 import { BehaviorSubject, Subscription } from 'rxjs';
 import moment from 'moment';
 import { CoreSetup, CoreStart, Plugin, PluginInitializerContext } from '../../../core/public';
-import { DataStorage, OSD_FIELD_TYPES, UI_SETTINGS } from '../../data/common';
+import { DataStorage, OSD_FIELD_TYPES } from '../../data/common';
 import {
   createEditor,
   DefaultInput,
@@ -336,14 +336,11 @@ export class QueryEnhancementsPlugin
       this.currentAppId$.next(appId);
     });
 
-    // PPL lint — gated by the queryEnhancements.pplLint dynamic app config
-    // capability (disabled by default). The bridge lints against the runtime
-    // grammar, so it is only registered when the runtime grammar is enabled;
-    // otherwise the editor's worker lints against the compiled grammar.
+    // PPL lint is gated by the queryEnhancements.pplLint dynamic app config
+    // capability. The bridge stays registered whenever the lint capability is
+    // enabled and selects runtime or compiled behavior from the lint context.
     const lintEnabled = !!core.application.capabilities.queryEnhancements?.pplLint;
-    const runtimeGrammarEnabled =
-      core.uiSettings.get(UI_SETTINGS.QUERY_ENHANCEMENTS_RUNTIME_PPL_GRAMMAR, true) !== false;
-    this.unregisterPplLintBridge = registerPplLint(lintEnabled, runtimeGrammarEnabled);
+    this.unregisterPplLintBridge = registerPplLint(lintEnabled);
 
     return {};
   }

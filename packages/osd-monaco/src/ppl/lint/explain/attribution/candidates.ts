@@ -589,6 +589,3 @@ export function buildExplainAttributionSnapshot(
     ] as ExplainOperation[]).filter((operation) => unsupportedOperations.has(operation)),
   };
 }
-
-/** @deprecated Use buildExplainAttributionSnapshot. */
-export const extractExplainCandidates = buildExplainAttributionSnapshot;

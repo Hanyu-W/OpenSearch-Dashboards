@@ -4,7 +4,7 @@
  */
 
 import { IUiSettingsClient } from 'opensearch-dashboards/public';
-import { HttpSetup, NotificationsStart } from '../../../../core/public';
+import { HttpSetup } from '../../../../core/public';
 import { buildPPLLintContext, LintFieldsCache } from './lint_context_builder';
 import { calciteSettingsCache } from './calcite_settings';
 import { buildOverridesFromSettings } from './lint_overrides';
@@ -30,14 +30,9 @@ const mockDeriveIsCalcite = deriveIsCalcite as jest.Mock;
 const mockShouldUseRuntimeGrammar = shouldUseRuntimeGrammar as jest.Mock;
 
 const mockUiSettingsGet = jest.fn();
-const mockAddSuccess = jest.fn();
-const mockAddWarning = jest.fn();
 const services = {
   uiSettings: ({ get: mockUiSettingsGet } as unknown) as IUiSettingsClient,
   http: {} as HttpSetup,
-  notifications: ({
-    toasts: { addSuccess: mockAddSuccess, addWarning: mockAddWarning },
-  } as unknown) as NotificationsStart,
 };
 
 const dataset = {
@@ -135,39 +130,7 @@ describe('buildPPLLintContext', () => {
     expect(ctx.dataSourceId).toBeUndefined();
     expect(ctx.dataSourceVersion).toBeUndefined();
     expect(ctx.fields).toBeUndefined();
-    // No dataset → no index for the AI fix; the action self-suppresses.
+    // No dataset means the chat request has no dataset title to forward.
     expect(ctx.datasetTitle).toBeUndefined();
-  });
-
-  describe('onAiFixOutcome (AI fix user feedback)', () => {
-    it('is a function the host wires to notifications.toasts', () => {
-      const ctx = buildPPLLintContext(dataset, fullCache, services);
-      expect(typeof ctx.onAiFixOutcome).toBe('function');
-    });
-
-    it('raises a success toast on applied', () => {
-      buildPPLLintContext(dataset, fullCache, services).onAiFixOutcome?.({ status: 'applied' });
-      expect(mockAddSuccess).toHaveBeenCalledTimes(1);
-      expect(mockAddWarning).not.toHaveBeenCalled();
-    });
-
-    it('raises a warning toast on rejected and on error', () => {
-      const ctx = buildPPLLintContext(dataset, fullCache, services);
-      ctx.onAiFixOutcome?.({ status: 'rejected', reason: 'diagnostic-not-cleared' });
-      ctx.onAiFixOutcome?.({ status: 'error', message: 'boom' });
-      expect(mockAddWarning).toHaveBeenCalledTimes(2);
-    });
-
-    it('raises a warning on a no-agent skip but stays silent on expected skips', () => {
-      const ctx = buildPPLLintContext(dataset, fullCache, services);
-      ctx.onAiFixOutcome?.({ status: 'skipped', reason: 'no-agent' });
-      expect(mockAddWarning).toHaveBeenCalledTimes(1);
-      mockAddWarning.mockClear();
-      // ai-disabled / no-index are expected silent states (the action wouldn't
-      // have shown), so they raise nothing.
-      ctx.onAiFixOutcome?.({ status: 'skipped', reason: 'ai-disabled' });
-      ctx.onAiFixOutcome?.({ status: 'skipped', reason: 'no-index' });
-      expect(mockAddWarning).not.toHaveBeenCalled();
-    });
   });
 });
