@@ -4,7 +4,7 @@
  */
 
 import { Token } from 'antlr4ng';
-import { CachedGrammar } from './ppl_grammar_cache';
+import { CachedGrammar } from './ppl_grammar_deserialize';
 
 /**
  * Grammar-surface lookups shared by the runtime validation and lint engines.
