@@ -58,8 +58,8 @@ describe('PPL silent-failure lint rules (compiled surface)', () => {
       expect(ids('search accounts | eval x = balance / 2', ctx)).not.toContain('division-by-zero');
     });
 
-    it('does not flag modulo by zero (not verified as a silent failure)', () => {
-      expect(ids('search accounts | eval x = balance % 0', ctx)).not.toContain('division-by-zero');
+    it('flags modulo by zero (returns null silently, like division)', () => {
+      expect(ids('search accounts | eval x = balance % 0', ctx)).toContain('division-by-zero');
     });
 
     it('is Bucket A — fires even without a lint context', () => {

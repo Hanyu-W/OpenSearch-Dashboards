@@ -89,6 +89,17 @@ export function runLint(tree: ParserRuleContext, options: RunLintOptions): Diagn
       continue;
     }
 
+    // A `runtimeOnly` rule targets grammar productions that exist only in the
+    // runtime-bundle surface (e.g. multisearch/union/replace arity). On the
+    // compiled-simplified surface those productions are absent, so the detector
+    // would find nothing — skip it there rather than let it run vacuously. This
+    // is also the anti-vacuous guard the CI grammar-validation path relies on:
+    // the headless lint API stamps `grammarSurface: 'runtime-bundle'` so these
+    // rules DO fire against a candidate bundle.
+    if (config.runtimeOnly && context?.grammarSurface !== 'runtime-bundle') {
+      continue;
+    }
+
     // R7 — version + engine filtering.
     if (!appliesTo(config, dataSourceVersion, context?.isCalcite, knownVersion)) {
       continue;

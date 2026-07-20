@@ -19,13 +19,12 @@ export interface PipelineStage {
 }
 
 export interface PipelineShape {
-  /** Command stages in pipe (source) order. */
+  // Command stages in pipe (source) order.
   stages: PipelineStage[];
-  /** Field names created upstream in the pipeline. */
+  // Field names created upstream in the pipeline.
   createdFields: Set<string>;
 }
 
-// Command rule names recognized as pipeline stages, mapped to a short label.
 const COMMAND_RULE_NAMES = [
   'searchCommand',
   'whereCommand',
@@ -89,6 +88,38 @@ function unquote(raw: string): string {
 }
 
 /**
+ * Normalize a created/derived field name so it matches how references are
+ * written. Strips one enclosing quote pair per dotted segment, where a "quote"
+ * is a backtick, single, or double quote (`` `total` `` → `total`,
+ * `` a.`b` `` → `a.b`, `'years'` → `years`).
+ *
+ * This MUST stay identical to the reference-side normalization in
+ * field_validation, which routes `fieldExpression` text through this same
+ * helper — otherwise a created `` `total` `` registered here would never match a
+ * bare `total` reference and field-validation would false-flag valid queries.
+ * References can only be backtick-quoted, so the single/double-quote stripping
+ * is one-directional: it rescues created names written as `` as 'years' ``
+ * without changing how any reference is interpreted.
+ *
+ * Known limitation (symmetric on both sides, pre-existing): a quoted segment
+ * containing a literal dot (`` `a.b` ``) is mis-split before the strip, so it is
+ * normalized as two segments. A complete fix would unquote a fully-enclosed
+ * token before splitting.
+ */
+export function normalizeFieldName(raw: string): string {
+  return raw
+    .split('.')
+    .map((seg) =>
+      seg.length >= 2 &&
+      (seg[0] === '`' || seg[0] === "'" || seg[0] === '"') &&
+      seg[0] === seg[seg.length - 1]
+        ? seg.slice(1, -1)
+        : seg
+    )
+    .join('.');
+}
+
+/**
  * Value of a named-slot parameter: find the terminal matching `keyword`, then
  * return the text of the first rule-node sibling after it. Used to read
  * `NEW_FIELD = <literal>` (patterns) and `OUTPUT = <expr>` (spath).
@@ -113,29 +144,45 @@ function findSlotValueAfterKeyword(node: ParserRuleContext, keyword: string): st
   return undefined;
 }
 
-/**
- * Collect created field names from a single command node. Best-effort: it scans
- * for `... AS <name>` patterns and known LHS positions.
- */
+// Collect created field names from a single command node. Best-effort: it scans
+// for `... AS <name>` patterns and known LHS positions (eval clause).
 function collectCreatedFields(
   stage: PipelineStage,
   ruleNameToIndex: RuleNameToIndex,
   out: Set<string>
 ): void {
   // Walk descendants looking for an `AS` terminal followed by a name node.
+  // `cast(field AS int)` also has an `AS` terminal, but the node after it is the
+  // target type (a `convertedDataType`), not a created field — skip those so a
+  // type name like `int` never pollutes the known-field set.
+  const convertedTypeIdx = ruleNameToIndex('convertedDataType');
+  // Not every `AS` introduces a field. `join departments AS d` binds `d` as a
+  // *table* alias (the `AS` sits under `tableSourceClause`), not a column on the
+  // outer source. Registering it would silently expand the known-field set and
+  // could mask a real unknown-field warning on a downstream field named `d`.
+  // Skip an `AS` whose immediate container is a table/source-alias context —
+  // the same vocabulary field_validation excludes from the existence pass.
+  const aliasContextIdx = new Set(
+    ['tableSourceClause', 'tableSource', 'tableQualifiedName', 'sourceReference', 'sideAlias']
+      .map(ruleNameToIndex)
+      .filter((idx) => idx !== -1)
+  );
   const stack: ParseTree[] = [stage.node];
   while (stack.length > 0) {
-    const node = stack.pop()!;
-    if (!isRuleNode(node)) {
+    const node = stack.pop();
+    if (node === undefined || !isRuleNode(node)) {
       continue;
     }
     const children = node.children ?? [];
+    // A table/source-alias `AS` (join alias) names a table, not a field — skip
+    // the whole container so its alias never enters the created-field set.
+    const isAliasContext = aliasContextIdx.has(node.ruleIndex);
     for (let i = 0; i < children.length; i++) {
       const child = children[i];
       if (isTerminalNode(child) && child.getText().toLowerCase() === 'as') {
         const next = children[i + 1];
-        if (isRuleNode(next)) {
-          const name = next.getText();
+        if (isRuleNode(next) && next.ruleIndex !== convertedTypeIdx && !isAliasContext) {
+          const name = normalizeFieldName(next.getText());
           if (name) {
             out.add(name);
           }
@@ -152,8 +199,8 @@ function collectCreatedFields(
   if (evalClauseIdx !== -1) {
     const evalStack: ParseTree[] = [stage.node];
     while (evalStack.length > 0) {
-      const node = evalStack.pop()!;
-      if (!isRuleNode(node)) {
+      const node = evalStack.pop();
+      if (node === undefined || !isRuleNode(node)) {
         continue;
       }
       if (node.ruleIndex === evalClauseIdx) {
@@ -161,7 +208,7 @@ function collectCreatedFields(
           (c) => isRuleNode(c) && c.ruleIndex === fieldExprIdx
         ) as ParserRuleContext | undefined;
         if (first) {
-          const name = first.getText();
+          const name = normalizeFieldName(first.getText());
           if (name) {
             out.add(name);
           }
@@ -220,21 +267,22 @@ function collectCreatedFields(
     for (const param of findAllDescendantsByRule(stage.node, ruleNameToIndex, 'spathParameter')) {
       const output = findSlotValueAfterKeyword(param, 'OUTPUT');
       if (output) {
-        out.add(unquote(output));
+        // OUTPUT is either a `'`/`"`-wrapped string literal or a bare/backtick
+        // ident. Strip exactly one enclosing pair per form so it matches a bare
+        // downstream reference — never both, or a name with embedded quotes
+        // (`output="'x'"`) would over-strip and no longer match `` `'x'` ``.
+        const first = output[0];
+        out.add(first === "'" || first === '"' ? unquote(output) : normalizeFieldName(output));
         continue;
       }
       const path = findChildByRule(param, ruleNameToIndex, 'indexablePath');
       if (path) {
-        out.add(path.getText());
+        out.add(normalizeFieldName(path.getText()));
       }
     }
   }
 }
 
-/**
- * Pre-order DFS that visits parse-tree nodes in source order and collects the
- * pipeline command stages plus the set of field names created upstream.
- */
 export function buildPipelineShape(
   tree: ParserRuleContext,
   ruleNameToIndex: RuleNameToIndex
@@ -243,7 +291,6 @@ export function buildPipelineShape(
   const stages: PipelineStage[] = [];
   const createdFields = new Set<string>();
 
-  // Pre-order traversal preserving child order.
   const visit = (node: ParseTree): void => {
     if (isRuleNode(node)) {
       const commandName = indexToCommand.get(node.ruleIndex);
@@ -258,30 +305,47 @@ export function buildPipelineShape(
   };
   visit(tree);
 
+  // Fields created inside an alternate-source subtree (`append [search ...]`,
+  // subsearch, lookup, appendcol, union) belong to that other source, not the
+  // outer pipeline — so they must not leak into the outer known-field set.
+  // `stages` is left intact (head_without_sort runs its own alt-source check on
+  // it); only the created-field collection is scoped.
+  const altSourceRoots = collectAlternateSourceSubtrees(tree, ruleNameToIndex);
   for (const stage of stages) {
-    collectCreatedFields(stage, ruleNameToIndex, createdFields);
+    if (!isInsideAltSource(stage.node, altSourceRoots)) {
+      collectCreatedFields(stage, ruleNameToIndex, createdFields);
+    }
   }
 
   return { stages, createdFields };
 }
 
 /**
- * Collect the parse-tree nodes whose internal field references belong to a
- * *different* source than the outer pipeline's index. Field-validation prunes
- * these subtrees entirely so it never flags a legitimate alternate-source
- * reference as an unknown field. Covers:
- *  - `lookup` (whole command — its columns come from the lookup table)
- *  - `append [source=... | ...]` (only when it embeds its own `searchCommand`;
- *    an `append [| where f=1]` with no inner source runs against the outer
- *    index and is left to be validated)
- *  - `subSearch` (scalar / IN / EXISTS subqueries *and* a join's right side —
- *    `tableOrSubqueryClause` wraps a `subSearch`)
- *  - `unionDataset` (runtime-grammar-only; a no-op on the compiled surface
- *    where `ruleNameToIndex` returns -1 and the descendant scan yields nothing)
+ * Walk up from `node` to the root; true if any ancestor is one of the
+ * alternate-source subtree roots from {@link collectAlternateSourceSubtrees}.
  *
- * Each membership test in the caller is O(1) (`Set.has`); building the set is a
- * handful of descendant scans over the tree.
+ * Shared by two callers with different needs for the root node itself:
+ *   - `buildPipelineShape` (created-field scoping) prunes the alt-source root and
+ *     everything under it, so it walks from `node` (`excludeRoot` = false).
+ *   - `head_without_sort` (sort/head ordering) must still analyze a top-level
+ *     append/lookup as order-destroying while pruning only the stages nested in
+ *     its bracketed sub-pipeline, so it walks from `node.parent` (`excludeRoot`).
  */
+export function isInsideAltSource(
+  node: ParserRuleContext,
+  altSourceRoots: Set<ParserRuleContext>,
+  excludeRoot = false
+): boolean {
+  let n: ParserRuleContext | null = excludeRoot ? (node.parent as ParserRuleContext | null) : node;
+  for (; n; n = n.parent as ParserRuleContext | null) {
+    if (altSourceRoots.has(n)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Subtrees with an alternate field source, pruned during field-validation. */
 export function collectAlternateSourceSubtrees(
   tree: ParserRuleContext,
   ruleNameToIndex: RuleNameToIndex
@@ -296,6 +360,13 @@ export function collectAlternateSourceSubtrees(
     if (findAllDescendantsByRule(node, ruleNameToIndex, 'searchCommand').length > 0) {
       subtrees.add(node);
     }
+  }
+
+  // appendcol's bracketed pipeline computes an attached column; its internal row
+  // order is independent of the main pipeline, so commands inside it must not
+  // affect (or be affected by) the top-level sort/head ordering analysis.
+  for (const node of findAllDescendantsByRule(tree, ruleNameToIndex, 'appendcolCommand')) {
+    subtrees.add(node);
   }
 
   for (const node of findAllDescendantsByRule(tree, ruleNameToIndex, 'subSearch')) {

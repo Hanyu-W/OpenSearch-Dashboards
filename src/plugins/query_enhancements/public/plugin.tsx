@@ -6,7 +6,17 @@ import { i18n } from '@osd/i18n';
 import { BehaviorSubject, Subscription } from 'rxjs';
 import moment from 'moment';
 import { CoreSetup, CoreStart, Plugin, PluginInitializerContext } from '../../../core/public';
-import { DataStorage, OSD_FIELD_TYPES } from '../../data/common';
+import {
+  DataStorage,
+  getDataSourceEngineCapabilities,
+  OSD_FIELD_TYPES,
+} from '../../data/common';
+// Type-only: DataSourceEngineType is an enum (runtime value); we use its string value directly to
+// avoid a cross-plugin runtime value-import. Keep in sync with the enum.
+import type { DataSourceEngineType } from '../../data_source/common/data_sources';
+
+const ELASTICSEARCH_ENGINE: DataSourceEngineType.Elasticsearch =
+  'Elasticsearch' as DataSourceEngineType.Elasticsearch;
 import {
   createEditor,
   DefaultInput,
@@ -33,14 +43,12 @@ import { PromQLSearchInterceptor } from './search/promql_search_interceptor';
 import { PrometheusResourceClient } from './resources';
 import { registerPplLint } from './ppl_lint/register_ppl_lint';
 
-export class QueryEnhancementsPlugin
-  implements
-    Plugin<
-      QueryEnhancementsPluginSetup,
-      QueryEnhancementsPluginStart,
-      QueryEnhancementsPluginSetupDependencies,
-      QueryEnhancementsPluginStartDependencies
-    > {
+export class QueryEnhancementsPlugin implements Plugin<
+  QueryEnhancementsPluginSetup,
+  QueryEnhancementsPluginStart,
+  QueryEnhancementsPluginSetupDependencies,
+  QueryEnhancementsPluginStartDependencies
+> {
   private readonly storage: DataStorage;
   private readonly config: ConfigSchema;
   private isQuerySummaryCollapsed$ = new BehaviorSubject<boolean>(false);
@@ -61,6 +69,21 @@ export class QueryEnhancementsPlugin
   ): QueryEnhancementsPluginSetup {
     const { queryString } = data.query;
     const { currentAppId$ } = this;
+
+    // When legacy Elasticsearch compatibility is enabled, declare per-engine minimum versions so
+    // SQL/PPL are gated per selected dataset (and routed to Open Distro server-side). When disabled
+    // (default), these stay undefined so the language service evaluator fail-opens — behavior is
+    // unchanged. The minimum versions come from the centralized engine-capabilities descriptor.
+    const legacyEsCompatEnabled = this.config.legacyElasticsearchCompatibility?.enabled;
+    const esMinVersions = getDataSourceEngineCapabilities(ELASTICSEARCH_ENGINE).minLanguageVersions;
+    const pplSupportedDataSources =
+      legacyEsCompatEnabled && esMinVersions?.PPL
+        ? { minVersionByEngine: { [ELASTICSEARCH_ENGINE]: esMinVersions.PPL } }
+        : undefined;
+    const sqlSupportedDataSources =
+      legacyEsCompatEnabled && esMinVersions?.SQL
+        ? { minVersionByEngine: { [ELASTICSEARCH_ENGINE]: esMinVersions.SQL } }
+        : undefined;
 
     // Define controls once for each language and register language configurations outside of `getUpdates$`
     const pplControls = [pplLanguageReference('PPL')];
@@ -118,6 +141,7 @@ export class QueryEnhancementsPlugin
         'agentTraces',
         'dashboard',
       ],
+      supportedDataSources: pplSupportedDataSources,
       sampleQueries: [
         {
           title: i18n.translate('queryEnhancements.sampleQuery.titleContainsWind', {
@@ -160,9 +184,9 @@ export class QueryEnhancementsPlugin
     };
     queryString.getLanguageService().registerLanguage(pplLanguageConfig);
 
-    // Register SQL language configuration
-    // TODO: once analytics engine support lands, gate SQL language registration
-    // on dataset type so SQL is only exposed for Mustang-backed datasets.
+    // Register SQL language configuration. Per-dataset engine/version gating (e.g. legacy
+    // Elasticsearch below SQL's minimum) is declared via `supportedDataSources` below and applied
+    // by the language service evaluator.
     const sqlLanguageConfig: LanguageConfig = {
       id: 'SQL',
       title: 'OpenSearch SQL',
@@ -196,8 +220,10 @@ export class QueryEnhancementsPlugin
       },
       showDocLinks: false,
       editor: createEditor(SingleLineInput, null, sqlControls, DefaultInput),
-      editorSupportedAppNames: ['discover', 'explore', 'agentTraces'],
-      supportedAppNames: ['discover', 'data-explorer', 'explore', 'agentTraces'],
+      // 'explore' is added by the explore plugin only when explore.sqlSupport.enabled is on.
+      editorSupportedAppNames: ['discover', 'agentTraces'],
+      supportedAppNames: ['discover', 'data-explorer', 'agentTraces'],
+      supportedDataSources: sqlSupportedDataSources,
       hideDatePicker: true,
       sampleQueries: [
         {

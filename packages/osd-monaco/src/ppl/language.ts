@@ -47,6 +47,11 @@ const lintDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 // per-model context) can never overwrite a newer pass's markers.
 const lintGenerations = new Map<string, number>();
 
+// Same monotonic guard for the syntax-highlighting path: an earlier
+// validation that resolves after a newer one must not clobber the newer
+// markers (or resurrect a stale command-typo fix range).
+const syntaxGenerations = new Map<string, number>();
+
 // PPL analyzer for synchronous tokenization (lazy initialization)
 let pplAnalyzer: ReturnType<typeof getPPLLanguageAnalyzer> | undefined;
 
@@ -155,6 +160,11 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
     return;
   }
 
+  // Stamp this run so a slower, earlier validation that resolves after a newer
+  // one cannot clobber the newer markers. Mirrors the lint path's guard.
+  const generation = (syntaxGenerations.get(model.id) ?? 0) + 1;
+  syntaxGenerations.set(model.id, generation);
+
   try {
     const content = model.getValue();
 
@@ -164,6 +174,18 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
       validateCompiledPPL
     )) as PPLValidationResult;
 
+    // Bail if a newer run started, the model was disposed, its content changed,
+    // or it is no longer PPL while we were awaiting — writing now would resurrect
+    // stale markers (and a stale command-typo fix range) over fresher state.
+    if (
+      syntaxGenerations.get(model.id) !== generation ||
+      model.isDisposed() ||
+      model.getValue() !== content ||
+      model.getLanguageId() !== PPL_LANGUAGE_ID
+    ) {
+      return;
+    }
+
     if (validationResult.errors.length > 0) {
       // A command-typo error carries a structured `fix`; collect those into the
       // syntax-fix side table (keyed by the marker fields Monaco preserves) so
@@ -172,6 +194,15 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
       // a fixed field list and drops custom properties — same constraint the
       // lint path handles via setModelFixes.
       const syntaxFixes = new Map<string, MarkerFix>();
+
+      // Command-typo suggestion is a UX layer on the syntax channel, toggleable
+      // via the same PPL-lint rules uiSetting (id `command-suggestion`). When it
+      // is disabled we revert the friendly rewrite: use ANTLR's raw message and
+      // drop the quick-fix, leaving the plain syntax error. The feature is also
+      // gated on the global PPL-lint capability: when lint is off, no suggestion
+      // enhancements fire (the raw syntax error still shows).
+      const commandSuggestionEnabled =
+        isPPLLintEnabled() && getPPLLintContext(model)?.commandSuggestionEnabled !== false;
 
       // Convert errors to Monaco markers
       const markers: monaco.editor.IMarkerData[] = validationResult.errors.map((error) => {
@@ -186,10 +217,19 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
         const safeStartColumn = Math.max(1, startColumn);
         const safeEndColumn = Math.max(safeStartColumn, endColumn);
 
-        const docLink = getPPLDocumentationLink(error.message);
+        // A command-typo error is rewritten + carries a fix + keeps rawMessage.
+        // When suggestions are off, fall back to the raw ANTLR message and no fix.
+        const isSuppressedSuggestion =
+          !commandSuggestionEnabled && error.code === 'UNKNOWN_COMMAND';
+        const effectiveMessage = isSuppressedSuggestion
+          ? (error.rawMessage ?? error.message)
+          : error.message;
+        const effectiveFix = isSuppressedSuggestion ? undefined : error.fix;
+
+        const docLink = getPPLDocumentationLink(effectiveMessage);
         const marker: monaco.editor.IMarkerData = {
           severity: monaco.MarkerSeverity.Error,
-          message: error.message,
+          message: effectiveMessage,
           startLineNumber: safeStartLine,
           startColumn: safeStartColumn,
           endLineNumber: safeEndLine,
@@ -204,8 +244,8 @@ const processSyntaxHighlighting = async (model: monaco.editor.IModel) => {
           },
         };
 
-        if (error.fix) {
-          syntaxFixes.set(markerFixKey(marker), error.fix);
+        if (effectiveFix) {
+          syntaxFixes.set(markerFixKey(marker), effectiveFix);
         }
 
         return marker;
@@ -395,6 +435,7 @@ const setupPPLSyntaxHighlighting = () => {
         lintDebounceTimers.delete(model.id);
       }
       lintGenerations.delete(model.id);
+      syntaxGenerations.delete(model.id);
       monaco.editor.setModelMarkers(model, OWNER, []);
       monaco.editor.setModelMarkers(model, LINT_OWNER, []);
       clearModelFixes(model);

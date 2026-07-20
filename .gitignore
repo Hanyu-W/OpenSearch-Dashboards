@@ -97,3 +97,6 @@ snapshots.js
 
 # Test runner last-run artifacts
 /test-results/
+
+# git worktrees (local isolated workspaces)
+/.worktrees/

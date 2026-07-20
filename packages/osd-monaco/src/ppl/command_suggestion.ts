@@ -11,6 +11,11 @@ import {
   Token,
   ATNSimulator,
 } from 'antlr4ng';
+import { damerauLevenshtein, nearestWithinThreshold } from './lint/edit_distance';
+
+// Re-exported so existing callers/tests importing it from this module keep
+// working after the implementation moved to the shared edit_distance module.
+export { damerauLevenshtein };
 
 /**
  * Documentation / test baseline of PPL command keyword *symbolic name* ->
@@ -112,74 +117,21 @@ export interface CommandSuggestion {
 const MAX_COMMAND_CANDIDATES = 150;
 
 /**
- * Optimal String Alignment (Damerau-Levenshtein restricted to adjacent
- * transpositions). A transposition (`fiedls` -> `fields`) costs 1 edit rather
- * than the 2 plain Levenshtein charges, so transposition typos — one of the most
- * common classes — are caught at a tight threshold of 1. Returns early with a
- * value `> maxDistance` once an entire row exceeds the bound.
- */
-export function damerauLevenshtein(a: string, b: string, maxDistance: number): number {
-  const m = a.length;
-  const n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-  // Three rolling rows: two-back (for transpositions), one-back, current.
-  let prevPrev = new Array<number>(n + 1).fill(0);
-  let prev = new Array<number>(n + 1);
-  let curr = new Array<number>(n + 1);
-  for (let j = 0; j <= n; j++) prev[j] = j;
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i;
-    let rowMin = curr[0];
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      let val = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
-      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
-        val = Math.min(val, prevPrev[j - 2] + 1);
-      }
-      curr[j] = val;
-      if (val < rowMin) rowMin = val;
-    }
-    if (rowMin > maxDistance) {
-      return maxDistance + 1;
-    }
-    const spare = prevPrev;
-    prevPrev = prev;
-    prev = curr;
-    curr = spare;
-  }
-  return prev[n];
-}
-
-/**
  * Nearest command spelling to `typed` within an edit-distance threshold, or
  * undefined when none is close enough. Threshold is 1 for short names (< 8
- * chars) and 2 for longer ones, mirroring the base-plan design. Iteration order
- * gives a deterministic tie-break; a length-gap pre-filter and an early-out at
- * distance 1 keep the sweep cheap.
+ * chars) and 2 for longer ones, mirroring the base-plan design.
  */
 export function suggestCommand(typed: string, candidates: Iterable<string>): string | undefined {
   const lower = typed.toLowerCase();
   const threshold = lower.length >= 8 ? 2 : 1;
-  let best: string | undefined;
-  let bestDistance = Infinity;
-  for (const candidate of candidates) {
-    if (Math.abs(candidate.length - lower.length) > threshold) {
-      continue;
-    }
-    const distance = damerauLevenshtein(lower, candidate, threshold);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = candidate;
-      // Safe to stop at 1 here (unlike suggestField, which must stop at 0):
-      // callers only invoke this for a token already known NOT to be a valid
-      // command, so distance 0 never occurs and no closer match can be missed.
-      if (bestDistance === 1) {
-        break;
-      }
-    }
+  // A token no longer than the edit threshold is not a typo: rewriting 100% of a
+  // 1-char token (`| a`) to reach a 2-char command (`ad`/`ml`) is a guess, not a
+  // correction. Without this floor the suggestion fires constantly while the user
+  // is mid-typing a fresh command and replaces ANTLR's real diagnostic.
+  if (lower.length <= threshold) {
+    return undefined;
   }
-  return best && bestDistance <= threshold ? best : undefined;
+  return nearestWithinThreshold(typed, candidates, threshold);
 }
 
 /** Only word-shaped tokens can be command typos (rules out pipes, numbers, EOF). */
@@ -198,7 +150,7 @@ const KEYWORD_SYMBOLIC_RE = /^[A-Z][A-Z0-9]*$/;
 function isParser<T extends ATNSimulator>(
   recognizer: Recognizer<T>
 ): recognizer is Recognizer<T> & Parser {
-  return typeof ((recognizer as unknown) as Parser).getExpectedTokens === 'function';
+  return typeof (recognizer as unknown as Parser).getExpectedTokens === 'function';
 }
 
 /**
@@ -286,7 +238,10 @@ function offendingFollowsPipe<T extends ATNSimulator>(
 ): boolean {
   const tokenIndex = offendingSymbol?.tokenIndex;
   const stream = recognizer.inputStream;
-  if (tokenIndex == null || tokenIndex <= 0 || !stream) {
+  // `tokenIndex` is a valid stream index in practice, but a token synthesized
+  // during error recovery can carry an out-of-range index; the upper bound keeps
+  // the `stream.get(i)` lookback in range regardless.
+  if (tokenIndex == null || tokenIndex <= 0 || !stream || tokenIndex > stream.size) {
     return false;
   }
   for (let i = tokenIndex - 1; i >= 0; i--) {
@@ -355,8 +310,8 @@ export function buildCommandSuggestion<S extends Token, T extends ATNSimulator>(
     followSetCommands && followSetCommands.size > 0
       ? followSetCommands
       : offendingFollowsPipe(recognizer, offendingSymbol)
-      ? validCommands
-      : undefined;
+        ? validCommands
+        : undefined;
 
   if (!candidates || candidates.size === 0) {
     return undefined; // not a command position.

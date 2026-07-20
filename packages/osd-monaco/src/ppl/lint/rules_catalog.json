@@ -13,27 +13,35 @@
     "detector": "unsupported-window-function-in-eventstats",
     "enabled": true,
     "severity": "error",
-    "message": "Unsupported window function in eventstats/streamstats.",
+    "message": "This window function is not supported in eventstats/streamstats — only row_number is available.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/eventstats/#aggregation-functions",
-    "appliesTo": { "minVersion": "3.4.0" }
+    "appliesTo": {
+      "minVersion": "3.4.0"
+    }
   },
   {
     "id": "dedup-consecutive-unsupported",
     "detector": "dedup-consecutive-unsupported",
     "enabled": true,
     "severity": "warning",
-    "message": "dedup consecutive=true relies on engine fallback.",
+    "message": "dedup consecutive=true is not natively supported on Calcite and relies on engine fallback.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/#unsupported-functionalities",
-    "appliesTo": { "minVersion": "3.3.0", "engine": "calcite" }
+    "appliesTo": {
+      "minVersion": "3.3.0",
+      "engine": "calcite"
+    }
   },
   {
     "id": "replace-wildcard-asymmetry",
     "detector": "replace-wildcard-asymmetry",
     "enabled": true,
     "severity": "error",
-    "message": "Asymmetric wildcard counts in replace.",
+    "message": "replace pattern and replacement have asymmetric wildcard counts.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/replace/#limitations",
-    "appliesTo": { "minVersion": "3.4.0", "engine": "calcite" },
+    "appliesTo": {
+      "minVersion": "3.4.0",
+      "engine": "calcite"
+    },
     "runtimeOnly": true
   },
   {
@@ -43,7 +51,10 @@
     "severity": "error",
     "message": "union requires at least two datasets.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/",
-    "appliesTo": { "minVersion": "3.7.0", "engine": "calcite" },
+    "appliesTo": {
+      "minVersion": "3.7.0",
+      "engine": "calcite"
+    },
     "runtimeOnly": true
   },
   {
@@ -53,7 +64,9 @@
     "severity": "error",
     "message": "multisearch requires at least two subsearches.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/multisearch/#limitations",
-    "appliesTo": { "minVersion": "3.4.0" },
+    "appliesTo": {
+      "minVersion": "3.4.0"
+    },
     "runtimeOnly": true
   },
   {
@@ -61,7 +74,7 @@
     "detector": "disabled-join-type",
     "enabled": true,
     "severity": "warning",
-    "message": "Performance-sensitive join type is disabled by default.",
+    "message": "This join type is disabled by default — enable plugins.calcite.all_join_types.allowed to use it.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/join/#limitations",
     "appliesTo": {}
   },
@@ -70,7 +83,7 @@
     "detector": "head-without-sort",
     "enabled": true,
     "severity": "info",
-    "message": "head without a preceding sort returns nondeterministic rows.",
+    "message": "Add sort before head to get stable results.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/head/",
     "appliesTo": {}
   },
@@ -108,7 +121,7 @@
     "detector": "division-by-zero",
     "enabled": true,
     "severity": "warning",
-    "message": "Division by literal zero evaluates to null rather than raising an error.",
+    "message": "Dividing or taking modulo by zero returns null silently — guard with coalesce() or a conditional.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/expressions/#arithmetic-operators",
     "appliesTo": {}
   },
@@ -169,7 +182,10 @@
     "severity": "warning",
     "message": "This step may make the query slow. Simplify the highlighted part when possible.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/",
-    "appliesTo": { "minVersion": "3.3.0", "engine": "calcite" },
+    "appliesTo": {
+      "minVersion": "3.3.0",
+      "engine": "calcite"
+    },
     "needsExplain": true
   },
   {
@@ -179,7 +195,10 @@
     "severity": "info",
     "message": "This step may make the query slow. Simplify the highlighted part when possible.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/",
-    "appliesTo": { "minVersion": "3.3.0", "engine": "calcite" },
+    "appliesTo": {
+      "minVersion": "3.3.0",
+      "engine": "calcite"
+    },
     "needsExplain": true
   }
 ]

@@ -33,13 +33,13 @@ const KEY = UI_SETTINGS.QUERY_ENHANCEMENTS_PPL_LINT_RULES;
 describe('query_enhancements PPL lint rules uiSetting', () => {
   describe('registration', () => {
     it('registers a single JSON key for all rules', () => {
-      const settings = getPplLintRuleSettings();
+      const settings = getPplLintRuleSettings(false);
       expect(Object.keys(settings)).toEqual([KEY]);
       expect(settings[KEY].type).toBe('json');
     });
 
     it('defaults to a JSON blob mirroring the bundled catalog enabled/severity', () => {
-      const settings = getPplLintRuleSettings();
+      const settings = getPplLintRuleSettings(false);
       const value = JSON.parse(settings[KEY].value as string);
 
       expect(Object.keys(value)).toHaveLength(bundledCatalog.length);
@@ -49,18 +49,18 @@ describe('query_enhancements PPL lint rules uiSetting', () => {
     });
 
     it('does not set requiresPageReload (the editor live-revalidates)', () => {
-      const settings = getPplLintRuleSettings();
+      const settings = getPplLintRuleSettings(false);
       expect(settings[KEY].requiresPageReload).toBeFalsy();
     });
 
     it('groups the key under the search category', () => {
-      const settings = getPplLintRuleSettings();
+      const settings = getPplLintRuleSettings(false);
       expect(settings[KEY].category).toEqual(['search']);
     });
   });
 
   describe('value schema', () => {
-    const validate = () => (value: unknown) => getPplLintRuleSettings()[KEY].schema.validate(value);
+    const validate = () => (value: unknown) => getPplLintRuleSettings(false)[KEY].schema.validate(value);
 
     it('accepts a map of well-formed { enabled, severity } entries for every severity', () => {
       const v = validate();

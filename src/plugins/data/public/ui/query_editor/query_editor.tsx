@@ -155,8 +155,11 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
   const getValidationContext = (): PPLValidationContext => {
     const dsId = queryRef.current.dataset?.dataSource?.id;
     const dsVersion = queryRef.current.dataset?.dataSource?.version;
+    const dsEngineType =
+      queryRef.current.dataset?.dataSource?.engineType ??
+      queryRef.current.dataset?.dataSource?.type;
     return {
-      useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
+      useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion, dsEngineType),
       dataSourceId: dsId,
       dataSourceVersion: dsVersion,
     };
@@ -253,8 +256,9 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
   useEffect(() => {
     const dsId = query.dataset?.dataSource?.id;
     const dsVersion = query.dataset?.dataSource?.version;
+    const dsEngineType = query.dataset?.dataSource?.engineType ?? query.dataset?.dataSource?.type;
     syncPPLValidationContext(inputRef.current, {
-      useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
+      useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion, dsEngineType),
       dataSourceId: dsId,
       dataSourceVersion: dsVersion,
     });
@@ -263,7 +267,12 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     if (model) {
       void revalidatePPLModel(model);
     }
-  }, [query.dataset?.dataSource?.id, query.dataset?.dataSource?.version]);
+  }, [
+    query.dataset?.dataSource?.id,
+    query.dataset?.dataSource?.version,
+    query.dataset?.dataSource?.engineType,
+    query.dataset?.dataSource?.type,
+  ]);
 
   // Load field metadata for the active dataset and feed it to the lint context.
   // Field-aware lint rules self-suppress until this resolves, so we set the

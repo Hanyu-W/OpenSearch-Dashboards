@@ -44,4 +44,11 @@ export interface HoverFacts {
    * Drives the "Your query" line so the card names the clause, not just the rule.
    */
   operation?: 'filter' | 'aggregation' | 'sort';
+  /** The disabled join keyword detected (e.g. `cross`) for disabled-join-type. */
+  joinType?: string;
+  /** The unsupported window function name for unsupported-window-function-in-eventstats. */
+  windowFunction?: string;
+  /** Wildcard counts for replace-wildcard-asymmetry. */
+  patternWildcards?: number;
+  replacementWildcards?: number;
 }

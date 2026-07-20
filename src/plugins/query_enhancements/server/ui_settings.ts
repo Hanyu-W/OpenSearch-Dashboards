@@ -5,6 +5,7 @@
 
 import { schema } from '@osd/config-schema';
 import { UiSettingsParams } from 'opensearch-dashboards/server';
+import { UiSettingScope } from '../../../core/server/ui_settings/types';
 import { UI_SETTINGS } from '../../data/common';
 
 // Bundled defaults for the lint settings. Mirrors the `enabled` and `severity`
@@ -57,11 +58,18 @@ const DEFAULT_RULES_VALUE = Object.fromEntries(
  * one `type: 'json'` key that Advanced Settings renders as a JSON editor. The
  * value is an object mapping each rule id to `{ enabled, severity }`.
  *
- * Global-scoped like `timepicker:quickRanges` — a single shared config rather
- * than the per-user/workspace cross-scope merge. No `requiresPageReload`: the
- * query editor live-revalidates when this key changes.
+ * No `requiresPageReload`: the query editor live-revalidates when this key
+ * changes. Adds the WORKSPACE scope (alongside USER and GLOBAL) when the
+ * workspace feature is enabled so the config participates in the cross-scope
+ * merge; otherwise it stays USER + GLOBAL.
  */
-export function getPplLintRuleSettings(): Record<string, UiSettingsParams<unknown>> {
+export function getPplLintRuleSettings(
+  workspaceEnabled: boolean
+): Record<string, UiSettingsParams<unknown>> {
+  const scope = workspaceEnabled
+    ? [UiSettingScope.USER, UiSettingScope.WORKSPACE, UiSettingScope.GLOBAL]
+    : [UiSettingScope.USER, UiSettingScope.GLOBAL];
+
   return {
     [UI_SETTINGS.QUERY_ENHANCEMENTS_PPL_LINT_RULES]: {
       name: 'PPL linter rules',
@@ -72,6 +80,7 @@ export function getPplLintRuleSettings(): Record<string, UiSettingsParams<unknow
         'each with "enabled" (boolean) and "severity" ("error", "warning", or "info"). ' +
         'Rules omitted from this object fall back to their bundled defaults.',
       category: ['search'],
+      scope,
       schema: schema.recordOf(
         schema.string(),
         schema.object({

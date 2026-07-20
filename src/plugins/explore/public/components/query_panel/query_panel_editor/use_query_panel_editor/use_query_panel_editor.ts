@@ -235,8 +235,9 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     const ds = datasetRef.current;
     const dsId = ds?.dataSource?.id;
     const dsVersion = ds?.dataSource?.version;
+    const dsEngineType = ds?.dataSource?.engineType ?? ds?.dataSource?.type;
     return {
-      useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
+      useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion, dsEngineType),
       dataSourceId: dsId,
       dataSourceVersion: dsVersion,
     };
@@ -285,8 +286,9 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
   useEffect(() => {
     const dsId = dataset?.dataSource?.id;
     const dsVersion = dataset?.dataSource?.version;
+    const dsEngineType = dataset?.dataSource?.engineType ?? dataset?.dataSource?.type;
     syncPPLValidationContext(editorRef.current, {
-      useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion),
+      useRuntimeGrammar: shouldUseRuntimeGrammar(dsId, dsVersion, dsEngineType),
       dataSourceId: dsId,
       dataSourceVersion: dsVersion,
     });
@@ -294,7 +296,13 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     if (model) {
       void revalidatePPLModel(model);
     }
-  }, [dataset?.dataSource?.id, dataset?.dataSource?.version, editorRef]);
+  }, [
+    dataset?.dataSource?.id,
+    dataset?.dataSource?.version,
+    dataset?.dataSource?.engineType,
+    dataset?.dataSource?.type,
+    editorRef,
+  ]);
 
   // Load field metadata for the active dataset and feed it to the lint context.
   // Field-aware lint rules self-suppress until this resolves, so the context is

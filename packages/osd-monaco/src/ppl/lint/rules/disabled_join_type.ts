@@ -4,20 +4,29 @@
  */
 
 import type { ParserRuleContext, TerminalNode } from 'antlr4ng';
-import { isTerminalNode } from '../rule_index';
 import { Diagnostic } from '../diagnostic';
 import { Detector } from '../types';
-import { findAllDescendantsByRule, findChildByRule, RuleNameToIndex } from '../rule_index';
+import {
+  findAllChildrenByRule,
+  findAllDescendantsByRule,
+  findChildByRule,
+  isTerminalNode,
+  RuleNameToIndex,
+} from '../rule_index';
 import { rangeFromContext } from '../range_utils';
 
-// Engine ground truth: Join.java:100-101 (highCostJoinTypes = RIGHT/CROSS/FULL)
-// and AstBuilder.java:363-369 (validateJoinType). `outer` is an alias for `left`
+// Engine ground truth: Join.java (highCostJoinTypes = RIGHT/CROSS/FULL) and
+// AstBuilder.validateJoinType reject these join types unless
+// plugins.calcite.all_join_types.allowed is set. `outer` is an alias for `left`
 // and must never be flagged. Fires on all clusters regardless of engine.
+//
+// Two grammar spots carry the keyword (labeled alternatives collapse under the
+// parser, so we read the direct terminal tokens rather than a labeled node):
+//   1. sqlLikeJoinType — the prefix form (`join right t ...`) on the runtime grammar.
+//   2. joinType         — the option form (`join type=cross t ...`) on any surface.
 const DISABLED_JOIN_KEYWORDS: ReadonlySet<string> = new Set(['right', 'full', 'cross']);
 
-/**
- * Collect the direct terminal token texts (lowercased) of a node.
- */
+/** Direct terminal token texts (lowercased) of a node. */
 function directTokenTexts(ctx: ParserRuleContext): string[] {
   const children = ctx.children ?? [];
   return children
@@ -29,9 +38,6 @@ function detectJoinTypeKeyword(
   joinCommand: ParserRuleContext,
   ruleNameToIndex: RuleNameToIndex
 ): { keyword: string; node: ParserRuleContext } | undefined {
-  // Labeled alternatives collapse under ParserInterpreter, so we token-scan
-  // (R20.4) two grammar spots:
-  //   1. sqlLikeJoinType direct tokens (RIGHT / FULL / CROSS)
   const sqlLikeType = findChildByRule(joinCommand, ruleNameToIndex, 'sqlLikeJoinType');
   if (sqlLikeType) {
     for (const tok of directTokenTexts(sqlLikeType)) {
@@ -41,9 +47,18 @@ function detectJoinTypeKeyword(
     }
   }
 
-  //   2. joinOption → TYPE EQUAL joinType
-  const joinTypeNodes = findAllDescendantsByRule(joinCommand, ruleNameToIndex, 'joinType');
-  for (const joinTypeNode of joinTypeNodes) {
+  // Read `joinType` only from this join's OWN direct `joinOption` children. A
+  // descendant search would also reach the `joinType` of a join nested inside a
+  // subsearch (`join type=inner b [ ... | join type=cross c ]`), reporting the
+  // nested keyword twice and masking the outer join's own type. Every legitimate
+  // `type=<kw>` is a direct `joinOption` of its own `joinCommand`, and nested
+  // joins are enumerated separately by the caller's `joinCommand` walk.
+  const joinOptions = findAllChildrenByRule(joinCommand, ruleNameToIndex, 'joinOption');
+  for (const joinOption of joinOptions) {
+    const joinTypeNode = findChildByRule(joinOption, ruleNameToIndex, 'joinType');
+    if (!joinTypeNode) {
+      continue;
+    }
     for (const tok of directTokenTexts(joinTypeNode)) {
       if (DISABLED_JOIN_KEYWORDS.has(tok)) {
         return { keyword: tok, node: joinTypeNode };
@@ -56,7 +71,7 @@ function detectJoinTypeKeyword(
 
 export const disabledJoinTypeDetector: Detector = (tree, config, context, ruleNameToIndex) => {
   if (context.settings?.allJoinTypesAllowed === true) {
-    return []; // R20.3
+    return [];
   }
 
   const diagnostics: Diagnostic[] = [];
@@ -68,9 +83,10 @@ export const disabledJoinTypeDetector: Detector = (tree, config, context, ruleNa
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,
-        message: `Join type "${detected.keyword}" is disabled by default (set plugins.calcite.all_join_types.allowed to enable).`,
+        message: config.message,
         range: rangeFromContext(detected.node),
         docUrl: config.docUrl,
+        hoverFacts: { joinType: detected.keyword },
       });
     }
   }

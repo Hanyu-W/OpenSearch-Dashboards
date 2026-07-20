@@ -14,9 +14,6 @@ import {
 } from '../rule_index';
 import { rangeFromContext } from '../range_utils';
 
-// Engine ground truth: WINDOW_FUNC_MAPPING (BuiltinFunctionName.java:408-430)
-// contains only `row_number` among ranking-style names. `first`/`last` live
-// only in the aggregation mapping and are NOT valid window functions.
 const UNSUPPORTED_WINDOW_FUNCTIONS: ReadonlySet<string> = new Set([
   'rank',
   'dense_rank',
@@ -28,7 +25,6 @@ const UNSUPPORTED_WINDOW_FUNCTIONS: ReadonlySet<string> = new Set([
   'last',
 ]);
 
-// Both surfaces carry eventstats; streamstats is runtime-only.
 const WINDOW_COMMAND_RULES = ['eventstatsCommand', 'streamstatsCommand'];
 
 function collectWindowFunctionNames(
@@ -42,8 +38,6 @@ function collectWindowFunctionNames(
     if (!nameNode) {
       continue;
     }
-    // The scalar (ranking) window function names are the only ones that can be
-    // unsupported; plain aggregate names route through statsFunctionName.
     const scalarNode = findChildByRule(nameNode, ruleNameToIndex, 'scalarWindowFunctionName');
     const targetNode = scalarNode ?? nameNode;
     const text = getTokenText(targetNode).toLowerCase();
@@ -64,7 +58,6 @@ export const unsupportedWindowFunctionDetector: Detector = (
 
   const commands: ParserRuleContext[] = [];
   for (const ruleName of WINDOW_COMMAND_RULES) {
-    // Absent rule (e.g. streamstats on compiled surface) → no nodes, clean no-op.
     commands.push(...findAllDescendantsByRule(tree, ruleNameToIndex, ruleName));
   }
 
@@ -75,9 +68,10 @@ export const unsupportedWindowFunctionDetector: Detector = (
         diagnostics.push({
           ruleId: config.id,
           severity: config.severity,
-          message: `Window function "${fn.name}" is not supported in eventstats/streamstats. Only row_number is supported.`,
+          message: config.message,
           range: rangeFromContext(fn.node),
           docUrl: config.docUrl,
+          hoverFacts: { windowFunction: fn.name },
         });
       }
     }

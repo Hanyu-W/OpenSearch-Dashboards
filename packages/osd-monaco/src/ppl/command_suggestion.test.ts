@@ -56,6 +56,16 @@ describe('suggestCommand', () => {
     // `eventstats` (>= 8 chars) tolerates two edits.
     expect(suggestCommand('evenstat', commands)).toBe('eventstats');
   });
+
+  it('does NOT suggest for a token no longer than the edit threshold', () => {
+    // A 1-char token is distance 1 from any 2-char command (`ad`, `ml`), but
+    // rewriting the whole token is a guess, not a typo correction.
+    expect(suggestCommand('a', ['ad', 'ml', 'where'])).toBeUndefined();
+  });
+
+  it('still suggests for a genuine 2-char typo (longer than threshold)', () => {
+    expect(suggestCommand('ae', ['ad', 'ml'])).toBe('ad');
+  });
 });
 
 // End-to-end on the compiled (simplified-grammar) path via the real parser.
@@ -94,6 +104,14 @@ describe('buildCommandSuggestion via PPLLanguageAnalyzer.validate (compiled path
     expect(err?.fix).toBeUndefined();
   });
 
+  it('does not suggest a command for a single stray character', () => {
+    // `| a` is a 1-char token. A distance-1 match to `ad`/`ml` is not a typo, so
+    // the structured suggestion stays out of the way and ANTLR's message wins.
+    const err = firstError('source=logs | a');
+    expect(err?.code).toBeUndefined();
+    expect(err?.fix).toBeUndefined();
+  });
+
   it('does not flag a correctly-spelled query', () => {
     expect(analyzer.validate('source=logs | where a > 1').isValid).toBe(true);
   });
@@ -103,7 +121,7 @@ describe('buildCommandSuggestion via PPLLanguageAnalyzer.validate (compiled path
     // offending symbol also bails. Exercise the direct guards.
     expect(
       buildCommandSuggestion(
-        ({ vocabulary: { getSymbolicName: () => null } } as unknown) as any,
+        { vocabulary: { getSymbolicName: () => null } } as unknown as any,
         null,
         null
       )

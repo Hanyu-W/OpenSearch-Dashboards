@@ -10,15 +10,14 @@ import { findAllDescendantsByRule } from '../rule_index';
 import { rangeFromContext } from '../range_utils';
 
 // Engine ground truth: `dedup consecutive=true` throws CalciteUnsupportedException
-// (CalciteRelNodeVisitor.java:2130) which is unconditionally caught by the
-// Calcite-to-v2 fallback, and v2 DedupeOperator supports it. So this is a
-// warning (query succeeds via fallback), and only on Calcite sources.
+// which is unconditionally caught by the Calcite-to-v2 fallback, and v2's
+// DedupeOperator supports it. So the query succeeds via fallback (a warning),
+// and only on Calcite sources.
 
 /**
- * Scan the flattened token text of a `dedupCommand` for `consecutive = true`,
+ * Scan the flattened token text of a `dedupCommand` for `consecutive=true`,
  * tolerant of whitespace between tokens. The grammar collapses labeled
- * alternatives under ParserInterpreter, so a token-text scan is the reliable
- * way to read the CONSECUTIVE boolean literal.
+ * alternatives, so a token-text scan is the reliable way to read the boolean.
  */
 function hasConsecutiveTrue(command: ParserRuleContext): boolean {
   const text = command.getText().toLowerCase();
@@ -33,7 +32,7 @@ export const dedupConsecutiveUnsupportedDetector: Detector = (
   ruleNameToIndex
 ) => {
   // Calcite gating is also enforced by the version filter, but guard here too
-  // so a direct detector invocation respects the engine predicate (R16.4).
+  // so a direct detector invocation respects the engine predicate.
   if (context.isCalcite !== true) {
     return [];
   }
@@ -46,8 +45,7 @@ export const dedupConsecutiveUnsupportedDetector: Detector = (
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,
-        message:
-          'dedup consecutive=true is not natively supported on Calcite; the query relies on engine fallback.',
+        message: config.message,
         range: rangeFromContext(command),
         docUrl: config.docUrl,
       });

@@ -5,23 +5,21 @@
 
 import { Diagnostic } from '../diagnostic';
 import { Detector } from '../types';
-import { findAllChildrenByRule, findAllDescendantsByRule, RuleNameToIndex } from '../rule_index';
+import { findAllChildrenByRule, findAllDescendantsByRule } from '../rule_index';
 import { rangeFromContext, unquote } from '../range_utils';
 
-// Engine ground truth: CalciteRelNodeVisitor.visitReplace throws
-// IllegalArgumentException (WildcardUtils.validateWildcardSymmetry) when the
-// replacement wildcard count differs from the pattern count and is non-zero.
-// Not caught by the Calcite-to-v2 fallback (default plugins.calcite.fallback.allowed=false).
-// `replace` is Calcite-only and runtime-only.
+// Engine ground truth: replace throws IllegalArgumentException (wildcard
+// symmetry validation) when the replacement wildcard count differs from the
+// pattern count and is non-zero. Not caught by the Calcite-to-v2 fallback
+// (default plugins.calcite.fallback.allowed=false). `replace` is Calcite-only
+// and runtime-only.
 
-/**
- * Count unescaped `*` occurrences in a string, excluding `\*`.
- */
-function countUnescapedWildcards(text: string): number {
+/** Count unescaped `*` occurrences in a string, excluding `\*`. Exported for unit tests. */
+export function countUnescapedWildcards(text: string): number {
   let count = 0;
   for (let i = 0; i < text.length; i++) {
     if (text[i] === '*') {
-      // Count preceding backslashes; an odd number means the `*` is escaped.
+      // An odd number of preceding backslashes means the `*` is escaped.
       let backslashes = 0;
       let j = i - 1;
       while (j >= 0 && text[j] === '\\') {
@@ -56,6 +54,10 @@ export const replaceWildcardAsymmetryDetector: Detector = (
     if (literals.length < 2) {
       continue;
     }
+    // getText() returns the raw literal, so countUnescapedWildcards sees escapes
+    // exactly as written in the query (e.g. `\*` stays escaped, `\\*` is a real
+    // wildcard) — the same view the user sees in the editor, which is what we
+    // want to lint against.
     const patternText = unquote(literals[0].getText());
     const replacementText = unquote(literals[1].getText());
     const patternCount = countUnescapedWildcards(patternText);
@@ -65,9 +67,10 @@ export const replaceWildcardAsymmetryDetector: Detector = (
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,
-        message: `replace wildcard counts are asymmetric: pattern has ${patternCount}, replacement has ${replacementCount}.`,
+        message: config.message,
         range: rangeFromContext(pair),
         docUrl: config.docUrl,
+        hoverFacts: { patternWildcards: patternCount, replacementWildcards: replacementCount },
       });
     }
   }

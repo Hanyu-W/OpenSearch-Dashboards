@@ -8,15 +8,19 @@ import { isRuleNode } from '../rule_index';
 import { Diagnostic, DiagnosticRange } from '../diagnostic';
 import { findCompiledFieldSlotShapeMatches } from '../field_slot_shape_text';
 import { CatalogEntry, Detector, LintRunContext } from '../types';
-import { buildPipelineShape, collectAlternateSourceSubtrees } from '../pipeline_shape';
 import {
-  findAllChildrenByRule,
+  buildPipelineShape,
+  collectAlternateSourceSubtrees,
+  normalizeFieldName,
+} from '../pipeline_shape';
+import {
   findAllDescendantsByRule,
   findChildByRule,
   isParserRuleContext,
   RuleNameToIndex,
 } from '../rule_index';
 import { rangeFromContext } from '../range_utils';
+import { nearestWithinThreshold } from '../edit_distance';
 
 /**
  * Documentation links for the field-slot shape pass. The shape finding is about
@@ -28,6 +32,13 @@ const SHAPE_DOC_URL: Record<string, string> = {
   parseCommand: 'https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/parse/',
   patternsCommand: 'https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/patterns/',
 };
+
+// `source` / `index` are the fromClause keywords. The compiled-simplified
+// grammar mis-parses `source=idx` into a fieldExpression for the `source`
+// keyword (the runtime grammar parses it as an excluded fromClause), so the
+// existence pass must skip these to avoid a false "Unknown field" on every
+// source-first query against a sub-3.6 cluster.
+const SOURCE_KEYWORDS: ReadonlySet<string> = new Set(['source', 'index']);
 
 /** Display keyword for each field-slot command, used in the shape message. */
 const SHAPE_COMMAND_KEYWORD: Record<string, string> = {
@@ -41,7 +52,10 @@ const SHAPE_COMMAND_KEYWORD: Record<string, string> = {
 
 /**
  * Compute a small set of rule indices used to exclude non-field-reference
- * positions (table sources, eval LHS, etc.).
+ * positions — table sources and join structure (`fromClause`, `sideAlias`,
+ * `joinCriteria`, etc.). Created-field name slots (eval LHS, rename target) are
+ * intentionally *not* listed: those are protected via `createdFields` instead, so
+ * the eval/rename RHS is still walked and validated like any other expression.
  */
 function resolveExcludedAncestorIndices(ruleNameToIndex: RuleNameToIndex): Set<number> {
   const excluded = new Set<number>();
@@ -53,15 +67,6 @@ function resolveExcludedAncestorIndices(ruleNameToIndex: RuleNameToIndex): Set<n
     'sourceReference',
     'sideAlias',
     'joinCriteria',
-    'evalClause',
-    // The grammar rule is genuinely named `renameClasue` (sic) in both the
-    // simplified-compiled and runtime `.g4` sources, so that misspelled literal
-    // is the one that actually matches on both surfaces. The correctly-spelled
-    // `renameClause` resolves to -1 today and is kept only as forward defense:
-    // if a future grammar fixes the typo, exclusion of rename targets still
-    // holds. Listing both costs nothing — the absent one resolves to -1.
-    'renameClasue',
-    'renameClause',
   ]) {
     const idx = ruleNameToIndex(name);
     if (idx !== -1) {
@@ -86,25 +91,21 @@ function collectJoinAliases(
   const aliases = new Set<string>();
   const sideAliasNodes = findAllDescendantsByRule(tree, ruleNameToIndex, 'sideAlias');
   for (const sideAlias of sideAliasNodes) {
-    for (const qn of findAllChildrenByRule(sideAlias, ruleNameToIndex, 'qualifiedName')) {
-      const text = qn.getText();
+    // Descendant (not direct-child) search: a `sideAlias` wraps exactly one alias
+    // identifier, but the runtime grammar may nest its `qualifiedName` below an
+    // intermediate rule. Direct-children-only lookup would then return an empty
+    // alias set and false-flag every join-alias ref. `sideAlias` holds a single
+    // alias, so descending can't over-collect.
+    for (const qn of findAllDescendantsByRule(sideAlias, ruleNameToIndex, 'qualifiedName')) {
+      // Normalize so a backtick-quoted alias declaration (`` left=`l` ``) matches
+      // a bare `l.response` reference downstream, mirroring the reference side.
+      const text = normalizeFieldName(qn.getText());
       if (text) {
         aliases.add(text);
       }
     }
   }
   return aliases;
-}
-
-/**
- * Strip a single pair of enclosing backticks from one dotted segment so a
- * backtick-quoted identifier (`` `age` ``) matches the unquoted name in the
- * field set. Applied per segment, so `` a.`b` `` normalizes to `a.b`.
- */
-function unquoteIdent(segment: string): string {
-  return segment.startsWith('`') && segment.endsWith('`') && segment.length >= 2
-    ? segment.slice(1, -1)
-    : segment;
 }
 
 function hasExcludedAncestor(node: ParserRuleContext, excludedIndices: Set<number>): boolean {
@@ -118,104 +119,10 @@ function hasExcludedAncestor(node: ParserRuleContext, excludedIndices: Set<numbe
   return false;
 }
 
-function offsetAt(sourceText: string, line: number, column: number): number {
-  let offset = 0;
-  for (let currentLine = 1; currentLine < line; currentLine++) {
-    const nextNewline = sourceText.indexOf('\n', offset);
-    if (nextNewline === -1) {
-      return sourceText.length;
-    }
-    offset = nextNewline + 1;
-  }
-  return Math.min(sourceText.length, offset + column);
-}
-
-function skipWhitespace(sourceText: string, offset: number): number {
-  let cursor = offset;
-  while (cursor < sourceText.length && /\s/.test(sourceText[cursor])) {
-    cursor++;
-  }
-  return cursor;
-}
-
-function isCompiledSourceKeywordExpression(
-  node: ParserRuleContext,
-  name: string,
-  context: LintRunContext
-): boolean {
-  if (context.grammarSurface !== 'compiled-simplified' || !context.sourceText) {
-    return false;
-  }
-  const lowerName = name.toLowerCase();
-  if (lowerName !== 'source' && lowerName !== 'index') {
-    return false;
-  }
-
-  const range = rangeFromContext(node);
-  const startOffset = offsetAt(context.sourceText, range.startLine, range.startColumn);
-  const firstPipe = context.sourceText.indexOf('|');
-  if (firstPipe !== -1 && startOffset > firstPipe) {
-    return false;
-  }
-
-  const endOffset = offsetAt(context.sourceText, range.endLine, range.endColumn);
-  return context.sourceText[skipWhitespace(context.sourceText, endOffset)] === '=';
-}
-
-/**
- * Levenshtein distance with an early-out: once every cell in a row exceeds
- * `maxDistance`, no later row can drop back below it, so we abort and return a
- * value `> maxDistance` to signal "too far". Bounding the work keeps the
- * per-keystroke field-suggestion sweep cheap on wide indices.
- */
-function levenshtein(a: string, b: string, maxDistance: number): number {
-  const m = a.length;
-  const n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-  let prev = new Array(n + 1);
-  let curr = new Array(n + 1);
-  for (let j = 0; j <= n; j++) prev[j] = j;
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i;
-    let rowMin = curr[0];
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
-      if (curr[j] < rowMin) {
-        rowMin = curr[j];
-      }
-    }
-    if (rowMin > maxDistance) {
-      return maxDistance + 1;
-    }
-    [prev, curr] = [curr, prev];
-  }
-  return prev[n];
-}
-
 function suggestField(name: string, known: Iterable<string>): string | undefined {
   // Only suggest when reasonably close (≤ 1/3 of the name length, min 2).
   const threshold = Math.max(2, Math.floor(name.length / 3));
-  const lowerName = name.toLowerCase();
-  let best: string | undefined;
-  let bestDistance = Infinity;
-  for (const candidate of known) {
-    // A length gap alone larger than the threshold guarantees distance >
-    // threshold, so skip the DP entirely for those candidates.
-    if (Math.abs(candidate.length - name.length) > threshold) {
-      continue;
-    }
-    const distance = levenshtein(lowerName, candidate.toLowerCase(), threshold);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = candidate;
-      if (bestDistance === 0) {
-        break; // Identical after case-normalization; nothing can be closer.
-      }
-    }
-  }
-  return best && bestDistance <= threshold ? best : undefined;
+  return nearestWithinThreshold(name, known, threshold);
 }
 
 /**
@@ -235,7 +142,16 @@ function detectUnknownFields(
   }
 
   const { createdFields } = buildPipelineShape(tree, ruleNameToIndex);
-  const known = new Set<string>([...fields, ...createdFields]);
+  // Membership test over the two source sets rather than copying them into one
+  // merged set on every keystroke. The suggestion path (cold — only runs once a
+  // field is already unknown) materializes the union inline.
+  const isKnown = (n: string): boolean => fields.has(n) || createdFields.has(n);
+  // The source/index keyword workaround is only needed on the compiled-simplified
+  // surface (and the test/fallback path, which has no surface set). On the runtime
+  // bundle `source=idx` parses as an excluded fromClause, so a `fieldExpression`
+  // whose text is `source`/`index` there is a genuine field reference we must
+  // validate. Gate the skip so real fields named `source`/`index` aren't silenced.
+  const skipSourceKeywords = context.grammarSurface !== 'runtime-bundle';
   const excludedIndices = resolveExcludedAncestorIndices(ruleNameToIndex);
   const alternateSourceRoots = collectAlternateSourceSubtrees(tree, ruleNameToIndex);
   const joinAliases = collectJoinAliases(tree, ruleNameToIndex);
@@ -249,8 +165,8 @@ function detectUnknownFields(
 
   const stack: ParseTree[] = [tree];
   while (stack.length > 0) {
-    const node = stack.pop()!;
-    if (!isParserRuleContext(node)) {
+    const node = stack.pop();
+    if (node === undefined || !isParserRuleContext(node)) {
       continue;
     }
     // Hard prune: alternate-source subtree roots (lookup / append-with-source /
@@ -262,8 +178,16 @@ function detectUnknownFields(
     if (node.ruleIndex === fieldExprIdx) {
       const raw = node.getText();
       // Normalize backtick-quoted segments per dotted part so `` `age` ``
-      // matches the unquoted `age` in the field set.
-      const name = raw.split('.').map(unquoteIdent).join('.');
+      // matches the unquoted `age` in the field set. Shares the exact helper the
+      // created-field registration uses, so the two sides can never drift.
+      const name = normalizeFieldName(raw);
+      // On the compiled-simplified surface, `source=idx` / `index=idx` parses the
+      // leading `source`/`index` keyword into a fieldExpression (the runtime
+      // grammar instead parses it as an excluded fromClause). Skip that keyword
+      // so sub-3.6 clusters don't get a spurious "Unknown field" on every query.
+      if (skipSourceKeywords && SOURCE_KEYWORDS.has(name.toLowerCase())) {
+        continue;
+      }
       const prefix = name.includes('.') ? name.split('.')[0] : null;
       // Soft skip: alias-qualified refs (`l.response` where `l` is a declared
       // join alias). Still descend into children — alias-qualified refs appear
@@ -282,14 +206,13 @@ function detectUnknownFields(
       const leaf = prefix ?? name;
       if (
         name &&
-        !isCompiledSourceKeywordExpression(node, name, context) &&
         !hasExcludedAncestor(node, excludedIndices) &&
-        !known.has(name) &&
-        !known.has(leaf) &&
+        !isKnown(name) &&
+        !isKnown(leaf) &&
         !seen.has(name)
       ) {
         seen.add(name);
-        const suggestion = suggestField(name, known);
+        const suggestion = suggestField(name, [...fields, ...createdFields]);
         const suffix = suggestion ? ` Did you mean "${suggestion}"?` : '';
         diagnostics.push({
           ruleId: config.id,
@@ -353,26 +276,14 @@ function equalsRhs(
   }
   const siblings = parent.children ?? [];
   const opPos = siblings.indexOf(operator);
-  if (opPos <= 0 || opPos === siblings.length - 1) {
-    return undefined;
-  }
-  const lhs = siblings
-    .slice(0, opPos)
-    .map((c) => (c as ParseTree).getText())
-    .join('');
-  if (lhs.toLowerCase() !== 'field') {
+  if (opPos === -1 || opPos === siblings.length - 1) {
     return undefined;
   }
   const rhs = siblings
     .slice(opPos + 1)
     .map((c) => (c as ParseTree).getText())
     .join('');
-  return isBareQualifiedFieldText(rhs) ? rhs : undefined;
-}
-
-function isBareQualifiedFieldText(text: string): boolean {
-  const ident = '(?:`[^`]+`|[A-Za-z_][A-Za-z0-9_]*)';
-  return new RegExp(`^${ident}(?:\\.${ident})*$`).test(text);
+  return rhs.length > 0 ? rhs : undefined;
 }
 
 /**
@@ -449,10 +360,14 @@ function detectFieldSlotShape(
 
       diagnostics.push({
         ruleId: config.id,
-        severity: 'error',
-        message:
-          `${keyword} expects a field name here, not an expression. ` +
-          `PPL does not use Splunk-style "field=" syntax.`,
+        // A rule has one catalog entry and one user-facing severity toggle; the
+        // shape pass must honor it rather than forcing `error`, or a user who
+        // sets field-validation to `warning` still sees red from this pass.
+        severity: config.severity,
+        // The message is deliberately generic: this pass flags any non-bare-field
+        // shape (literal, arithmetic, or any comparison — not only `field=`), so a
+        // Splunk-specific message would misdescribe the `... > 1` / `... = x` cases.
+        message: `${keyword} expects a field name here, not an expression.`,
         range: rangeFromContext(expression),
         docUrl: SHAPE_DOC_URL[commandName] ?? config.docUrl,
         hoverFacts: { field: expression.getText() },
@@ -464,6 +379,12 @@ function detectFieldSlotShape(
   return diagnostics;
 }
 
+/**
+ * Compiled-surface counterpart to `detectFieldSlotShape`. On the simplified
+ * grammar `grok field=body` error-recovers and can't be recognized off the
+ * parse tree, so scan the raw source text for exactly that one backend-accepted
+ * typo. Fires only when `sourceText` is present (the analyzer sets it).
+ */
 function detectCompiledFieldSlotShape(
   sourceText: string | undefined,
   config: CatalogEntry
@@ -474,10 +395,14 @@ function detectCompiledFieldSlotShape(
 
   return findCompiledFieldSlotShapeMatches(sourceText).map((match) => ({
     ruleId: config.id,
-    severity: 'error',
-    message:
-      `${match.keyword} expects a field name here, not an expression. ` +
-      `PPL does not use Splunk-style "field=" syntax.`,
+    // Honor the rule's single severity toggle (catalog default is `error`),
+    // matching the runtime shape pass — not a hard-coded `error` — so a user who
+    // downgrades field-validation to `warning` sees it consistently on both
+    // grammar surfaces.
+    severity: config.severity,
+    // Same generic wording as the runtime shape pass. It flags any non-bare-field
+    // shape, so it avoids a Splunk-specific message.
+    message: `${match.keyword} expects a field name here, not an expression.`,
     range: match.range,
     docUrl: SHAPE_DOC_URL[match.commandName] ?? config.docUrl,
     hoverFacts: { field: match.expressionText },
@@ -510,10 +435,10 @@ function rangeContains(outer: DiagnosticRange, inner: DiagnosticRange): boolean 
 }
 
 /**
- * PASS 3 — internal overlap suppression. Drop any existence finding whose
- * range is contained within a shape finding's range, so a single
- * `grok field=body` surfaces one actionable error rather than a confusing
- * error + "Unknown field 'field'" pair. Shape findings are always kept.
+ * PASS 3 — internal overlap suppression. Drop any existence finding whose range
+ * is contained within a shape finding's range, so a single `grok field=body`
+ * surfaces one actionable diagnostic rather than a confusing shape finding +
+ * "Unknown field 'field'" pair. Shape findings are always kept.
  */
 function suppressContained(
   shapeDiagnostics: Diagnostic[],
@@ -529,21 +454,23 @@ function suppressContained(
 }
 
 /**
- * field-validation is a merged detector with two independent passes:
+ * field-validation is a merged detector with two independent passes. Both emit
+ * at the rule's single configured severity (catalog default `error`, honored via
+ * `config.severity` at every emit site and user-overridable through the per-rule
+ * uiSetting):
  *  - PASS 1 (shape): grok/parse/patterns field-slot must be a bare field, not a
- *    Splunk-style `field=` expression. Emits `error`. Uses a narrow text-side
- *    detector on the simplified grammar surface, where that specific backend-
- *    accepted typo otherwise becomes only a generic syntax error.
- *  - PASS 2 (existence): a referenced field must exist on the source. Emits
- *    `error` (the catalog nominal — the query will not run). Self-gates on an
- *    empty field list.
+ *    Splunk-style `field=` expression. Deferred on the simplified grammar
+ *    surface, where the same input is already a syntax error.
+ *  - PASS 2 (existence): a referenced field must exist on the source. Self-gates
+ *    on an empty field list.
  * PASS 3 suppresses an existence finding the shape pass already covers.
  */
 export const fieldValidationDetector: Detector = (tree, config, context, ruleNameToIndex) => {
-  // PASS 1 — shape. Needs no field list. Defer on the simplified surface (its
-  // error-recovery makes `field=` a syntax error already); the implicit
-  // zero-structure check in `detectFieldSlotShape` is the fallback for callers
-  // that don't declare a surface.
+  // PASS 1 — shape. Needs no field list. On the runtime bundle read it off the
+  // parse tree; on the compiled-simplified surface the same input error-recovers
+  // and can't be read off the tree, so scan the source text for the one
+  // backend-accepted `field=` typo instead. Callers that declare no surface
+  // (unit tests, older callers) fall through to the tree-based pass.
   const shapeDiagnostics =
     context.grammarSurface === 'compiled-simplified'
       ? detectCompiledFieldSlotShape(context.sourceText, config)

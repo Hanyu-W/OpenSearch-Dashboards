@@ -68,6 +68,15 @@ describe('field-validation alternate-source suppression (compiled surface)', () 
         )
       ).toEqual([expect.stringContaining('Unknown field "x.response"')]);
     });
+
+    it('does NOT register a join TABLE alias as a created field', () => {
+      // `join departments AS d` binds `d` as a table alias, not a column on the
+      // outer `accounts` source. It must not enter the known-field set, so a
+      // downstream reference to a *field* `d` is still flagged.
+      expect(fieldDiags('search accounts | join departments AS d | where d > 1')).toEqual([
+        expect.stringContaining('Unknown field "d"'),
+      ]);
+    });
   });
 
   describe('alternate-source subtrees', () => {
@@ -99,6 +108,21 @@ describe('field-validation alternate-source suppression (compiled surface)', () 
         expect.stringContaining('Unknown field "really_unknown"'),
       ]);
     });
+
+    it('does NOT leak a field created inside append into the outer known-set', () => {
+      // `foo` is created by the eval *inside* the append's own pipeline, so it
+      // is not a column on the outer `accounts` source. A downstream reference
+      // must still be flagged — the creation must be scoped to its subtree.
+      expect(
+        fieldDiags('search accounts | append [search dept | eval foo = age] | where foo > 1')
+      ).toEqual([expect.stringContaining('Unknown field "foo"')]);
+    });
+
+    it('still treats a top-level eval field as known downstream', () => {
+      // The mirror case: a top-level eval is NOT inside an alternate source, so
+      // its created field stays in the known-set and must not be flagged.
+      expect(fieldDiags('search accounts | eval bar = age | where bar > 1')).toEqual([]);
+    });
   });
 
   describe('backtick-quoted identifiers', () => {
@@ -110,6 +134,122 @@ describe('field-validation alternate-source suppression (compiled surface)', () 
       expect(fieldDiags('search accounts | where `bogus` > 30')).toEqual([
         expect.stringContaining('Unknown field "bogus"'),
       ]);
+    });
+  });
+
+  // Created/derived field NAME slots (eval LHS, stats/rename AS aliases, spath
+  // OUTPUT, join side aliases) previously stored the raw `getText()` — backticks
+  // included — while references normalized them away, so a valid query that both
+  // creates and references a backtick-quoted field was false-flagged. Both sides
+  // now route through the shared `normalizeFieldName` helper.
+  describe('backtick-quoted created-field names (Joshua #1)', () => {
+    it('does NOT flag a backtick-quoted eval target referenced downstream', () => {
+      expect(fieldDiags('source=t | eval `total` = age * 2 | where `total` > 100')).toEqual([]);
+    });
+
+    it('does NOT flag a backtick-quoted stats alias referenced downstream', () => {
+      expect(fieldDiags('search accounts | stats count() as `cnt` | where `cnt` > 0')).toEqual([]);
+    });
+
+    it('does NOT flag a backtick-created field referenced without backticks', () => {
+      expect(fieldDiags('source=t | eval `total` = age * 2 | where total > 100')).toEqual([]);
+    });
+
+    it('does NOT flag a bare-created field referenced with backticks', () => {
+      expect(fieldDiags('source=t | eval total = age * 2 | where `total` > 100')).toEqual([]);
+    });
+
+    it('does NOT flag a backtick-quoted rename target referenced downstream', () => {
+      expect(fieldDiags('search accounts | rename age as `years` | where years > 1')).toEqual([]);
+    });
+
+    it('does NOT flag a backtick-quoted join side alias referenced downstream', () => {
+      expect(
+        fieldDiags(
+          'search accounts | join left=`l` right=r on l.id = r.id departments | where l.response = 200'
+        )
+      ).toEqual([]);
+    });
+
+    it('does NOT flag a backtick-quoted spath OUTPUT referenced downstream', () => {
+      expect(
+        fieldDiags('search accounts | spath input=name output=`parsed` | where parsed = "x"')
+      ).toEqual([]);
+    });
+
+    it('STILL flags a genuine typo alongside a backtick-created field', () => {
+      expect(fieldDiags('source=t | eval `total` = age * 2 | where totalz > 0')).toEqual([
+        expect.stringContaining('Unknown field "totalz"'),
+      ]);
+    });
+
+    it('suggests the normalized created name, not the backtick-quoted form', () => {
+      expect(fieldDiags('search accounts | stats count() as `cnt` | where cntx > 0')).toEqual([
+        'Unknown field "cntx". Did you mean "cnt"?',
+      ]);
+    });
+  });
+
+  // The compiled-simplified grammar mis-parses `source=idx` / `index=idx` into a
+  // fieldExpression for the leading `source`/`index` keyword (the runtime grammar
+  // parses it as an excluded fromClause). Without a guard this fires a spurious
+  // "Unknown field" on EVERY source-first query against a sub-3.6 cluster — the
+  // dominant case in the editor's compiled-fallback path.
+  describe('source-first keyword is not flagged on the compiled surface', () => {
+    it('does NOT flag the `source` keyword in `source=accounts`', () => {
+      expect(fieldDiags('source=accounts | where status = 200')).toEqual([]);
+    });
+
+    it('does NOT flag the `index` keyword in `index=accounts`', () => {
+      expect(fieldDiags('index=accounts | where status = 200')).toEqual([]);
+    });
+
+    it('does NOT flag `source` with surrounding spaces', () => {
+      expect(fieldDiags('source = accounts | where status = 200')).toEqual([]);
+    });
+
+    it('STILL flags a genuinely unknown field on a source-first query', () => {
+      expect(fieldDiags('source=accounts | where nope = 1')).toEqual([
+        expect.stringContaining('Unknown field "nope"'),
+      ]);
+    });
+  });
+
+  // The eval created-field *name* slot (eval LHS) is protected by createdFields,
+  // so the eval RHS must still be walked and validated like a `where` clause — a
+  // typo there is a real unknown-field bug. Previously the whole evalClause was
+  // excluded by ancestor, hiding the RHS. (Rename fields parse as
+  // `wcFieldExpression`, which the existence pass never walks, so rename-source
+  // validation is out of scope here — see field_slot_shape's cast-guard block
+  // for the createdFields side of this fix.)
+  describe('eval RHS scope', () => {
+    const scopeCtx: LintRunContext = {
+      fields: new Set<string>(['age', 'name', 'response', 'total']),
+    };
+    const scopeDiags = (code: string): string[] =>
+      analyzer
+        .lint(code, scopeCtx)
+        .diagnostics.filter((d) => d.ruleId === 'field-validation')
+        .map((d) => d.message);
+
+    it('flags an unknown field in an eval RHS, not the eval target', () => {
+      expect(scopeDiags('source=t | eval x = nonexistent + 1')).toEqual([
+        expect.stringContaining('Unknown field "nonexistent"'),
+      ]);
+    });
+
+    it('flags an unknown field in an eval RHS division', () => {
+      expect(scopeDiags('source=t | eval ratio = respose / total')).toEqual([
+        expect.stringContaining('Unknown field "respose"'),
+      ]);
+    });
+
+    it('keeps an eval target known downstream', () => {
+      expect(scopeDiags('source=t | eval x = 1 | where x > 0')).toEqual([]);
+    });
+
+    it('keeps a stats alias known downstream', () => {
+      expect(scopeDiags('source=t | stats avg(age) as avgage | where avgage > 1')).toEqual([]);
     });
   });
 
@@ -206,14 +346,6 @@ describe('field-validation alternate-source suppression (compiled surface)', () 
       ).toEqual([expect.stringContaining('Unknown field "bogus"')]);
     });
 
-    it('a field referenced BEFORE the extraction (upstream) is not flagged (order-insensitive)', () => {
-      // Known limitation: createdFields is a flat, order-insensitive set, so a
-      // reference before the grok still resolves. Documented, not a defect.
-      expect(
-        fieldDiags('search accounts | where duration > 5 | grok status "%{NUMBER:duration}"')
-      ).toEqual([]);
-    });
-
     it('grok with no captures (%{SYNTAX} without colon) registers nothing', () => {
       expect(fieldDiags('search accounts | grok status "%{NUMBER}" | where bogus > 5')).toEqual([
         expect.stringContaining('Unknown field "bogus"'),
@@ -240,16 +372,12 @@ describe('field-validation alternate-source suppression (compiled surface)', () 
     });
 
     it('patterns default output field resolves when NEW_FIELD omitted', () => {
-      // When NEW_FIELD is absent, the engine uses its default name.
       expect(fieldDiags('search accounts | patterns name | where patterns_field = "x"')).toEqual(
         []
       );
     });
 
     it('patterns companion `tokens` column resolves downstream', () => {
-      // The engine emits a `tokens` struct column alongside the pattern field
-      // (confirmed on the live Calcite 2.19 engine), so referencing it must not
-      // be flagged.
       expect(
         fieldDiags("search accounts | patterns name NEW_FIELD='tpl' | stats count() by tokens")
       ).toEqual([]);
@@ -262,9 +390,6 @@ describe('field-validation alternate-source suppression (compiled surface)', () 
     });
 
     it('spath OUTPUT field NOT double-flagged at its declaration site', () => {
-      // The grammar parses `output=parsed` with `parsed` as a fieldExpression.
-      // Registering it in createdFields before PASS 2 walks suppresses both
-      // the declaration-site flag AND any downstream flag.
       expect(fieldDiags('search accounts | spath input=name output=parsed')).toEqual([]);
     });
 
@@ -289,11 +414,25 @@ describe('field-validation alternate-source suppression (compiled surface)', () 
     });
   });
 
-  describe('extraction + alternate-source interaction', () => {
-    it('grok inside append does not disturb an outer known-field WHERE', () => {
+  describe('extraction + alternate-source scoping', () => {
+    // pr4 scopes collectCreatedFields to non-alt-source stages, so a field
+    // extracted inside an `append [search ...]` subquery must NOT leak into the
+    // outer known-field set. Referencing it in the outer pipeline is a real
+    // unknown-field bug and must still be flagged. (On the flat poc-v3 collector
+    // this leaks and is a false negative — this test is the reason the pr4 port
+    // is strictly more correct.)
+    it('does NOT leak a grok field from inside append into the outer scope', () => {
       expect(
         fieldDiags(
-          'search accounts | append [search logs | grok status "%{NUMBER:dur}"] | where age > 1'
+          'search accounts | append [search logs | grok status "%{NUMBER:dur}"] | where dur > 1'
+        )
+      ).toEqual([expect.stringContaining('Unknown field "dur"')]);
+    });
+
+    it('an outer-pipeline extraction still resolves normally', () => {
+      expect(
+        fieldDiags(
+          'search accounts | append [search logs | where status > 1] | grok status "%{NUMBER:dur}" | where dur > 1'
         )
       ).toEqual([]);
     });
