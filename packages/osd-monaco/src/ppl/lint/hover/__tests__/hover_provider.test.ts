@@ -9,6 +9,12 @@ import { markerFixKey, MarkerFix, setModelFixes, clearModelFixes } from '../../f
 import { setModelHoverFacts, clearModelHoverFacts, HoverFacts } from '../hover_registry';
 import { pplLintHoverProvider, LINT_OWNER } from '../hover_provider';
 import { setPPLLintContext, clearPPLLintContext, PPLLintContext } from '../../../lint_bridge';
+import {
+  PPLLintTelemetryEvent,
+  PPL_LINT_TELEMETRY_EVENTS,
+  registerPPLLintTelemetry,
+  resetPPLLintTelemetryDedup,
+} from '../../telemetry';
 
 type Marker = monaco.editor.IMarker;
 
@@ -169,6 +175,62 @@ describe('pplLintHoverProvider', () => {
       expect(markdownOf(hover)).not.toContain('command:');
       // No command link on the card → nothing is trusted.
       expect(trustedOf(hover)).toBe(false);
+    });
+  });
+
+  describe('telemetry', () => {
+    let events: PPLLintTelemetryEvent[];
+    beforeEach(() => {
+      events = [];
+      registerPPLLintTelemetry((event) => events.push(event));
+      // The dedup state is per-model and persists across provideHover calls; the
+      // shared test model would otherwise leak dedup between tests. Reset it so
+      // each test starts from a fresh lint pass.
+      resetPPLLintTelemetryDedup(model);
+    });
+    afterEach(() => {
+      registerPPLLintTelemetry(undefined);
+      resetPPLLintTelemetryDedup(model);
+    });
+
+    it('emits hover_shown with the rule id when a card is returned', () => {
+      markersByOwner[LINT_OWNER] = [makeMarker()];
+      hoverAt(1, 7);
+      expect(events).toEqual([
+        { name: PPL_LINT_TELEMETRY_EVENTS.HOVER_SHOWN, data: { rule: 'division-by-zero' } },
+      ]);
+    });
+
+    it('does not emit when no lint marker is under the cursor', () => {
+      markersByOwner[LINT_OWNER] = [makeMarker({ startColumn: 5, endColumn: 8 })];
+      hoverAt(1, 20);
+      expect(events).toHaveLength(0);
+    });
+
+    it('emits hover_shown with an undefined rule when the marker has no code', () => {
+      markersByOwner[LINT_OWNER] = [makeMarker({ code: undefined })];
+      hoverAt(1, 7);
+      expect(events).toEqual([
+        { name: PPL_LINT_TELEMETRY_EVENTS.HOVER_SHOWN, data: { rule: undefined } },
+      ]);
+    });
+
+    it('deduplicates repeated hovers over the same marker within a pass', () => {
+      markersByOwner[LINT_OWNER] = [makeMarker()];
+      // Monaco re-invokes provideHover per hover anchor (character position);
+      // three hovers over the same marker must count as one.
+      hoverAt(1, 6);
+      hoverAt(1, 7);
+      hoverAt(1, 8);
+      expect(events).toHaveLength(1);
+    });
+
+    it('counts the hover again after a new lint pass resets the dedup', () => {
+      markersByOwner[LINT_OWNER] = [makeMarker()];
+      hoverAt(1, 7);
+      resetPPLLintTelemetryDedup(model); // simulates a fresh marker set
+      hoverAt(1, 7);
+      expect(events).toHaveLength(2);
     });
   });
 });

@@ -42,6 +42,7 @@ import { NaturalLanguageFilterUtils } from './search/filters/natural_language_fi
 import { PromQLSearchInterceptor } from './search/promql_search_interceptor';
 import { PrometheusResourceClient } from './resources';
 import { registerPplLint } from './ppl_lint/register_ppl_lint';
+import { registerPPLLintConfigTelemetry } from './ppl_lint/config_telemetry';
 
 export class QueryEnhancementsPlugin implements Plugin<
   QueryEnhancementsPluginSetup,
@@ -57,6 +58,7 @@ export class QueryEnhancementsPlugin implements Plugin<
   private currentAppId$ = new BehaviorSubject<string | undefined>(undefined);
   private appIdSubscription?: Subscription;
   private unregisterPplLintBridge?: () => void;
+  private unregisterPplLintConfigTelemetry?: () => void;
 
   constructor(initializerContext: PluginInitializerContext) {
     this.config = initializerContext.config.get<ConfigSchema>();
@@ -365,8 +367,28 @@ export class QueryEnhancementsPlugin implements Plugin<
     // PPL lint is gated by the queryEnhancements.pplLint dynamic app config
     // capability. The bridge stays registered whenever the lint capability is
     // enabled and selects runtime or compiled behavior from the lint context.
+    //
+    // Feature-usage telemetry is forwarded through core.telemetry: the recorder
+    // auto-stamps the queryEnhancements source and no-ops in public OSS (no
+    // provider is registered there), lighting up only where one is.
     const lintEnabled = !!core.application.capabilities.queryEnhancements?.pplLint;
-    this.unregisterPplLintBridge = registerPplLint(lintEnabled);
+    const telemetryRecorder = core.telemetry?.getPluginRecorder('queryEnhancements');
+    const recordEvent = telemetryRecorder
+      ? (event: { name: string; data: Record<string, any> }) => telemetryRecorder.recordEvent(event)
+      : undefined;
+    this.unregisterPplLintBridge = registerPplLint(lintEnabled, recordEvent);
+
+    // Observe PPL-lint rule config changes (enable/disable + severity) once per
+    // session. Registered here — not in the query-editor hosts that already
+    // subscribe for revalidation — so changes are not double-counted. Reuses the
+    // same recorder as the engine events.
+    if (lintEnabled && recordEvent) {
+      this.unregisterPplLintConfigTelemetry = registerPPLLintConfigTelemetry(
+        core.uiSettings,
+        recordEvent,
+        lintEnabled
+      );
+    }
 
     return {};
   }
@@ -374,6 +396,8 @@ export class QueryEnhancementsPlugin implements Plugin<
   public stop() {
     this.unregisterPplLintBridge?.();
     this.unregisterPplLintBridge = undefined;
+    this.unregisterPplLintConfigTelemetry?.();
+    this.unregisterPplLintConfigTelemetry = undefined;
     if (this.appIdSubscription) {
       this.appIdSubscription.unsubscribe();
     }

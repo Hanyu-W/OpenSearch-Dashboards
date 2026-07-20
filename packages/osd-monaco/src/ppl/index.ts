@@ -59,6 +59,8 @@ export { validatePPLLintFixCandidate } from './lint/ai_fix/validate_candidate_fi
 export type { ValidateCandidateResult } from './lint/ai_fix/validate_candidate_fix';
 export { buildCommandSuggestion } from './command_suggestion';
 export type { CommandSuggestion } from './command_suggestion';
+export { registerPPLLintTelemetry } from './lint/telemetry';
+export type { PPLLintTelemetryEvent } from './lint/telemetry';
 export type { Diagnostic, DiagnosticRange, LintResult, LintSeverity } from './lint/diagnostic';
 export type { BundleRuleOverrides, CatalogEntry, LintRunContext } from './lint/types';
 export { runLint } from './lint/lint_runner';

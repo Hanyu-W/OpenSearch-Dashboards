@@ -9,6 +9,11 @@ import { getModelFix, markerFixKey } from '../fix_registry';
 import { getModelHoverFacts } from './hover_registry';
 import { getRuleHoverContent } from './engine_outcomes';
 import { renderHoverCard, SeverityLabel } from './hover_card';
+import {
+  emitPPLLintTelemetry,
+  PPL_LINT_TELEMETRY_EVENTS,
+  shouldEmitHoverShown,
+} from '../telemetry';
 
 /**
  * Marker owner for lint diagnostics. Must match `LINT_OWNER` in `language.ts`
@@ -98,6 +103,18 @@ export const pplLintHoverProvider: monaco.languages.HoverProvider = {
       facts,
       fixText: fix?.text,
     });
+
+    // Feature-usage telemetry: the user hovered a lint marker and a card is
+    // being returned. Emitted only on the card-returned path (not the null/no-
+    // marker branch above), and deduped per marker per lint pass so Monaco's
+    // per-character re-invocation of provideHover counts one hover, not mouse
+    // travel across the marker. No-ops until the host registers a sink.
+    if (shouldEmitHoverShown(model, key)) {
+      emitPPLLintTelemetry({
+        name: PPL_LINT_TELEMETRY_EVENTS.HOVER_SHOWN,
+        data: { rule: ruleId },
+      });
+    }
 
     return {
       range: {

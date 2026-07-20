@@ -9,6 +9,12 @@ import { getModelFix, getModelSyntaxFix, markerFixKey } from './fix_registry';
 import { getPPLLintContext } from '../lint_bridge';
 import { AI_FIX_COMMAND_ID } from './ai_fix/ai_fix_command_id';
 import { getModelHoverFacts } from './hover/hover_registry';
+import {
+  emitPPLLintTelemetry,
+  PPL_LINT_QUICKFIX_COMMAND_ID,
+  PPL_LINT_TELEMETRY_EVENTS,
+  shouldEmitQuickfixOffered,
+} from './telemetry';
 
 /**
  * Code-action provider that surfaces quick-fixes for PPL markers on two
@@ -41,7 +47,8 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
     for (const marker of context.markers) {
       const key = markerFixKey(marker);
       let fix;
-      if (marker.source === LINT_MARKER_SOURCE) {
+      const isLintMarker = marker.source === LINT_MARKER_SOURCE;
+      if (isLintMarker) {
         fix = getModelFix(model, key);
       } else if (marker.source === SYNTAX_MARKER_SOURCE) {
         fix = getModelSyntaxFix(model, key);
@@ -137,8 +144,9 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
 
       // Use the fix's own range when it targets a span different from the
       // squiggle (e.g. deleting one character before the underlined name);
-      // otherwise replace the marker's range.
-      actions.push({
+      // otherwise replace the marker's range. `editRange` is already resolved
+      // above (with the exact-text staleness guard).
+      const action: monaco.languages.CodeAction = {
         title: fix.title,
         diagnostics: [marker],
         kind: 'quickfix',
@@ -155,7 +163,33 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
             } as any,
           ],
         },
-      });
+      };
+
+      // Lint quick-fixes carry a telemetry command so a `quickfix_clicked` event
+      // can be recorded when the fix is invoked. Monaco applies the edit before
+      // running the command, so the fix behavior is unchanged. Only the lint
+      // channel is instrumented; the syntax-error command-typo fix is not part
+      // of the lint feature-usage metrics.
+      if (isLintMarker) {
+        const rule = ruleIdOf(marker);
+        action.command = {
+          id: PPL_LINT_QUICKFIX_COMMAND_ID,
+          title: fix.title,
+          arguments: [{ rule }],
+        };
+        // Deduped per marker per lint pass: Monaco auto-triggers
+        // provideCodeActions on every cursor move over a marker, so emitting on
+        // each call would count caret ticks, not offers. `key` is the marker's
+        // canonical identity (position + message).
+        if (shouldEmitQuickfixOffered(model, key)) {
+          emitPPLLintTelemetry({
+            name: PPL_LINT_TELEMETRY_EVENTS.QUICKFIX_OFFERED,
+            data: { rule },
+          });
+        }
+      }
+
+      actions.push(action);
     }
 
     return {

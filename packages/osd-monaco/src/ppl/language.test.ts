@@ -4,6 +4,11 @@
  */
 
 import type { LintResult } from './lint/diagnostic';
+import {
+  PPLLintTelemetryEvent,
+  PPL_LINT_TELEMETRY_EVENTS,
+  registerPPLLintTelemetry,
+} from './lint/telemetry';
 
 // Control the lint result per call so we can force out-of-order responses.
 // `mock`-prefixed so babel-plugin-jest-hoist permits referencing them inside the
@@ -36,7 +41,8 @@ jest.mock('../monaco', () => ({
       onWillDisposeModel: jest.fn(),
       getModels: () => [],
       defineTheme: jest.fn(),
-      // registerPPLLanguage now also registers the AI quick-fix command.
+      // registerPPLLanguage registers both the AI quick-fix command and the
+      // lint quick-fix telemetry command.
       registerCommand: jest.fn(() => ({ dispose: jest.fn() })),
     },
     languages: {
@@ -341,5 +347,53 @@ describe('processLintHighlighting — generation guard (stale-response drop)', (
     });
     expect(payload).not.toHaveProperty('http');
     expect(payload).not.toHaveProperty('useRuntimeGrammar');
+  });
+});
+
+describe('processLintHighlighting — diagnostic_shown telemetry', () => {
+  let events: PPLLintTelemetryEvent[];
+  beforeEach(() => {
+    mockSetModelMarkers.mockClear();
+    mockLintFallback.mockReset();
+    events = [];
+    registerPPLLintTelemetry((event) => events.push(event));
+  });
+  afterEach(() => registerPPLLintTelemetry(undefined));
+
+  // A LintResult with an explicit list of diagnostics (possibly repeating a
+  // rule) so we can assert the per-rule dedup.
+  const multiResult = (ruleIds: string[]): LintResult => ({
+    diagnostics: ruleIds.map((ruleId) => ({
+      ruleId,
+      severity: 'warning',
+      message: ruleId,
+      range: { startLine: 1, startColumn: 0, endLine: 1, endColumn: 1 },
+    })),
+  });
+
+  it('emits diagnostic_shown once per distinct rule after markers are applied', async () => {
+    const model = makeModel('t1');
+    // Two findings of one rule + one of another → two events, deduped.
+    mockLintFallback.mockResolvedValueOnce(
+      multiResult(['division-by-zero', 'division-by-zero', 'head-without-sort'])
+    );
+
+    await revalidatePPLModel(model);
+    await flush();
+
+    expect(events).toEqual([
+      { name: PPL_LINT_TELEMETRY_EVENTS.DIAGNOSTIC_SHOWN, data: { rule: 'division-by-zero' } },
+      { name: PPL_LINT_TELEMETRY_EVENTS.DIAGNOSTIC_SHOWN, data: { rule: 'head-without-sort' } },
+    ]);
+  });
+
+  it('emits nothing when the pass produces no diagnostics', async () => {
+    const model = makeModel('t2');
+    mockLintFallback.mockResolvedValueOnce({ diagnostics: [] });
+
+    await revalidatePPLModel(model);
+    await flush();
+
+    expect(events).toHaveLength(0);
   });
 });

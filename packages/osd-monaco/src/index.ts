@@ -57,6 +57,7 @@ export {
   validateCompiledPPLLintQueries,
   EXPLAIN_ATTRIBUTION_SNAPSHOT_VERSION,
   validateExplainAttributionSnapshot,
+  registerPPLLintTelemetry,
 } from './ppl';
 export type {
   AskPPLLintFixRequest,
@@ -81,6 +82,7 @@ export type {
   ExplainAttributionCandidateSnapshot,
   ExplainAttributionSnapshot,
   ExplainProbeKind,
+  PPLLintTelemetryEvent,
 } from './ppl';
 
 /* eslint-disable-next-line @osd/eslint/module_migration */

@@ -21,6 +21,7 @@ import {
   DEFAULT_PPL_LINT_FIX_TOOL_NAME,
   hashPPLLintFixSource,
 } from './build_chat_fix_message';
+import { emitPPLLintTelemetry, PPL_LINT_TELEMETRY_EVENTS } from '../telemetry';
 
 export { AI_FIX_COMMAND_ID, AiFixCommandArgs };
 
@@ -96,6 +97,16 @@ export function handleAiFixCommand(
     lintContext,
   };
   context.onAskAiFix(request);
+  // Feature-usage telemetry: emitted after the dispatch so the event means "an
+  // AI fix was actually requested" (the chat opened), not merely "the action was
+  // clicked" — the guard above returns early when AI features are off or no
+  // opener is wired. `rule` is optional: `ruleIdOf()` yields undefined for a
+  // marker whose code is neither a string nor `{ value }`. No-ops until the host
+  // registers a sink.
+  emitPPLLintTelemetry({
+    name: PPL_LINT_TELEMETRY_EVENTS.AI_FIX_CLICKED,
+    data: { rule: args.ruleId },
+  });
   return request;
 }
 

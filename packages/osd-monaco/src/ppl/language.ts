@@ -31,6 +31,12 @@ import {
   validateCompiledPPL,
   validateCompiledPPLLintQueries,
 } from './compiled_worker_api';
+import {
+  emitPPLLintTelemetry,
+  PPL_LINT_QUICKFIX_COMMAND_ID,
+  PPL_LINT_TELEMETRY_EVENTS,
+  resetPPLLintTelemetryDedup,
+} from './lint/telemetry';
 
 const PPL_LANGUAGE_ID = ID;
 const OWNER = 'PPL_WORKER';
@@ -299,17 +305,21 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
 
   const lintContext = getPPLLintContext(model);
 
+  // True while this lint pass is still the authoritative one for the model — no
+  // newer pass has started, the model is live, and its content/language have not
+  // changed out from under us. Both the (possibly progressive) marker publisher
+  // and the terminal telemetry step consult it so neither acts on a superseded
+  // pass.
+  const isPassCurrent = (): boolean =>
+    lintGenerations.get(model.id) === generation &&
+    !model.isDisposed() &&
+    model.getValue() === content &&
+    model.getLanguageId() === PPL_LANGUAGE_ID;
+
   const publishResult = (lintResult: LintResult): void => {
     // Drop a response that a newer lint pass has superseded (stale context or
     // stale content), so out-of-order worker responses can't clobber markers.
-    if (
-      lintGenerations.get(model.id) !== generation ||
-      model.isDisposed() ||
-      model.getValue() !== content
-    ) {
-      return;
-    }
-    if (model.getLanguageId() !== PPL_LANGUAGE_ID) {
+    if (!isPassCurrent()) {
       return;
     }
     const markers = lintResult.diagnostics.map((diagnostic) =>
@@ -342,6 +352,36 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
     monaco.editor.setModelMarkers(model, LINT_OWNER, markers);
   };
 
+  // Feature-usage telemetry for a completed lint pass. `publishResult` may run
+  // several times within one pass (the runtime bridge renders progressively:
+  // static markers first, then explain-layered), so telemetry lives here — in
+  // the terminal `.then`, which runs exactly once per pass with the final,
+  // authoritative diagnostics — not inside `publishResult`, to keep the "once
+  // per rule per pass" contract. No-ops until the host registers a sink.
+  const emitPassTelemetry = (lintResult: LintResult): void => {
+    if (!isPassCurrent()) {
+      return;
+    }
+    // A new marker set is a fresh opportunity: re-arm the per-pass hover /
+    // quick-fix-offered dedup so interactions with this pass's markers count
+    // again (they were deduped within the previous pass).
+    resetPPLLintTelemetryDedup(model);
+
+    // One `diagnostic_shown` per distinct rule that produced a marker this pass,
+    // so a query with three findings of the same rule counts once.
+    const rulesShown = new Set<string>();
+    for (const diagnostic of lintResult.diagnostics) {
+      if (rulesShown.has(diagnostic.ruleId)) {
+        continue;
+      }
+      rulesShown.add(diagnostic.ruleId);
+      emitPPLLintTelemetry({
+        name: PPL_LINT_TELEMETRY_EVENTS.DIAGNOSTIC_SHOWN,
+        data: { rule: diagnostic.ruleId },
+      });
+    }
+  };
+
   void resolvePPLLintResult(
     model,
     content,
@@ -351,7 +391,12 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
     async (query) => analyzeCompiledPPLLint(query, lintContext),
     validateCompiledPPLLintQueries
   )
-    .then(publishResult)
+    .then((lintResult) => {
+      // Apply the final, authoritative marker set, then record once-per-pass
+      // feature-usage telemetry for it.
+      publishResult(lintResult);
+      emitPassTelemetry(lintResult);
+    })
     .catch(() => {
       // Lint is best-effort: never disrupt the editor on failure (R11.3).
     });
@@ -412,6 +457,7 @@ const setupPPLSyntaxHighlighting = () => {
           clearModelFixes(model);
           clearModelSyntaxFixes(model);
           clearModelHoverFacts(model);
+          resetPPLLintTelemetryDedup(model);
         }
       })
     );
@@ -441,6 +487,7 @@ const setupPPLSyntaxHighlighting = () => {
       clearModelFixes(model);
       clearModelSyntaxFixes(model);
       clearModelHoverFacts(model);
+      resetPPLLintTelemetryDedup(model);
     })
   );
 
@@ -498,12 +545,27 @@ export const registerPPLLanguage = () => {
     pplLintHoverProvider
   );
 
+  // Register the command dispatched when a lint quick-fix is invoked. The
+  // quick-fix action carries both an `edit` and this `command`; Monaco applies
+  // the edit first, then runs the command, so recording here captures a genuine
+  // "user clicked the fix" signal. The rule id rides on the command arguments.
+  const quickfixCommandDisposable = monaco.editor.registerCommand(
+    PPL_LINT_QUICKFIX_COMMAND_ID,
+    (_accessor, args?: { rule?: string }) => {
+      emitPPLLintTelemetry({
+        name: PPL_LINT_TELEMETRY_EVENTS.QUICKFIX_CLICKED,
+        data: { rule: args?.rule },
+      });
+    }
+  );
+
   return {
     dispose: () => {
       disposeSyntaxHighlighting();
       codeActionDisposable.dispose();
       aiFixCommandDisposable.dispose();
       hoverDisposable.dispose();
+      quickfixCommandDisposable.dispose();
     },
   };
 };
