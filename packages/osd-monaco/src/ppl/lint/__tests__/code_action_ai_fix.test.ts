@@ -10,15 +10,22 @@ import { setModelFixes, clearModelFixes, markerFixKey, MarkerFix } from '../fix_
 import { setPPLLintContext, clearPPLLintContext } from '../../lint_bridge';
 import { AI_FIX_COMMAND_ID } from '../ai_fix/ai_fix_command_id';
 import { clearModelHoverFacts, setModelHoverFacts } from '../hover/hover_registry';
+import {
+  PPLLintTelemetryEvent,
+  markerTelemetryId,
+  PPL_LINT_TELEMETRY_EVENTS,
+  registerPPLLintTelemetry,
+  resetPPLLintTelemetryDedup,
+} from '../telemetry';
 
 type LintMarker = monaco.editor.IMarkerData;
 
-const model = ({
+const model = {
   uri: monaco.Uri.parse('inmemory://model/ai.ppl'),
   getVersionId: () => 1,
   getValueInRange: () => 'bytes + latency',
   getOffsetAt: ({ column }: { column: number }) => column - 1,
-} as unknown) as monaco.editor.ITextModel;
+} as unknown as monaco.editor.ITextModel;
 
 // A marker carrying an AI-fixable ruleId on `code` (the object form with a link),
 // mirroring diagnosticToMarker's output.
@@ -41,10 +48,10 @@ function provide(markers: LintMarker[]) {
     model,
     {} as monaco.Range,
     { markers, only: undefined, trigger: 1 } as monaco.languages.CodeActionContext,
-    ({
+    {
       isCancellationRequested: false,
       onCancellationRequested: () => ({ dispose() {} }),
-    } as unknown) as monaco.CancellationToken
+    } as unknown as monaco.CancellationToken
   ) as monaco.languages.CodeActionList;
   return result.actions;
 }
@@ -135,5 +142,63 @@ describe('pplLintCodeActionProvider — AI quick-fix emission', () => {
     setPPLLintContext(model, { enableAIFeatures: true, onAskAiFix: jest.fn() } as any);
     const syntax = aiMarker('type-mismatch-numeric', { source: SYNTAX_MARKER_SOURCE });
     expect(provide([syntax])).toHaveLength(0);
+  });
+
+  it('carries a per-finding correlation id on the AI command args', () => {
+    setPPLLintContext(model, { enableAIFeatures: true, onAskAiFix: jest.fn() } as any);
+    const marker = aiMarker('type-mismatch-numeric');
+    const [action] = provide([marker]);
+    expect((action.command?.arguments?.[0] as any).markerId).toBe(
+      markerTelemetryId(markerFixKey(marker))
+    );
+  });
+
+  describe('ai_fix_offered telemetry', () => {
+    let events: PPLLintTelemetryEvent[];
+    beforeEach(() => {
+      events = [];
+      registerPPLLintTelemetry((event) => events.push(event));
+      resetPPLLintTelemetryDedup(model);
+    });
+    afterEach(() => {
+      registerPPLLintTelemetry(undefined);
+      resetPPLLintTelemetryDedup(model);
+    });
+
+    it('emits ai_fix_offered with rule + marker id when the AI fallback is shown', () => {
+      setPPLLintContext(model, { enableAIFeatures: true, onAskAiFix: jest.fn() } as any);
+      const marker = aiMarker('type-mismatch-numeric');
+      provide([marker]);
+      expect(events).toEqual([
+        {
+          name: PPL_LINT_TELEMETRY_EVENTS.AI_FIX_OFFERED,
+          data: {
+            rule: 'type-mismatch-numeric',
+            marker: markerTelemetryId(markerFixKey(marker)),
+          },
+        },
+      ]);
+    });
+
+    it('dedups ai_fix_offered across repeated provider calls within a pass', () => {
+      setPPLLintContext(model, { enableAIFeatures: true, onAskAiFix: jest.fn() } as any);
+      const marker = aiMarker('type-mismatch-numeric');
+      // Monaco auto-fires provideCodeActions on every cursor move; the offer must
+      // count once, while the action is still returned every call.
+      expect(provide([marker])).toHaveLength(1);
+      expect(provide([marker])).toHaveLength(1);
+      expect(events).toHaveLength(1);
+    });
+
+    it('does not emit ai_fix_offered when a deterministic fix suppresses the AI tier', () => {
+      setPPLLintContext(model, { enableAIFeatures: true, onAskAiFix: jest.fn() } as any);
+      const marker = aiMarker('field-validation');
+      const fixes = new Map<string, MarkerFix>();
+      fixes.set(markerFixKey(marker), { title: 'Replace with "revenue"', text: 'revenue' });
+      setModelFixes(model, fixes);
+      provide([marker]);
+      // The deterministic path emits quickfix_offered, not ai_fix_offered.
+      expect(events.map((e) => e.name)).toEqual([PPL_LINT_TELEMETRY_EVENTS.QUICKFIX_OFFERED]);
+    });
   });
 });

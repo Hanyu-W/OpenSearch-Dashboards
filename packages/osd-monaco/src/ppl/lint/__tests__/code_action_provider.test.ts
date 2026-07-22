@@ -16,6 +16,7 @@ import {
 } from '../fix_registry';
 import {
   PPLLintTelemetryEvent,
+  markerTelemetryId,
   PPL_LINT_QUICKFIX_COMMAND_ID,
   PPL_LINT_TELEMETRY_EVENTS,
   registerPPLLintTelemetry,
@@ -25,11 +26,11 @@ import {
 type LintMarker = monaco.editor.IMarkerData;
 
 let modelSlice = 'target';
-const model = ({
+const model = {
   uri: monaco.Uri.parse('inmemory://model/q.ppl'),
   getVersionId: () => 1,
   getValueInRange: () => modelSlice,
-} as unknown) as monaco.editor.ITextModel;
+} as unknown as monaco.editor.ITextModel;
 
 function makeMarker(overrides: Partial<LintMarker> = {}): LintMarker {
   return {
@@ -57,10 +58,10 @@ function provide(markers: LintMarker[]) {
     model,
     {} as monaco.Range,
     { markers, only: undefined, trigger: 1 } as monaco.languages.CodeActionContext,
-    ({
+    {
       isCancellationRequested: false,
       onCancellationRequested: () => ({ dispose() {} }),
-    } as unknown) as monaco.CancellationToken
+    } as unknown as monaco.CancellationToken
   ) as monaco.languages.CodeActionList;
   return result.actions;
 }
@@ -208,19 +209,34 @@ describe('pplLintCodeActionProvider', () => {
     it('emits quickfix_offered and attaches the click command for a lint fix', () => {
       const marker = makeMarker({ code: 'division-by-zero' });
       seedFix(marker, { title: 'Replace with "1"', text: '1' });
+      const markerId = markerTelemetryId(markerFixKey(marker));
       const actions = provide([marker]);
 
       expect(actions).toHaveLength(1);
+      // The offer carries the per-finding correlation id so it can be joined to
+      // the click event.
       expect(events).toEqual([
-        { name: PPL_LINT_TELEMETRY_EVENTS.QUICKFIX_OFFERED, data: { rule: 'division-by-zero' } },
+        {
+          name: PPL_LINT_TELEMETRY_EVENTS.QUICKFIX_OFFERED,
+          data: { rule: 'division-by-zero', marker: markerId },
+        },
       ]);
       // The action carries a command so a click can be recorded; Monaco applies
-      // the edit first, then runs the command.
+      // the edit first, then runs the command. The command args carry the same
+      // rule + marker id so quickfix_clicked joins this offer.
       expect(actions[0].command).toEqual({
         id: PPL_LINT_QUICKFIX_COMMAND_ID,
         title: 'Replace with "1"',
-        arguments: [{ rule: 'division-by-zero' }],
+        arguments: [{ rule: 'division-by-zero', marker: markerId }],
       });
+    });
+
+    it('does not carry a captured versionId (an edit rejected for a stale version would still fire quickfix_clicked)', () => {
+      const marker = makeMarker({ code: 'division-by-zero' });
+      seedFix(marker, { title: 'Replace with "1"', text: '1' });
+      const actions = provide([marker]);
+      const edit = (actions[0].edit as any).edits[0];
+      expect(edit.versionId).toBeUndefined();
     });
 
     it('reads the rule id from the object-form code as well', () => {
@@ -230,7 +246,10 @@ describe('pplLintCodeActionProvider', () => {
       seedFix(marker, { title: 'fix', text: 'x' });
       provide([marker]);
       expect(events).toEqual([
-        { name: PPL_LINT_TELEMETRY_EVENTS.QUICKFIX_OFFERED, data: { rule: 'agg-on-text' } },
+        {
+          name: PPL_LINT_TELEMETRY_EVENTS.QUICKFIX_OFFERED,
+          data: { rule: 'agg-on-text', marker: markerTelemetryId(markerFixKey(marker)) },
+        },
       ]);
     });
 

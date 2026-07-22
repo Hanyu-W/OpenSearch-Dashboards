@@ -6,6 +6,7 @@
 import semver from 'semver';
 import { getBundledCatalog, loadCatalog, validateCatalogEntry } from '../catalog';
 import { OSD_KNOWN_VERSION } from '../version_filter';
+import rawCatalog from '../rules_catalog.json';
 
 describe('catalog loading', () => {
   it('loads the bundled catalog with the expected rule ids', () => {
@@ -108,6 +109,26 @@ describe('catalog loading', () => {
         needsExplain: 'yes',
       })
     ).toBeNull();
+  });
+
+  // The config-telemetry census (query_enhancements) diffs the stored setting
+  // against defaults derived from getBundledCatalog(), while the server-registered
+  // uiSetting default (ui_settings.ts) is derived from the same rules_catalog.json
+  // via a separate constant. The server test binds server-default ↔ raw JSON;
+  // this test binds getBundledCatalog() ↔ raw JSON. Together they keep all three
+  // baselines in lockstep, so a rule added/changed on one side can never surface
+  // as a spurious per-session "deviation" or off-by-one enabled/disabled count.
+  it('getBundledCatalog preserves each rule enabled/severity verbatim from rules_catalog.json', () => {
+    const rawRules = (rawCatalog as Array<{ id: string; enabled: boolean; severity: string }>).map(
+      (r) => ({ id: r.id, enabled: r.enabled, severity: r.severity })
+    );
+    const loaded = getBundledCatalog().map((c) => ({
+      id: c.id,
+      enabled: c.enabled,
+      severity: c.severity,
+    }));
+    // No entries dropped or reordered, and enabled/severity unchanged.
+    expect(loaded).toEqual(rawRules);
   });
 
   it('loads the two explain rules with needsExplain set, disabled by default', () => {

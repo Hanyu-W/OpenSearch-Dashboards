@@ -79,16 +79,34 @@ describe('handleAiFixCommand', () => {
     expect(request?.chatContext).toContain('apply_ppl_lint_fix_data');
     expect(onAskAiFix).toHaveBeenCalledWith(request);
     // Feature-usage telemetry: emitted once, after the chat request is sent,
-    // carrying the rule id.
+    // carrying the rule id. `marker` is undefined here because these args carry
+    // no markerId (they didn't originate from the code-action provider).
     expect(events).toEqual([
       {
         name: PPL_LINT_TELEMETRY_EVENTS.AI_FIX_CLICKED,
-        data: { rule: 'type-mismatch-numeric' },
+        data: { rule: 'type-mismatch-numeric', marker: undefined },
       },
     ]);
   });
 
-  it('emits ai_fix_clicked with an undefined rule when the marker had no rule id', () => {
+  it('carries the marker correlation id through to ai_fix_clicked when present', () => {
+    const onAskAiFix = jest.fn();
+    handleAiFixCommand(
+      { ...args, markerId: 'abc1234' },
+      { enableAIFeatures: true, onAskAiFix },
+      ORIGINAL,
+      undefined,
+      { createRequestId: () => 'req-1' }
+    );
+    expect(events).toEqual([
+      {
+        name: PPL_LINT_TELEMETRY_EVENTS.AI_FIX_CLICKED,
+        data: { rule: 'type-mismatch-numeric', marker: 'abc1234' },
+      },
+    ]);
+  });
+
+  it('emits ai_fix_clicked with the unknown-rule sentinel when the marker had no rule id', () => {
     const onAskAiFix = jest.fn();
     handleAiFixCommand(
       { modelUri: 'inmemory://m.ppl', message: 'msg' },
@@ -97,8 +115,12 @@ describe('handleAiFixCommand', () => {
       undefined,
       { createRequestId: () => 'req-1' }
     );
+    // Sentinel, not `undefined`: JSON.stringify drops undefined-valued keys.
     expect(events).toEqual([
-      { name: PPL_LINT_TELEMETRY_EVENTS.AI_FIX_CLICKED, data: { rule: undefined } },
+      {
+        name: PPL_LINT_TELEMETRY_EVENTS.AI_FIX_CLICKED,
+        data: { rule: 'unknown', marker: undefined },
+      },
     ]);
   });
 

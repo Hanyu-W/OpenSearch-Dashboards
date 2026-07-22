@@ -11,19 +11,21 @@ import { pplLintHoverProvider, LINT_OWNER } from '../hover_provider';
 import { setPPLLintContext, clearPPLLintContext, PPLLintContext } from '../../../lint_bridge';
 import {
   PPLLintTelemetryEvent,
+  markerTelemetryId,
   PPL_LINT_TELEMETRY_EVENTS,
+  PPL_LINT_UNKNOWN_RULE,
   registerPPLLintTelemetry,
   resetPPLLintTelemetryDedup,
 } from '../../telemetry';
 
 type Marker = monaco.editor.IMarker;
 
-const model = ({
+const model = {
   uri: monaco.Uri.parse('inmemory://model/q.ppl'),
-} as unknown) as monaco.editor.ITextModel;
+} as unknown as monaco.editor.ITextModel;
 
 function makeMarker(overrides: Partial<Marker> = {}): Marker {
-  return ({
+  return {
     owner: LINT_OWNER,
     resource: model.uri,
     severity: monaco.MarkerSeverity.Warning,
@@ -35,7 +37,7 @@ function makeMarker(overrides: Partial<Marker> = {}): Marker {
     source: LINT_MARKER_SOURCE,
     code: { value: 'division-by-zero', target: monaco.Uri.parse('https://docs.example/x') },
     ...overrides,
-  } as unknown) as Marker;
+  } as unknown as Marker;
 }
 
 // Stub getModelMarkers to return our test markers, mirroring how the lint
@@ -57,12 +59,12 @@ afterEach(() => {
 
 /** A lint context under which the AI action is available (AI on + chat opener). */
 function setAiContext(overrides: Partial<PPLLintContext> = {}) {
-  setPPLLintContext(model, ({
+  setPPLLintContext(model, {
     enableAIFeatures: true,
     datasetTitle: 'accounts',
     onAskAiFix: jest.fn(),
     ...overrides,
-  } as unknown) as PPLLintContext);
+  } as unknown as PPLLintContext);
 }
 
 /** The `isTrusted` field of the hover's first content part. */
@@ -75,7 +77,7 @@ function hoverAt(line: number, column: number) {
   return pplLintHoverProvider.provideHover!(
     model,
     new monaco.Position(line, column),
-    ({ isCancellationRequested: false } as unknown) as monaco.CancellationToken,
+    { isCancellationRequested: false } as unknown as monaco.CancellationToken,
     undefined
   ) as monaco.languages.Hover | null;
 }
@@ -193,11 +195,15 @@ describe('pplLintHoverProvider', () => {
       resetPPLLintTelemetryDedup(model);
     });
 
-    it('emits hover_shown with the rule id when a card is returned', () => {
-      markersByOwner[LINT_OWNER] = [makeMarker()];
+    it('emits hover_shown with the rule id and marker correlation id when a card is returned', () => {
+      const marker = makeMarker();
+      markersByOwner[LINT_OWNER] = [marker];
       hoverAt(1, 7);
       expect(events).toEqual([
-        { name: PPL_LINT_TELEMETRY_EVENTS.HOVER_SHOWN, data: { rule: 'division-by-zero' } },
+        {
+          name: PPL_LINT_TELEMETRY_EVENTS.HOVER_SHOWN,
+          data: { rule: 'division-by-zero', marker: markerTelemetryId(markerFixKey(marker)) },
+        },
       ]);
     });
 
@@ -207,11 +213,17 @@ describe('pplLintHoverProvider', () => {
       expect(events).toHaveLength(0);
     });
 
-    it('emits hover_shown with an undefined rule when the marker has no code', () => {
-      markersByOwner[LINT_OWNER] = [makeMarker({ code: undefined })];
+    it('emits hover_shown with the unknown-rule sentinel when the marker has no code', () => {
+      const marker = makeMarker({ code: undefined });
+      markersByOwner[LINT_OWNER] = [marker];
       hoverAt(1, 7);
+      // Sentinel, not `undefined`: an undefined-valued key is dropped by
+      // JSON.stringify and would arrive downstream as a missing field.
       expect(events).toEqual([
-        { name: PPL_LINT_TELEMETRY_EVENTS.HOVER_SHOWN, data: { rule: undefined } },
+        {
+          name: PPL_LINT_TELEMETRY_EVENTS.HOVER_SHOWN,
+          data: { rule: PPL_LINT_UNKNOWN_RULE, marker: markerTelemetryId(markerFixKey(marker)) },
+        },
       ]);
     });
 

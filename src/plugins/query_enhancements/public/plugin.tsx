@@ -6,11 +6,7 @@ import { i18n } from '@osd/i18n';
 import { BehaviorSubject, Subscription } from 'rxjs';
 import moment from 'moment';
 import { CoreSetup, CoreStart, Plugin, PluginInitializerContext } from '../../../core/public';
-import {
-  DataStorage,
-  getDataSourceEngineCapabilities,
-  OSD_FIELD_TYPES,
-} from '../../data/common';
+import { DataStorage, getDataSourceEngineCapabilities, OSD_FIELD_TYPES } from '../../data/common';
 // Type-only: DataSourceEngineType is an enum (runtime value); we use its string value directly to
 // avoid a cross-plugin runtime value-import. Keep in sync with the enum.
 import type { DataSourceEngineType } from '../../data_source/common/data_sources';
@@ -369,26 +365,30 @@ export class QueryEnhancementsPlugin implements Plugin<
     // enabled and selects runtime or compiled behavior from the lint context.
     //
     // Feature-usage telemetry is forwarded through core.telemetry: the recorder
-    // auto-stamps the queryEnhancements source and no-ops in public OSS (no
-    // provider is registered there), lighting up only where one is.
+    // auto-stamps the queryEnhancements source and, downstream, no-ops in public
+    // OSS (no telemetry provider is registered there) while lighting up wherever
+    // one is. `getPluginRecorder` always returns a recorder and `recordEvent` is
+    // always callable, so there is no local availability check to make here — the
+    // provider decides per event whether to record, which also respects runtime
+    // telemetry-consent toggles.
     const lintEnabled = !!core.application.capabilities.queryEnhancements?.pplLint;
-    const telemetryRecorder = core.telemetry?.getPluginRecorder('queryEnhancements');
-    const recordEvent = telemetryRecorder
-      ? (event: { name: string; data: Record<string, any> }) => telemetryRecorder.recordEvent(event)
-      : undefined;
+    const recorder = core.telemetry.getPluginRecorder('queryEnhancements');
+    const recordEvent = (event: { name: string; data: Record<string, any> }) =>
+      recorder.recordEvent(event);
     this.unregisterPplLintBridge = registerPplLint(lintEnabled, recordEvent);
 
-    // Observe PPL-lint rule config changes (enable/disable + severity) once per
-    // session. Registered here — not in the query-editor hosts that already
-    // subscribe for revalidation — so changes are not double-counted. Reuses the
-    // same recorder as the engine events.
-    if (lintEnabled && recordEvent) {
-      this.unregisterPplLintConfigTelemetry = registerPPLLintConfigTelemetry(
-        core.uiSettings,
-        recordEvent,
-        lintEnabled
-      );
-    }
+    // Observe PPL-lint rule config once per session. Registered here — not in the
+    // query-editor hosts that already subscribe for revalidation — so changes are
+    // not double-counted, and unconditionally (not only when lint is enabled) so
+    // the one-shot `config_state` census fires for every session: that is what
+    // makes the "has the lint capability but has it disabled" cohort observable
+    // (via `master_enabled`), the denominator for "is anyone using PPL lint?".
+    // Reuses the same recorder as the engine events.
+    this.unregisterPplLintConfigTelemetry = registerPPLLintConfigTelemetry(
+      core.uiSettings,
+      recordEvent,
+      lintEnabled
+    );
 
     return {};
   }

@@ -11,7 +11,9 @@ import { getRuleHoverContent } from './engine_outcomes';
 import { renderHoverCard, SeverityLabel } from './hover_card';
 import {
   emitPPLLintTelemetry,
+  markerTelemetryId,
   PPL_LINT_TELEMETRY_EVENTS,
+  ruleLabel,
   shouldEmitHoverShown,
 } from '../telemetry';
 
@@ -112,7 +114,7 @@ export const pplLintHoverProvider: monaco.languages.HoverProvider = {
     if (shouldEmitHoverShown(model, key)) {
       emitPPLLintTelemetry({
         name: PPL_LINT_TELEMETRY_EVENTS.HOVER_SHOWN,
-        data: { rule: ruleId },
+        data: { rule: ruleLabel(ruleId), marker: markerTelemetryId(key) },
       });
     }
 

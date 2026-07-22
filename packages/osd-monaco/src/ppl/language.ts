@@ -36,6 +36,7 @@ import {
   PPL_LINT_QUICKFIX_COMMAND_ID,
   PPL_LINT_TELEMETRY_EVENTS,
   resetPPLLintTelemetryDedup,
+  ruleLabel,
 } from './lint/telemetry';
 
 const PPL_LANGUAGE_ID = ID;
@@ -287,6 +288,17 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
   const generation = (lintGenerations.get(model.id) ?? 0) + 1;
   lintGenerations.set(model.id, generation);
 
+  // Re-arm the per-pass hover / quick-fix-offered dedup at the START of the pass
+  // — not in the terminal `.then` — so it is fresh before the first (possibly
+  // progressive) marker set is published. The runtime bridge publishes markers
+  // several times per pass (static, then explain-layered) and the hover / code-
+  // action providers can act on them immediately; resetting only at pass end
+  // meant interactions during that window were deduped against the *previous*
+  // pass's keys and silently undercounted. A pass begins on a content or
+  // language change (the debounced entry points below), which is exactly the
+  // "fresh opportunity to count" boundary.
+  resetPPLLintTelemetryDedup(model);
+
   if (!isPPLLintEnabled()) {
     monaco.editor.setModelMarkers(model, LINT_OWNER, []);
     clearModelFixes(model);
@@ -357,16 +369,14 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
   // static markers first, then explain-layered), so telemetry lives here — in
   // the terminal `.then`, which runs exactly once per pass with the final,
   // authoritative diagnostics — not inside `publishResult`, to keep the "once
-  // per rule per pass" contract. No-ops until the host registers a sink.
+  // per rule per pass" contract. The per-pass dedup was already re-armed at the
+  // start of the pass (see `resetPPLLintTelemetryDedup` above), so the hover /
+  // offer counters are correct even during progressive rendering. No-ops until
+  // the host registers a sink.
   const emitPassTelemetry = (lintResult: LintResult): void => {
     if (!isPassCurrent()) {
       return;
     }
-    // A new marker set is a fresh opportunity: re-arm the per-pass hover /
-    // quick-fix-offered dedup so interactions with this pass's markers count
-    // again (they were deduped within the previous pass).
-    resetPPLLintTelemetryDedup(model);
-
     // One `diagnostic_shown` per distinct rule that produced a marker this pass,
     // so a query with three findings of the same rule counts once.
     const rulesShown = new Set<string>();
@@ -377,7 +387,7 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
       rulesShown.add(diagnostic.ruleId);
       emitPPLLintTelemetry({
         name: PPL_LINT_TELEMETRY_EVENTS.DIAGNOSTIC_SHOWN,
-        data: { rule: diagnostic.ruleId },
+        data: { rule: ruleLabel(diagnostic.ruleId) },
       });
     }
   };
@@ -548,13 +558,15 @@ export const registerPPLLanguage = () => {
   // Register the command dispatched when a lint quick-fix is invoked. The
   // quick-fix action carries both an `edit` and this `command`; Monaco applies
   // the edit first, then runs the command, so recording here captures a genuine
-  // "user clicked the fix" signal. The rule id rides on the command arguments.
+  // "user clicked the fix" signal. The rule id and per-finding correlation id
+  // ride on the command arguments (both already resolved by the code-action
+  // provider, so `rule` is the sentinel-mapped label, never undefined).
   const quickfixCommandDisposable = monaco.editor.registerCommand(
     PPL_LINT_QUICKFIX_COMMAND_ID,
-    (_accessor, args?: { rule?: string }) => {
+    (_accessor, args?: { rule?: string; marker?: string }) => {
       emitPPLLintTelemetry({
         name: PPL_LINT_TELEMETRY_EVENTS.QUICKFIX_CLICKED,
-        data: { rule: args?.rule },
+        data: { rule: ruleLabel(args?.rule), marker: args?.marker },
       });
     }
   );

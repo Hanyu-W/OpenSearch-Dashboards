@@ -23,6 +23,13 @@ export const AI_FIX_COMMAND_ID = 'ppl.lint.aiFix';
 export interface AiFixCommandArgs {
   modelUri: string;
   ruleId?: string;
+  /**
+   * Opaque per-finding correlation id (see `markerTelemetryId`) so the
+   * `ai_fix_clicked` telemetry event can be joined with the `ai_fix_offered`
+   * event for the same marker. Optional: absent when the action was dispatched
+   * without going through the code-action provider (e.g. older hover links).
+   */
+  markerId?: string;
   message: string;
   operation?: 'filter' | 'aggregation' | 'sort';
   outcome?: string;

@@ -32,9 +32,45 @@ export const PPL_LINT_TELEMETRY_EVENTS = {
   QUICKFIX_OFFERED: 'ppl_lint_quickfix_offered',
   /** A lint quick-fix was invoked (its edit applied). */
   QUICKFIX_CLICKED: 'ppl_lint_quickfix_clicked',
+  /**
+   * The "✨ Ask AI to fix" action was offered (a lint marker had no deterministic
+   * fix). Paired with {@link AI_FIX_CLICKED} it forms the AI-fix funnel, mirroring
+   * {@link QUICKFIX_OFFERED}/{@link QUICKFIX_CLICKED} for deterministic fixes.
+   */
+  AI_FIX_OFFERED: 'ppl_lint_ai_fix_offered',
   /** The "✨ Ask AI to fix" action was clicked and the AI chat request was sent. */
   AI_FIX_CLICKED: 'ppl_lint_ai_fix_clicked',
 } as const;
+
+/**
+ * Sentinel `rule` value for a marker that carries no resolvable rule id. Emitted
+ * instead of `undefined` because `JSON.stringify` drops undefined-valued keys, so
+ * an `undefined` rule would arrive downstream as a missing field — making a
+ * genuine "unknown rule" indistinguishable from a broken emitter or schema
+ * violation. A concrete sentinel lets the dashboards bucket these explicitly.
+ */
+export const PPL_LINT_UNKNOWN_RULE = 'unknown';
+
+/** Map an optional rule id to the always-present `rule` field (see sentinel). */
+export function ruleLabel(ruleId?: string): string {
+  return ruleId ?? PPL_LINT_UNKNOWN_RULE;
+}
+
+/**
+ * Opaque, stable-within-a-pass per-finding id derived from the marker's canonical
+ * key (position + message + rule). Lets `offered`/`clicked`/`hover` events for the
+ * same finding be correlated downstream (a per-finding funnel, not just per-rule)
+ * without shipping the raw marker key — which embeds the diagnostic message and
+ * can contain field names or query fragments. The hash is one-way and short, so
+ * no message content is recoverable from it.
+ */
+export function markerTelemetryId(markerKey: string): string {
+  let hash = 0;
+  for (let i = 0; i < markerKey.length; i++) {
+    hash = (hash * 31 + markerKey.charCodeAt(i)) % 4294967291;
+  }
+  return hash.toString(36).padStart(7, '0');
+}
 
 /**
  * Id of the Monaco command dispatched when a lint quick-fix is invoked, so the
@@ -47,12 +83,17 @@ export const PPL_LINT_QUICKFIX_COMMAND_ID = 'ppl.lint.quickfixApplied';
 /**
  * A telemetry event the engine emits. Deliberately telemetry-API-agnostic: a
  * name plus a structured `data` object. `data` is always an object (never
- * omitted) because core's `TelemetryEvent.data` is required; `rule` carries the
- * lint rule id where one exists.
+ * omitted) because core's `TelemetryEvent.data` is required.
+ *
+ * `rule` is always present — a resolvable rule id or {@link PPL_LINT_UNKNOWN_RULE}
+ * — so downstream never sees a missing field (see the sentinel note). `marker` is
+ * an opaque per-finding correlation id (see {@link markerTelemetryId}) that lets
+ * `offered`/`clicked`/`hover` events for the same finding be joined; it is absent
+ * only for `diagnostic_shown`, which is a per-rule (not per-marker) count.
  */
 export interface PPLLintTelemetryEvent {
   name: string;
-  data: { rule?: string };
+  data: { rule: string; marker?: string };
 }
 
 type PPLLintTelemetrySink = (event: PPLLintTelemetryEvent) => void;
@@ -130,6 +171,8 @@ interface PPLLintTelemetryDedup {
   hoveredKeys: Set<string>;
   /** Marker keys already counted as "quick-fix offered" in the current pass. */
   offeredKeys: Set<string>;
+  /** Marker keys already counted as "AI-fix offered" in the current pass. */
+  aiOfferedKeys: Set<string>;
 }
 
 const dedupByModel = new WeakMap<object, PPLLintTelemetryDedup>();
@@ -137,7 +180,11 @@ const dedupByModel = new WeakMap<object, PPLLintTelemetryDedup>();
 function getDedup(model: object): PPLLintTelemetryDedup {
   let dedup = dedupByModel.get(model);
   if (!dedup) {
-    dedup = { hoveredKeys: new Set<string>(), offeredKeys: new Set<string>() };
+    dedup = {
+      hoveredKeys: new Set<string>(),
+      offeredKeys: new Set<string>(),
+      aiOfferedKeys: new Set<string>(),
+    };
     dedupByModel.set(model, dedup);
   }
   return dedup;
@@ -169,6 +216,22 @@ export function shouldEmitQuickfixOffered(model: object, markerKey: string): boo
     return false;
   }
   offeredKeys.add(markerKey);
+  return true;
+}
+
+/**
+ * True the first time an "Ask AI to fix" action for `markerKey` is offered in the
+ * current lint pass; tracked separately from the deterministic quick-fix offer
+ * (the two are mutually exclusive per marker, but keeping distinct counters keeps
+ * each funnel independent) so Monaco's per-cursor-move re-invocation counts one
+ * offer, not caret ticks.
+ */
+export function shouldEmitAiFixOffered(model: object, markerKey: string): boolean {
+  const { aiOfferedKeys } = getDedup(model);
+  if (aiOfferedKeys.has(markerKey)) {
+    return false;
+  }
+  aiOfferedKeys.add(markerKey);
   return true;
 }
 

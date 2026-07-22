@@ -11,8 +11,11 @@ import { AI_FIX_COMMAND_ID } from './ai_fix/ai_fix_command_id';
 import { getModelHoverFacts } from './hover/hover_registry';
 import {
   emitPPLLintTelemetry,
+  markerTelemetryId,
   PPL_LINT_QUICKFIX_COMMAND_ID,
   PPL_LINT_TELEMETRY_EVENTS,
+  ruleLabel,
+  shouldEmitAiFixOffered,
   shouldEmitQuickfixOffered,
 } from './telemetry';
 
@@ -93,8 +96,8 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
           operation && ruleId === 'operation-pushed-as-script'
             ? `${operation}:script`
             : operation && ruleId === 'operation-not-pushed'
-            ? `${operation}:coordinator`
-            : undefined;
+              ? `${operation}:coordinator`
+              : undefined;
         const relatedTexts = marker.relatedInformation
           ?.filter((related) => related.resource.toString() === model.uri.toString())
           .map((related) =>
@@ -105,6 +108,7 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
               endColumn: related.endColumn,
             })
           );
+        const markerId = markerTelemetryId(key);
         actions.push({
           title: '✨ Ask AI to fix this',
           diagnostics: [marker],
@@ -117,6 +121,7 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
               {
                 modelUri: model.uri.toString(),
                 ruleId,
+                markerId,
                 message: marker.message,
                 operation,
                 outcome,
@@ -136,6 +141,19 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
             ],
           },
         } as monaco.languages.CodeAction);
+
+        // Feature-usage telemetry: the AI fallback was offered for this marker.
+        // Paired with `ai_fix_clicked` (emitted when the command actually
+        // dispatches a chat request) it forms the AI-fix funnel, the way
+        // `quickfix_offered`/`quickfix_clicked` do for deterministic fixes.
+        // Deduped per marker per pass so Monaco's per-cursor-move re-invocation
+        // counts one offer, not caret ticks.
+        if (shouldEmitAiFixOffered(model, key)) {
+          emitPPLLintTelemetry({
+            name: PPL_LINT_TELEMETRY_EVENTS.AI_FIX_OFFERED,
+            data: { rule: ruleLabel(ruleId), marker: markerId },
+          });
+        }
       }
 
       if (!fix) {
@@ -159,7 +177,18 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
                 range: editRange,
                 text: fix.text,
               },
-              versionId: model.getVersionId(),
+              // Intentionally omit versionId. Monaco's bulk-edit service rejects
+              // an edit whose captured versionId no longer matches the model
+              // ("model changed in the meantime"), and in the live editor the
+              // version advances between the moment the code action is computed
+              // and the moment the user clicks it (debounced re-lint,
+              // re-tokenize, autocomplete all bump it) — so a captured versionId
+              // makes the quick-fix silently do nothing while `quickfix_clicked`
+              // still fires (Monaco runs the attached command regardless),
+              // inflating the "fix applied" signal. The `expectedText` staleness
+              // guard above already protects against applying an edit to changed
+              // text, so applying without the version guard is safe.
+              versionId: undefined,
             } as any,
           ],
         },
@@ -171,11 +200,12 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
       // channel is instrumented; the syntax-error command-typo fix is not part
       // of the lint feature-usage metrics.
       if (isLintMarker) {
-        const rule = ruleIdOf(marker);
+        const rule = ruleLabel(ruleIdOf(marker));
+        const markerId = markerTelemetryId(key);
         action.command = {
           id: PPL_LINT_QUICKFIX_COMMAND_ID,
           title: fix.title,
-          arguments: [{ rule }],
+          arguments: [{ rule, marker: markerId }],
         };
         // Deduped per marker per lint pass: Monaco auto-triggers
         // provideCodeActions on every cursor move over a marker, so emitting on
@@ -184,7 +214,7 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
         if (shouldEmitQuickfixOffered(model, key)) {
           emitPPLLintTelemetry({
             name: PPL_LINT_TELEMETRY_EVENTS.QUICKFIX_OFFERED,
-            data: { rule },
+            data: { rule, marker: markerId },
           });
         }
       }
