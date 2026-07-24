@@ -664,5 +664,6 @@ export { fetchDisabledObjectFields } from './ppl_lint/disabled_object_fields';
 export { calciteSettingsCache } from './ppl_lint/calcite_settings';
 export { buildOverridesFromSettings } from './ppl_lint/lint_overrides';
 export { fetchVisibleIndices } from './ppl_lint/visible_indices';
+export { getAiAgentAvailableForDataSource } from './ppl_lint/ai_agent_availability';
 export { verifyPerformanceFixOutcome } from './ppl_lint/verify_performance_fix_outcome';
 export { pplGrammarCache, shouldUseRuntimeGrammar } from './antlr/opensearch_ppl/ppl_grammar_cache';

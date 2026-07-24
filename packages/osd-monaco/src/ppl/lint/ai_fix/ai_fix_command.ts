@@ -58,6 +58,7 @@ export function handleAiFixCommand(
     datasetTitle?: string;
     dataSourceId?: string;
     enableAIFeatures?: boolean;
+    aiAgentAvailableForSource?: boolean;
     onAskAiFix?: (request: AskPPLLintFixRequest) => void;
     aiFixToolName?: string;
   },
@@ -67,7 +68,14 @@ export function handleAiFixCommand(
     createRequestId?: () => string;
   }
 ): AskPPLLintFixRequest | undefined {
-  if (context.enableAIFeatures === false || !context.onAskAiFix) {
+  // Mirror the code-action gate: AI features on, agent reachable for the selected
+  // source (fail-open on undefined), and a chat opener wired. This backstops the
+  // command being dispatched from a stale lightbulb after a source switch.
+  if (
+    context.enableAIFeatures === false ||
+    context.aiAgentAvailableForSource === false ||
+    !context.onAskAiFix
+  ) {
     return undefined;
   }
   const diagnostic = {
@@ -78,6 +86,7 @@ export function handleAiFixCommand(
     ...(args.targetText ? { targetText: args.targetText } : {}),
     ...(args.targetRange ? { targetRange: args.targetRange } : {}),
     ...(args.relatedTexts?.length ? { relatedTexts: args.relatedTexts } : {}),
+    ...(args.fixInstructions ? { fixInstructions: args.fixInstructions } : {}),
   };
   const requestWithoutMessage = {
     requestId: deps?.createRequestId?.() ?? createRequestId(),
@@ -120,6 +129,7 @@ export function registerAiFixCommand(): monaco.IDisposable {
           datasetTitle: ctx?.datasetTitle,
           dataSourceId: ctx?.dataSourceId,
           enableAIFeatures: ctx?.enableAIFeatures,
+          aiAgentAvailableForSource: ctx?.aiAgentAvailableForSource,
           onAskAiFix: ctx?.onAskAiFix,
           aiFixToolName: ctx?.aiFixToolName,
         },

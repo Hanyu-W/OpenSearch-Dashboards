@@ -9,6 +9,7 @@ import { getModelFix, getModelSyntaxFix, markerFixKey } from './fix_registry';
 import { getPPLLintContext } from '../lint_bridge';
 import { AI_FIX_COMMAND_ID } from './ai_fix/ai_fix_command_id';
 import { getModelHoverFacts } from './hover/hover_registry';
+import { getModelAiFixMetadata } from './ai_fix/ai_fix_registry';
 
 /**
  * Code-action provider that surfaces quick-fixes for PPL markers on two
@@ -32,14 +33,23 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
   ): monaco.languages.ProviderResult<monaco.languages.CodeActionList> {
     const actions: monaco.languages.CodeAction[] = [];
 
-    // The AI quick-fix is offered only when AI features are on and the host has
-    // wired the AI chat opener/apply-tool flow. Computed once per provider
-    // call so the lightbulb and hover card share the same availability rule.
+    // The AI quick-fix is offered only when AI features are on, the host has
+    // wired the AI chat opener/apply-tool flow, and the AI agent is reachable for
+    // the selected data source (a per-cluster check: the fix executes against the
+    // selected source's ML Commons agent, so a cluster without it must not offer
+    // the action). `aiAgentAvailableForSource` is fail-open — only an explicit
+    // `false` suppresses, so an unresolved probe never hides a working button.
+    // Computed once per provider call so the lightbulb and hover card share the
+    // same availability rule.
     const lintCtx = getPPLLintContext(model);
-    const aiFixAvailable = lintCtx?.enableAIFeatures !== false && !!lintCtx?.onAskAiFix;
+    const aiFixAvailable =
+      lintCtx?.enableAIFeatures !== false &&
+      lintCtx?.aiAgentAvailableForSource !== false &&
+      !!lintCtx?.onAskAiFix;
 
     for (const marker of context.markers) {
       const key = markerFixKey(marker);
+      const aiFixMetadata = getModelAiFixMetadata(model, key);
       let fix;
       if (marker.source === LINT_MARKER_SOURCE) {
         fix = getModelFix(model, key);
@@ -78,7 +88,12 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
       // the action still shows but the apply tool's re-validation rejects the
       // candidate, surfacing an honest "couldn't produce a safe fix" rather than a
       // silently missing option.
-      if (marker.source === LINT_MARKER_SOURCE && !fix && aiFixAvailable) {
+      if (
+        marker.source === LINT_MARKER_SOURCE &&
+        !fix &&
+        aiFixAvailable &&
+        aiFixMetadata?.eligible !== false
+      ) {
         const ruleId = ruleIdOf(marker);
         const facts = getModelHoverFacts(model, key);
         const operation = facts?.operation;
@@ -125,6 +140,7 @@ export const pplLintCodeActionProvider: monaco.languages.CodeActionProvider = {
                   }),
                 },
                 relatedTexts,
+                fixInstructions: aiFixMetadata?.instructions,
               },
             ],
           },

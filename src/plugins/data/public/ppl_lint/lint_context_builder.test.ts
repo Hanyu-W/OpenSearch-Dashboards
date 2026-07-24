@@ -47,6 +47,7 @@ const fullCache: LintFieldsCache = {
   typeMap: new Map([['a', 'text']]),
   disabledObjectFields: new Set(['obj']),
   visibleIndices: ['idx-1'],
+  aiAgentAvailableForSource: false,
 };
 
 describe('buildPPLLintContext', () => {
@@ -99,6 +100,11 @@ describe('buildPPLLintContext', () => {
     expect(ctx.visibleIndices).toBe(fullCache.visibleIndices);
   });
 
+  it('carries per-source AI availability when the cache matches the active dataset', () => {
+    const ctx = buildPPLLintContext(dataset, fullCache, services);
+    expect(ctx.aiAgentAvailableForSource).toBe(false);
+  });
+
   it('omits field metadata when the cache belongs to a different dataset', () => {
     const staleCache: LintFieldsCache = { ...fullCache, datasetId: 'other-dataset' };
     const ctx = buildPPLLintContext(dataset, staleCache, services);
@@ -106,6 +112,14 @@ describe('buildPPLLintContext', () => {
     expect(ctx.typeMap).toBeUndefined();
     expect(ctx.disabledObjectFields).toBeUndefined();
     expect(ctx.visibleIndices).toBeUndefined();
+  });
+
+  it('drops a stale source AI answer after a dataset switch (fail-open until reprobed)', () => {
+    // A cache from the previous source must not gate the new source: dropping it
+    // to undefined leaves the AI action shown until the new probe resolves.
+    const staleCache: LintFieldsCache = { ...fullCache, datasetId: 'other-dataset' };
+    const ctx = buildPPLLintContext(dataset, staleCache, services);
+    expect(ctx.aiAgentAvailableForSource).toBeUndefined();
   });
 
   it('prefers the cached calcite settings over the version heuristic', () => {

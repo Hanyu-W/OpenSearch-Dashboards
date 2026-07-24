@@ -10,6 +10,7 @@ import { setModelFixes, clearModelFixes, markerFixKey, MarkerFix } from '../fix_
 import { setPPLLintContext, clearPPLLintContext } from '../../lint_bridge';
 import { AI_FIX_COMMAND_ID } from '../ai_fix/ai_fix_command_id';
 import { clearModelHoverFacts, setModelHoverFacts } from '../hover/hover_registry';
+import { clearModelAiFixMetadata, setModelAiFixMetadata } from '../ai_fix/ai_fix_registry';
 
 type LintMarker = monaco.editor.IMarkerData;
 
@@ -53,6 +54,7 @@ describe('pplLintCodeActionProvider — AI quick-fix emission', () => {
   afterEach(() => {
     clearModelFixes(model);
     clearModelHoverFacts(model);
+    clearModelAiFixMetadata(model);
     clearPPLLintContext(model);
   });
 
@@ -91,6 +93,35 @@ describe('pplLintCodeActionProvider — AI quick-fix emission', () => {
     expect(provide([aiMarker('type-mismatch-numeric')])).toHaveLength(0);
   });
 
+  it('does not emit an AI action when the agent is unavailable for the selected source', () => {
+    setPPLLintContext(model, {
+      enableAIFeatures: true,
+      onAskAiFix: jest.fn(),
+      aiAgentAvailableForSource: false,
+    } as any);
+    expect(provide([aiMarker('type-mismatch-numeric')])).toHaveLength(0);
+  });
+
+  it('emits an AI action when per-source availability is still unresolved (fail-open)', () => {
+    // undefined = probe not yet resolved (or a host that does not probe); the
+    // action stays shown so an unresolved probe never hides a working button.
+    setPPLLintContext(model, {
+      enableAIFeatures: true,
+      onAskAiFix: jest.fn(),
+      aiAgentAvailableForSource: undefined,
+    } as any);
+    expect(provide([aiMarker('type-mismatch-numeric')])).toHaveLength(1);
+  });
+
+  it('emits an AI action when the agent is available for the selected source', () => {
+    setPPLLintContext(model, {
+      enableAIFeatures: true,
+      onAskAiFix: jest.fn(),
+      aiAgentAvailableForSource: true,
+    } as any);
+    expect(provide([aiMarker('type-mismatch-numeric')])).toHaveLength(1);
+  });
+
   it('prefers the deterministic fix and does not also emit an AI action', () => {
     setPPLLintContext(model, { enableAIFeatures: true, onAskAiFix: jest.fn() } as any);
     // field-validation with a near-field match ships a deterministic Levenshtein
@@ -113,6 +144,40 @@ describe('pplLintCodeActionProvider — AI quick-fix emission', () => {
     const actions = provide([aiMarker('field-validation')]);
     expect(actions).toHaveLength(1);
     expect((actions[0] as any).isAI).toBe(true);
+  });
+
+  it('offers AI for a proven-safe rex instance and carries its rewrite contract', () => {
+    setPPLLintContext(model, { enableAIFeatures: true, onAskAiFix: jest.fn() } as any);
+    const marker = aiMarker('rex-scan-cost');
+    setModelAiFixMetadata(
+      model,
+      new Map([
+        [
+          markerFixKey(marker),
+          {
+            eligible: true,
+            instructions: "Insert WHERE LIKE(body, '%logtype=%') before rex.",
+          },
+        ],
+      ])
+    );
+
+    const [action] = provide([marker]);
+    expect((action as any).isAI).toBe(true);
+    expect(action.command?.arguments?.[0]).toEqual(
+      expect.objectContaining({
+        fixInstructions: "Insert WHERE LIKE(body, '%logtype=%') before rex.",
+      })
+    );
+  });
+
+  it('hides AI for an advisory-only rex instance without affecting other rules', () => {
+    setPPLLintContext(model, { enableAIFeatures: true, onAskAiFix: jest.fn() } as any);
+    const rex = aiMarker('rex-scan-cost');
+    setModelAiFixMetadata(model, new Map([[markerFixKey(rex), { eligible: false }]]));
+
+    expect(provide([rex])).toHaveLength(0);
+    expect(provide([aiMarker('type-mismatch-numeric')])).toHaveLength(1);
   });
 
   it('passes the exact target and performance outcome to the AI command', () => {

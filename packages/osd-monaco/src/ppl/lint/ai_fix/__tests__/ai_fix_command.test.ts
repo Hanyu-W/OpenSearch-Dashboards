@@ -25,6 +25,7 @@ const args: AiFixCommandArgs = {
   modelUri: 'inmemory://m.ppl',
   ruleId: 'type-mismatch-numeric',
   message: 'mismatch',
+  fixInstructions: "Insert WHERE LIKE(body, '%logtype=%') before rex.",
 };
 
 describe('handleAiFixCommand', () => {
@@ -56,7 +57,11 @@ describe('handleAiFixCommand', () => {
         toolName: 'apply_ppl_lint_fix_data',
         modelUri: args.modelUri,
         query: ORIGINAL,
-        diagnostic: { message: 'mismatch', ruleId: 'type-mismatch-numeric' },
+        diagnostic: {
+          message: 'mismatch',
+          ruleId: 'type-mismatch-numeric',
+          fixInstructions: "Insert WHERE LIKE(body, '%logtype=%') before rex.",
+        },
         datasetTitle: 'accounts',
         dataSourceId: 'mds-1',
         lintContext,
@@ -65,6 +70,7 @@ describe('handleAiFixCommand', () => {
     expect(request?.chatMessage).not.toContain('apply_ppl_lint_fix_data');
     expect(request?.chatMessage).not.toContain('req-1');
     expect(request?.chatContext).toContain('apply_ppl_lint_fix_data');
+    expect(request?.chatContext).toContain("WHERE LIKE(body, '%logtype=%')");
     expect(onAskAiFix).toHaveBeenCalledWith(request);
   });
 
@@ -88,6 +94,33 @@ describe('handleAiFixCommand', () => {
         { createRequestId: () => 'req-1' }
       )
     ).toBeUndefined();
+  });
+
+  it('does nothing when the agent is unavailable for the selected source', () => {
+    const onAskAiFix = jest.fn();
+    expect(
+      handleAiFixCommand(
+        args,
+        { enableAIFeatures: true, onAskAiFix, aiAgentAvailableForSource: false },
+        ORIGINAL,
+        undefined,
+        { createRequestId: () => 'req-1' }
+      )
+    ).toBeUndefined();
+    expect(onAskAiFix).not.toHaveBeenCalled();
+  });
+
+  it('dispatches when per-source availability is unresolved (fail-open)', () => {
+    const onAskAiFix = jest.fn();
+    const request = handleAiFixCommand(
+      args,
+      { enableAIFeatures: true, onAskAiFix, aiAgentAvailableForSource: undefined },
+      ORIGINAL,
+      undefined,
+      { createRequestId: () => 'req-1' }
+    );
+    expect(request).toBeDefined();
+    expect(onAskAiFix).toHaveBeenCalledWith(request);
   });
 
   // The apply tool reuses the exported validator. This regression guard keeps

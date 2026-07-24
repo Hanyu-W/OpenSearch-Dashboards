@@ -54,6 +54,16 @@ export interface PPLLintContext extends PPLValidationContext, LintPayloadContext
    */
   enableAIFeatures?: boolean;
   /**
+   * Whether the AI lint-fix agent is actually reachable for the SELECTED data
+   * source. `enableAIFeatures` and the chat opener are deployment-global, but the
+   * fix executes against the selected cluster's ML Commons agent — so a cluster
+   * without that agent must not offer the action. `false` hides the AI quick-fix;
+   * `undefined` (probe not yet resolved, or host that does not probe) leaves it
+   * shown, so this can only ever suppress a button, never reveal one the other
+   * gates would hide. Resolved asynchronously by the host per data source.
+   */
+  aiAgentAvailableForSource?: boolean;
+  /**
    * Host-supplied opener for the AI chat-based lint fix flow. The leaf
    * package cannot import core/chat, so it builds a plain request payload and
    * lets the host open chat plus register the apply tool.
@@ -81,6 +91,7 @@ export interface AskPPLLintFixRequest {
     targetText?: string;
     targetRange?: { startOffset: number; endOffset: number };
     relatedTexts?: string[];
+    fixInstructions?: string;
   };
   datasetTitle?: string;
   dataSourceId?: string;

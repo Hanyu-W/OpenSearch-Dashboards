@@ -55,6 +55,7 @@ import {
   calciteSettingsCache,
   fetchVisibleIndices,
   fetchDisabledObjectFields,
+  getAiAgentAvailableForDataSource,
   UI_SETTINGS,
 } from '../../../../../../data/public';
 import {
@@ -352,11 +353,23 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
         // Fetch the visible-index list (for wildcard-source-zero-match)
         // concurrently with the disabled-object-fields walk so both gate the
         // same single-phase context update below.
-        const [disabledObjectFields, visibleIndices] = await Promise.all([
+        // Probe per-source AI reachability only when chat is wired at all —
+        // otherwise the AI button is already hidden by the missing opener, so the
+        // probe would be a wasted call on every dataset switch. Fail-open when
+        // unprobed (undefined leaves the action shown).
+        const shouldProbeAi = Boolean(services.http && chatIsAvailable);
+        const [
+          disabledObjectFields,
+          visibleIndices,
+          aiAgentAvailableForSource,
+        ] = await Promise.all([
           services.http
             ? fetchDisabledObjectFields(services.http, indexPattern)
             : Promise.resolve(undefined),
           services.http ? fetchVisibleIndices(services.http, dsId) : Promise.resolve([]),
+          shouldProbeAi
+            ? getAiAgentAvailableForDataSource(services.http!, dsId, 5000)
+            : Promise.resolve(undefined),
         ]);
         if (cancelled) {
           return;
@@ -367,6 +380,7 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
           typeMap,
           disabledObjectFields,
           visibleIndices,
+          aiAgentAvailableForSource,
         };
         // Single-phase update after the async load resolves.
         syncLint();

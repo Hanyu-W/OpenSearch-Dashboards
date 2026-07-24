@@ -25,6 +25,12 @@ export interface LintFieldsCache {
   typeMap?: Map<string, string>;
   disabledObjectFields?: Set<string>;
   visibleIndices?: string[];
+  /**
+   * Whether the AI lint-fix agent is reachable for this dataset's data source,
+   * resolved asynchronously alongside the field metadata. Undefined until the
+   * probe resolves, which leaves the AI quick-fix shown (fail-open).
+   */
+  aiAgentAvailableForSource?: boolean;
 }
 
 /** The dataset fields the lint context derives from; structural so either host's
@@ -80,6 +86,13 @@ export function buildPPLLintContext(
     // entirely when AI features are off. These ride the runtime bridge path only.
     datasetTitle: dataset?.title,
     enableAIFeatures: Boolean(services.uiSettings.get(ENABLE_AI_FEATURES, true)),
+    // Per-source AI reachability rides the same cacheMatchesDataset guard as the
+    // field metadata: after a dataset switch the previous source's answer must
+    // not gate the new source, so it is dropped until the new probe resolves
+    // (undefined → shown, matching the fail-open contract).
+    aiAgentAvailableForSource: cacheMatchesDataset
+      ? lintFields.aiAgentAvailableForSource
+      : undefined,
     onAskAiFix: aiFix?.onAskAiFix,
     aiFixToolName: aiFix?.aiFixToolName,
   };

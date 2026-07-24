@@ -52,6 +52,7 @@ import { buildPPLLintContext, LintFieldsCache } from '../../ppl_lint/lint_contex
 import { fetchDisabledObjectFields } from '../../ppl_lint/disabled_object_fields';
 import { calciteSettingsCache } from '../../ppl_lint/calcite_settings';
 import { fetchVisibleIndices } from '../../ppl_lint/visible_indices';
+import { getAiAgentAvailableForDataSource } from '../../ppl_lint/ai_agent_availability';
 import { storePPLLintFixSession } from '../../chat_tools/ppl_lint_fix_session';
 import type { AskPPLLintFixRequest } from '../../chat_tools/ppl_lint_fix_session';
 import { addPPLLintFixAssistantContext, PPLLintFixLifecycle } from './ppl_lint_fix_lifecycle';
@@ -322,11 +323,23 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
         // The visible-index list (for wildcard-source-zero-match) is fetched
         // concurrently so the two loads stay in step — both gate the same
         // single-phase context update below.
-        const [disabledObjectFields, visibleIndices] = await Promise.all([
+        // Probe per-source AI reachability only when chat is wired at all —
+        // otherwise the AI button is already hidden by the missing opener, so the
+        // probe would be a wasted call on every dataset switch. Fail-open when
+        // unprobed (undefined leaves the action shown).
+        const shouldProbeAi = Boolean(services.http && (services.chat?.isAvailable?.() ?? false));
+        const [
+          disabledObjectFields,
+          visibleIndices,
+          aiAgentAvailableForSource,
+        ] = await Promise.all([
           services.http
             ? fetchDisabledObjectFields(services.http, indexPattern)
             : Promise.resolve(undefined),
           services.http ? fetchVisibleIndices(services.http, dsId) : Promise.resolve([]),
+          shouldProbeAi
+            ? getAiAgentAvailableForDataSource(services.http!, dsId, 5000)
+            : Promise.resolve(undefined),
         ]);
         if (cancelled) {
           return;
@@ -338,6 +351,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
           typeMap,
           disabledObjectFields,
           visibleIndices,
+          aiAgentAvailableForSource,
         };
         // Single-phase update after the async load resolves (R8.5).
         syncLint();
