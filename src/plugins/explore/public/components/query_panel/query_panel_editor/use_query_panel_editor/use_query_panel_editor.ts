@@ -135,6 +135,7 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     lintContext: { current: undefined },
     lintGrammarRefresh: { current: undefined },
     lintContextRefresh: { current: undefined },
+    lintHoverPersistence: { current: undefined },
   });
 
   const getValidationContext = useCallback((): PPLValidationContext => {

@@ -114,6 +114,12 @@ function renderFactsLine(facts: HoverFacts): string | undefined {
     return `Pattern has ${facts.patternWildcards} wildcard(s), replacement has ${facts.replacementWildcards}.`;
   }
 
+  // The explain-backed performance rules narrow a whole-query finding to one
+  // operation; naming it is the only per-query detail their hover carries.
+  if (facts.operation !== undefined) {
+    return `Affects the ${code(facts.operation)} in this query.`;
+  }
+
   return undefined;
 }
 

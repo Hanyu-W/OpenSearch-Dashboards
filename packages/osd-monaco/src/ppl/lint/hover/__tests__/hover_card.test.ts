@@ -135,4 +135,19 @@ describe('renderHoverCard', () => {
     });
     expect(md).toContain('use \\*star\\* and \\_under\\_ and \\[brackets\\]');
   });
+
+  // The explain-backed performance rules write `operation` and nothing else, so
+  // without this branch their per-query line rendered empty.
+  it.each(['filter', 'aggregation', 'sort'] as const)(
+    'names the attributed %s for an explain-backed performance rule',
+    (operation) => {
+      const md = renderHoverCard({
+        ruleId: 'operation-not-pushed',
+        severityLabel: 'Warning',
+        message: 'This runs on a slower path.',
+        facts: { operation },
+      });
+      expect(md).toContain(`Affects the \`${operation}\` in this query.`);
+    }
+  );
 });

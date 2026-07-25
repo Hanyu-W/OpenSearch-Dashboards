@@ -17,14 +17,15 @@ jest.mock('@osd/monaco/ppl-lint', () => {
   const actual = jest.requireActual('@osd/monaco/ppl-lint');
   return {
     ...actual,
-    runLint: jest.fn((tree: unknown, options: { knownVersion?: string; context?: object }) => {
-      runLintCalls.push(options);
-      return actual.runLint(tree, options);
-    }),
+    runLint: jest.fn(
+      (tree: unknown, options: { knownVersion?: string; context?: Record<string, unknown> }) => {
+        runLintCalls.push(options);
+        return actual.runLint(tree, options);
+      }
+    ),
   };
 });
 
-// eslint-disable-next-line import/order
 import {
   deserializeGrammarBundle,
   deserializeBundleOrThrow,
