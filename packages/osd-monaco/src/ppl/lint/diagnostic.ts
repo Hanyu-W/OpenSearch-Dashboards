@@ -64,7 +64,7 @@ export interface Diagnostic {
   // runtime range/fix resolver to narrow the whole-query range to the offending
   // command; not rendered in the UI directly.
   explainTarget?: {
-    operation: 'filter' | 'aggregation' | 'sort';
+    operation: 'filter' | 'aggregation' | 'sort' | 'window' | 'join';
     outcome: ExplainOutcome;
     fields: string[];
   };

@@ -14,8 +14,15 @@ import evalDivScript from '../__fixtures__/eval_div_script.json';
 import filterNotPushedWindow from '../__fixtures__/filter_not_pushed_window.json';
 import filterPushed from '../__fixtures__/filter_pushed.json';
 import filterScript from '../__fixtures__/filter_script.json';
+import havingOverPushedAggTree from '../__fixtures__/having_over_pushed_agg_tree.json';
+import joinMergeJoinTree from '../__fixtures__/join_mergejoin_tree.json';
 import sortEval from '../__fixtures__/sort_eval.json';
 import statsAgg from '../__fixtures__/stats_agg.json';
+import subqueryInSemijoinTree from '../__fixtures__/subquery_in_semijoin_tree.json';
+import topOverPushedAggLegacy from '../__fixtures__/top_over_pushed_agg_legacy.json';
+import topOverPushedAggTree from '../__fixtures__/top_over_pushed_agg_tree.json';
+import windowEventstatsLegacy from '../__fixtures__/window_eventstats_legacy.json';
+import windowEventstatsTree from '../__fixtures__/window_eventstats_tree.json';
 
 interface CalcitePayload {
   calcite: { logical: string; physical: string };
@@ -34,6 +41,20 @@ function toTreePlan(
   logicalTree: ExplainRelTree = { rels: [] }
 ): ExplainPlan {
   return { isCalcite: true, physicalTree, logicalTree };
+}
+
+/**
+ * Captured live from `_explain?format=json_tree` (3.8.0-SNAPSHOT) — rel names
+ * are fully-qualified Java class names, unlike the hand-written short-name tree
+ * fixtures above.
+ */
+function capturedTreePlan(payload: { calcite: { physical: unknown } }): ExplainPlan {
+  return { isCalcite: true, physicalTree: payload.calcite.physical as ExplainRelTree };
+}
+
+/** Captured live from a 3.6 engine, which only emits formatted string plans. */
+function capturedLegacyPlan(payload: { calcite: { physical: unknown } }): ExplainPlan {
+  return { isCalcite: true, physicalText: String(payload.calcite.physical) };
 }
 
 const NOT_PUSHED_CONFIG: CatalogEntry = {
@@ -262,6 +283,48 @@ const FIXTURES: Array<{
     notPushed: true,
     pushedAsScript: false,
   },
+  {
+    name: 'captured FQCN tree window_eventstats (eventstats avg | head)',
+    plan: capturedTreePlan(windowEventstatsTree),
+    notPushed: true,
+    pushedAsScript: false,
+  },
+  {
+    name: 'captured legacy window_eventstats (eventstats avg | head)',
+    plan: capturedLegacyPlan(windowEventstatsLegacy),
+    notPushed: true,
+    pushedAsScript: false,
+  },
+  {
+    name: 'captured FQCN tree join_mergejoin (join on state)',
+    plan: capturedTreePlan(joinMergeJoinTree),
+    notPushed: true,
+    pushedAsScript: false,
+  },
+  {
+    name: 'captured FQCN tree subquery_in_semijoin (where state in [subquery])',
+    plan: capturedTreePlan(subqueryInSemijoinTree),
+    notPushed: true,
+    pushedAsScript: false,
+  },
+  {
+    name: 'captured FQCN tree top_over_pushed_agg (top 3 state; bucket-space, suppressed)',
+    plan: capturedTreePlan(topOverPushedAggTree),
+    notPushed: false,
+    pushedAsScript: false,
+  },
+  {
+    name: 'captured legacy top_over_pushed_agg (top 3 state; bucket-space, suppressed)',
+    plan: capturedLegacyPlan(topOverPushedAggLegacy),
+    notPushed: false,
+    pushedAsScript: false,
+  },
+  {
+    name: 'captured FQCN tree having_over_pushed_agg (stats | where cnt > 10; bucket-space, suppressed)',
+    plan: capturedTreePlan(havingOverPushedAggTree),
+    notPushed: false,
+    pushedAsScript: false,
+  },
 ];
 
 describe('explain detectors against captured and json_tree payloads', () => {
@@ -307,6 +370,41 @@ describe('explain detectors against captured and json_tree payloads', () => {
     expect(diag.range.startColumn).toBe(0);
     expect(diag.range.endColumn).toBe('source=accounts | stats values(state)'.length);
     expect(Number.isFinite(diag.range.endColumn)).toBe(true);
+  });
+
+  it('tags window and join findings with their operation and outcome', () => {
+    const [windowDiag] = operationNotPushedDetector(
+      capturedTreePlan(windowEventstatsTree),
+      NOT_PUSHED_CONFIG,
+      CTX
+    );
+    expect(windowDiag.hoverFacts?.operation).toBe('window');
+    expect(windowDiag.explainTarget).toEqual({
+      operation: 'window',
+      outcome: 'window:coordinator',
+      fields: [],
+    });
+
+    const [joinDiag] = operationNotPushedDetector(
+      capturedTreePlan(joinMergeJoinTree),
+      NOT_PUSHED_CONFIG,
+      CTX
+    );
+    expect(joinDiag.hoverFacts?.operation).toBe('join');
+    expect(joinDiag.explainTarget?.outcome).toBe('join:coordinator');
+  });
+
+  it('FQCN canary: live json_tree rel names are fully-qualified Java class names', () => {
+    const relOps = (capturedTreePlan(windowEventstatsTree).physicalTree?.rels ?? []).map((rel) =>
+      String(rel.relOp)
+    );
+    expect(relOps).toContain('org.apache.calcite.adapter.enumerable.EnumerableWindow');
+    expect(relOps).toContain(
+      'org.opensearch.sql.opensearch.storage.scan.CalciteEnumerableIndexScan'
+    );
+    // Nothing in a live payload is a bare short name; the detector must match
+    // by anchored suffix, never by exact rel name or a startsWith test.
+    expect(relOps.every((relOp) => relOp.includes('.'))).toBe(true);
   });
 
   it('tags each finding with hoverFacts.operation and an explainTarget', () => {

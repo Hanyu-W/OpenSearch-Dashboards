@@ -178,5 +178,11 @@ export function buildExplainProbeSet(
       return aggregationProbeSet(query, candidates);
     case 'sort':
       return sortProbeSet(query, candidates);
+    // Window and join candidates are stage-granular; there is no smaller
+    // treatment to isolate, so probing fails closed and attribution relies on
+    // the unique-candidate path only.
+    case 'window':
+    case 'join':
+      return undefined;
   }
 }

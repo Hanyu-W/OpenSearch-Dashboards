@@ -141,7 +141,69 @@ describe('explain attribution candidates', () => {
     const query =
       'source=accounts | where balance > [ source=other | where age > 1 | stats max(age) ]';
     const result = index(query);
-    expect(result.unsupportedOperations).toEqual(['filter', 'aggregation', 'sort']);
+    expect(result.unsupportedOperations).toEqual([
+      'filter',
+      'aggregation',
+      'sort',
+      'window',
+      'join',
+    ]);
+  });
+
+  it('builds a stage-level window candidate for a single eventstats', () => {
+    const query = 'source=logs | eventstats avg(bytes) as avg_b | head 5';
+    const result = index(query);
+    const windows = result.candidates.filter(({ operation }) => operation === 'window');
+
+    expect(windows).toHaveLength(1);
+    expect(windows[0].probeKind).toBe('window-term');
+    expect(windows[0].sourceText).toBe('eventstats avg(bytes) as avg_b');
+    // The focus IS the stage — window findings attribute to the whole command.
+    expect(windows[0].startOffset).toBe(windows[0].stageStartOffset);
+    expect(windows[0].endOffset).toBe(windows[0].stageEndOffset);
+    expect(result.unsupportedOperations).not.toContain('window');
+  });
+
+  it('marks window unsupported with zero or multiple window commands', () => {
+    expect(index('source=logs | head 5').unsupportedOperations).toContain('window');
+    expect(
+      index('source=logs | eventstats avg(bytes) as a | eventstats max(bytes) as m')
+        .unsupportedOperations
+    ).toContain('window');
+  });
+
+  it('builds a stage-level join candidate for a single join command', () => {
+    const query = 'source=logs | join left=l right=r on l.host=r.host other_logs | head 5';
+    const result = index(query);
+    const joins = result.candidates.filter(({ operation }) => operation === 'join');
+
+    expect(joins).toHaveLength(1);
+    expect(joins[0].probeKind).toBe('join-branch');
+    expect(result.unsupportedOperations).not.toContain('join');
+    // Branched pipelines still fail closed for the row-source operations.
+    expect(result.unsupportedOperations).toEqual(
+      expect.arrayContaining(['filter', 'aggregation', 'sort'])
+    );
+  });
+
+  it('builds a join candidate for a top-level lookup', () => {
+    const query = 'source=logs | lookup users uid';
+    const result = index(query);
+    const joins = result.candidates.filter(({ operation }) => operation === 'join');
+
+    expect(joins).toHaveLength(1);
+    expect(joins[0].sourceText).toBe('lookup users uid');
+    expect(result.unsupportedOperations).not.toContain('join');
+  });
+
+  it('marks join unsupported when a subquery could own the join evidence', () => {
+    const inSubquery =
+      'source=logs | where host in [ source=other | where status = 500 | fields host ]';
+    expect(index(inSubquery).unsupportedOperations).toContain('join');
+
+    const joinPlusSubquery =
+      'source=logs | join left=l right=r on l.host=r.host other | where host in [ source=x | fields host ]';
+    expect(index(joinPlusSubquery).unsupportedOperations).toContain('join');
   });
 
   it('serializes the single filter comparison span without parser nodes', () => {
@@ -157,6 +219,22 @@ describe('explain attribution candidates', () => {
 });
 
 describe('explain probe construction', () => {
+  it('returns no probe set for window and join candidates (stage-granular, fail closed)', () => {
+    const windowQuery = 'source=logs | eventstats avg(bytes) as avg_b | head 5';
+    const windowCandidates = index(windowQuery).candidates.filter(
+      ({ operation }) => operation === 'window'
+    );
+    expect(windowCandidates.length).toBeGreaterThan(0);
+    expect(buildExplainProbeSet(windowQuery, windowCandidates)).toBeUndefined();
+
+    const joinQuery = 'source=logs | join left=l right=r on l.host=r.host other | head 5';
+    const joinCandidates = index(joinQuery).candidates.filter(
+      ({ operation }) => operation === 'join'
+    );
+    expect(joinCandidates.length).toBeGreaterThan(0);
+    expect(buildExplainProbeSet(joinQuery, joinCandidates)).toBeUndefined();
+  });
+
   it('neutralizes all filters and restores exactly one source predicate', () => {
     const query = 'source=logs | where bytes > 1 | where bytes - 1000 > 5000';
     const candidates = index(query).candidates.filter(({ operation }) => operation === 'filter');

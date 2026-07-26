@@ -58,7 +58,12 @@ const OPERATION_COMMANDS: Record<ExplainOperation, string[]> = {
   filter: ['whereCommand'],
   aggregation: ['statsCommand'],
   sort: ['sortCommand'],
+  window: ['eventstatsCommand', 'streamstatsCommand', 'trendlineCommand'],
+  join: ['joinCommand', 'lookupCommand'],
 };
+
+const WINDOW_COMMANDS = new Set(OPERATION_COMMANDS.window);
+const JOIN_COMMANDS = new Set(OPERATION_COMMANDS.join);
 
 const BRANCHED_COMMANDS = new Set([
   'joinCommand',
@@ -462,9 +467,46 @@ export function buildExplainAttributionSnapshot(
     unsupportedOperations.add('sort');
   }
 
+  // Window: exactly one window-family command, on the outer pipeline. `top`/
+  // `rare` also compile to window rels (over an unpushed aggregation), so with
+  // zero or several window commands the plan's window evidence has no single
+  // owner and must fail closed.
+  const windowStages = allStages.filter((stage) => WINDOW_COMMANDS.has(stage.command));
+  if (windowStages.length !== 1 || isInside(windowStages[0].node, alternateSubtrees)) {
+    unsupportedOperations.add('window');
+  }
+
+  // Join: exactly one join-family command, and no other alternate-source
+  // construct. `in`/`exists` subqueries and bracketed right sides compile to
+  // join rels with no attributable command, so any subtree root that is not the
+  // join-family stage itself makes the plan's join evidence ambiguous. (A
+  // top-level `lookup` is its own alternate-source root — that one is exactly
+  // the command a join finding attributes to, so it does not disqualify.)
+  const joinFamilyStages = allStages.filter((stage) => JOIN_COMMANDS.has(stage.command));
+  const joinStageNodes = new Set<ParserRuleContext>(joinFamilyStages.map((stage) => stage.node));
+  const hasForeignAltRoot = [...alternateSubtrees].some((root) => !joinStageNodes.has(root));
+  const joinParent =
+    joinFamilyStages.length === 1
+      ? (joinFamilyStages[0].node.parent as ParserRuleContext | null)
+      : null;
+  if (
+    joinFamilyStages.length !== 1 ||
+    hasForeignAltRoot ||
+    (!!joinParent && isInside(joinParent, alternateSubtrees))
+  ) {
+    unsupportedOperations.add('join');
+  }
+
+  // Walk from the parent, not the stage node itself: a top-level `lookup` is
+  // its own alternate-source root, but it is exactly the command a join finding
+  // attributes to, so its presence alone must not mark `join` unsupported. Only
+  // commands *nested inside* another alternate-source subtree are ambiguous.
   const alternateOperationCommands = new Set(
     allStages
-      .filter((stage) => isInside(stage.node, alternateSubtrees))
+      .filter((stage) => {
+        const parent = stage.node.parent as ParserRuleContext | null;
+        return !!parent && isInside(parent, alternateSubtrees);
+      })
       .map((stage) => stage.command)
   );
   for (const operation of Object.keys(OPERATION_COMMANDS) as ExplainOperation[]) {
@@ -574,7 +616,72 @@ export function buildExplainAttributionSnapshot(
           )
         )
       );
+      continue;
     }
+
+    // Window (eventstats/streamstats/trendline) and join commands attribute at
+    // stage granularity: the whole command is the operation the plan reports as
+    // an EnumerableWindow / Enumerable*Join rel, so the focus is the stage node
+    // itself. No probe set exists for these kinds (probes fail closed).
+    if (WINDOW_COMMANDS.has(stage.command)) {
+      candidates.push(
+        buildCandidate(
+          'window',
+          'window-term',
+          stage,
+          stage.node,
+          mapper,
+          userMapper,
+          query,
+          prefixLength,
+          pipelinePipeOffsets
+        )
+      );
+      continue;
+    }
+
+    if (JOIN_COMMANDS.has(stage.command)) {
+      candidates.push(
+        buildCandidate(
+          'join',
+          'join-branch',
+          stage,
+          stage.node,
+          mapper,
+          userMapper,
+          query,
+          prefixLength,
+          pipelinePipeOffsets
+        )
+      );
+    }
+  }
+
+  // A top-level `lookup` is excluded from `outerStages` (its node is itself an
+  // alternate-source root), yet it is exactly the command a join finding should
+  // attribute to. Recover it here: a lookup stage counts as outer when no
+  // *proper ancestor* is an alternate-source root.
+  for (const stage of allStages) {
+    if (stage.command !== 'lookupCommand') {
+      continue;
+    }
+    const parent = stage.node.parent as ParserRuleContext | null;
+    if (parent && isInside(parent, alternateSubtrees)) {
+      continue;
+    }
+    candidates.push(
+      buildCandidate(
+        'join',
+        'join-branch',
+        stage,
+        stage.node,
+        mapper,
+        userMapper,
+        query,
+        prefixLength,
+        pipelinePipeOffsets
+      )
+    );
   }
 
   candidates.sort((left, right) => left.startOffset - right.startOffset);
@@ -584,8 +691,8 @@ export function buildExplainAttributionSnapshot(
     candidates: candidates.map((item) =>
       snapshotCandidate(item, mapper, userMapper, prefixLength, query.length, ruleNameToIndex)
     ),
-    unsupportedOperations: (['filter', 'aggregation', 'sort'] as ExplainOperation[]).filter(
-      (operation) => unsupportedOperations.has(operation)
-    ),
+    unsupportedOperations: (
+      ['filter', 'aggregation', 'sort', 'window', 'join'] as ExplainOperation[]
+    ).filter((operation) => unsupportedOperations.has(operation)),
   };
 }

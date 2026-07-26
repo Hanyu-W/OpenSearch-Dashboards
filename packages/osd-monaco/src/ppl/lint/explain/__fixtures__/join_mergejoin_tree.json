@@ -1,0 +1,461 @@
+{
+  "calcite": {
+    "logical": {
+      "rels": [
+        {
+          "id": "0",
+          "relOp": "org.opensearch.sql.opensearch.storage.scan.CalciteLogicalIndexScan",
+          "table": [
+            "OpenSearch",
+            "accounts"
+          ],
+          "inputs": []
+        },
+        {
+          "id": "1",
+          "relOp": "LogicalProject",
+          "fields": [
+            "account_number",
+            "firstname",
+            "address",
+            "balance",
+            "gender",
+            "city",
+            "employer",
+            "state",
+            "age",
+            "email",
+            "lastname"
+          ],
+          "exprs": [
+            {
+              "input": 0,
+              "name": "$0"
+            },
+            {
+              "input": 1,
+              "name": "$1"
+            },
+            {
+              "input": 2,
+              "name": "$2"
+            },
+            {
+              "input": 3,
+              "name": "$3"
+            },
+            {
+              "input": 4,
+              "name": "$4"
+            },
+            {
+              "input": 5,
+              "name": "$5"
+            },
+            {
+              "input": 6,
+              "name": "$6"
+            },
+            {
+              "input": 7,
+              "name": "$7"
+            },
+            {
+              "input": 8,
+              "name": "$8"
+            },
+            {
+              "input": 9,
+              "name": "$9"
+            },
+            {
+              "input": 10,
+              "name": "$10"
+            }
+          ]
+        },
+        {
+          "id": "2",
+          "relOp": "org.opensearch.sql.opensearch.storage.scan.CalciteLogicalIndexScan",
+          "table": [
+            "OpenSearch",
+            "accounts"
+          ],
+          "inputs": []
+        },
+        {
+          "id": "3",
+          "relOp": "LogicalProject",
+          "fields": [
+            "account_number",
+            "firstname",
+            "address",
+            "balance",
+            "gender",
+            "city",
+            "employer",
+            "state",
+            "age",
+            "email",
+            "lastname"
+          ],
+          "exprs": [
+            {
+              "input": 0,
+              "name": "$0"
+            },
+            {
+              "input": 1,
+              "name": "$1"
+            },
+            {
+              "input": 2,
+              "name": "$2"
+            },
+            {
+              "input": 3,
+              "name": "$3"
+            },
+            {
+              "input": 4,
+              "name": "$4"
+            },
+            {
+              "input": 5,
+              "name": "$5"
+            },
+            {
+              "input": 6,
+              "name": "$6"
+            },
+            {
+              "input": 7,
+              "name": "$7"
+            },
+            {
+              "input": 8,
+              "name": "$8"
+            },
+            {
+              "input": 9,
+              "name": "$9"
+            },
+            {
+              "input": 10,
+              "name": "$10"
+            }
+          ]
+        },
+        {
+          "id": "4",
+          "relOp": "org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit",
+          "collation": [],
+          "fetch": {
+            "literal": 50000,
+            "type": {
+              "type": "INTEGER",
+              "nullable": false
+            }
+          },
+          "type": "JOIN_SUBSEARCH_MAXOUT"
+        },
+        {
+          "id": "5",
+          "relOp": "LogicalJoin",
+          "condition": {
+            "op": {
+              "name": "=",
+              "kind": "EQUALS",
+              "syntax": "BINARY"
+            },
+            "operands": [
+              {
+                "input": 7,
+                "name": "$7"
+              },
+              {
+                "input": 18,
+                "name": "$18"
+              }
+            ]
+          },
+          "joinType": "inner",
+          "inputs": [
+            "1",
+            "4"
+          ]
+        },
+        {
+          "id": "6",
+          "relOp": "LogicalProject",
+          "fields": [
+            "account_number",
+            "firstname",
+            "address",
+            "balance",
+            "gender",
+            "city",
+            "employer",
+            "state",
+            "age",
+            "email",
+            "lastname",
+            "r.account_number",
+            "r.firstname",
+            "r.address",
+            "r.balance",
+            "r.gender",
+            "r.city",
+            "r.employer",
+            "r.state",
+            "r.age",
+            "r.email",
+            "r.lastname"
+          ],
+          "exprs": [
+            {
+              "input": 0,
+              "name": "$0"
+            },
+            {
+              "input": 1,
+              "name": "$1"
+            },
+            {
+              "input": 2,
+              "name": "$2"
+            },
+            {
+              "input": 3,
+              "name": "$3"
+            },
+            {
+              "input": 4,
+              "name": "$4"
+            },
+            {
+              "input": 5,
+              "name": "$5"
+            },
+            {
+              "input": 6,
+              "name": "$6"
+            },
+            {
+              "input": 7,
+              "name": "$7"
+            },
+            {
+              "input": 8,
+              "name": "$8"
+            },
+            {
+              "input": 9,
+              "name": "$9"
+            },
+            {
+              "input": 10,
+              "name": "$10"
+            },
+            {
+              "input": 11,
+              "name": "$11"
+            },
+            {
+              "input": 12,
+              "name": "$12"
+            },
+            {
+              "input": 13,
+              "name": "$13"
+            },
+            {
+              "input": 14,
+              "name": "$14"
+            },
+            {
+              "input": 15,
+              "name": "$15"
+            },
+            {
+              "input": 16,
+              "name": "$16"
+            },
+            {
+              "input": 17,
+              "name": "$17"
+            },
+            {
+              "input": 18,
+              "name": "$18"
+            },
+            {
+              "input": 19,
+              "name": "$19"
+            },
+            {
+              "input": 20,
+              "name": "$20"
+            },
+            {
+              "input": 21,
+              "name": "$21"
+            }
+          ]
+        },
+        {
+          "id": "7",
+          "relOp": "LogicalSort",
+          "collation": [],
+          "fetch": {
+            "literal": 5,
+            "type": {
+              "type": "INTEGER",
+              "nullable": false
+            }
+          }
+        },
+        {
+          "id": "8",
+          "relOp": "org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit",
+          "collation": [],
+          "fetch": {
+            "literal": 10000,
+            "type": {
+              "type": "INTEGER",
+              "nullable": false
+            }
+          },
+          "type": "QUERY_SIZE_LIMIT"
+        }
+      ]
+    },
+    "physical": {
+      "rels": [
+        {
+          "id": "0",
+          "relOp": "org.opensearch.sql.opensearch.storage.scan.CalciteEnumerableIndexScan",
+          "table": [
+            "OpenSearch",
+            "accounts"
+          ],
+          "PushDownContext": "[PROJECT->[account_number, firstname, address, balance, gender, city, employer, state, age, email, lastname], SORT->[{\n  \"state.keyword\" : {\n    \"order\" : \"asc\",\n    \"missing\" : \"_last\"\n  }\n}]]",
+          "sourceBuilder": {
+            "from": 0,
+            "timeout": "1m",
+            "_source": {
+              "includes": [
+                "account_number",
+                "firstname",
+                "address",
+                "balance",
+                "gender",
+                "city",
+                "employer",
+                "state",
+                "age",
+                "email",
+                "lastname"
+              ]
+            },
+            "sort": [
+              {
+                "state.keyword": {
+                  "order": "asc",
+                  "missing": "_last"
+                }
+              }
+            ]
+          },
+          "inputs": []
+        },
+        {
+          "id": "1",
+          "relOp": "org.opensearch.sql.opensearch.storage.scan.CalciteEnumerableIndexScan",
+          "table": [
+            "OpenSearch",
+            "accounts"
+          ],
+          "PushDownContext": "[PROJECT->[account_number, firstname, address, balance, gender, city, employer, state, age, email, lastname], LIMIT->50000, SORT->[{\n  \"state.keyword\" : {\n    \"order\" : \"asc\",\n    \"missing\" : \"_last\"\n  }\n}]]",
+          "sourceBuilder": {
+            "from": 0,
+            "size": 50000,
+            "timeout": "1m",
+            "_source": {
+              "includes": [
+                "account_number",
+                "firstname",
+                "address",
+                "balance",
+                "gender",
+                "city",
+                "employer",
+                "state",
+                "age",
+                "email",
+                "lastname"
+              ]
+            },
+            "sort": [
+              {
+                "state.keyword": {
+                  "order": "asc",
+                  "missing": "_last"
+                }
+              }
+            ]
+          },
+          "inputs": []
+        },
+        {
+          "id": "2",
+          "relOp": "org.apache.calcite.adapter.enumerable.EnumerableMergeJoin",
+          "condition": {
+            "op": {
+              "name": "=",
+              "kind": "EQUALS",
+              "syntax": "BINARY"
+            },
+            "operands": [
+              {
+                "input": 7,
+                "name": "$7"
+              },
+              {
+                "input": 18,
+                "name": "$18"
+              }
+            ]
+          },
+          "joinType": "inner",
+          "inputs": [
+            "0",
+            "1"
+          ]
+        },
+        {
+          "id": "3",
+          "relOp": "org.apache.calcite.adapter.enumerable.EnumerableLimit",
+          "fetch": {
+            "literal": 5,
+            "type": {
+              "type": "INTEGER",
+              "nullable": false
+            }
+          }
+        },
+        {
+          "id": "4",
+          "relOp": "org.apache.calcite.adapter.enumerable.EnumerableLimit",
+          "fetch": {
+            "literal": 10000,
+            "type": {
+              "type": "INTEGER",
+              "nullable": false
+            }
+          }
+        }
+      ]
+    }
+  }
+}

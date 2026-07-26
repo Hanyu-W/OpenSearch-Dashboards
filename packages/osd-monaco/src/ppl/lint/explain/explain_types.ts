@@ -6,11 +6,17 @@
 import { Diagnostic } from '../diagnostic';
 import { CatalogEntry } from '../types';
 
-export type ExplainOperation = 'filter' | 'aggregation' | 'sort';
+export type ExplainOperation = 'filter' | 'aggregation' | 'sort' | 'window' | 'join';
 
 /**
  * A normalized execution outcome inferred from an explain plan. These values
  * are internal to Dashboards; they are never sent to or read from OpenSearch.
+ *
+ * Window and join operations have no `:native`/`:script` variants: the engine
+ * either pushes them invisibly (no rel above the scan) or runs them in the
+ * coordinator — there is no script-pushdown form for them. `in`/`exists`
+ * subqueries surface as join rels too (semi HashJoin / NestedLoopJoin), so
+ * `join:coordinator` covers them; there is no separate subquery operation.
  */
 export type ExplainOutcome =
   | 'filter:native'
@@ -20,7 +26,9 @@ export type ExplainOutcome =
   | 'aggregation:coordinator'
   | 'sort:native'
   | 'sort:script'
-  | 'sort:coordinator';
+  | 'sort:coordinator'
+  | 'window:coordinator'
+  | 'join:coordinator';
 
 export interface ExplainOutcomeEvidence {
   outcome: ExplainOutcome;

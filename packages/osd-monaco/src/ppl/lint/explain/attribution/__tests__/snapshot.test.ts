@@ -45,7 +45,10 @@ describe('Explain attribution snapshot', () => {
     const value = snapshot(query);
 
     expect(
-      validateExplainAttributionSnapshot({ ...value, protocolVersion: 2 }, query)
+      validateExplainAttributionSnapshot(
+        { ...value, protocolVersion: value.protocolVersion + 1 },
+        query
+      )
     ).toBeUndefined();
     expect(validateExplainAttributionSnapshot(value, `${query} `)).toBeUndefined();
     expect(

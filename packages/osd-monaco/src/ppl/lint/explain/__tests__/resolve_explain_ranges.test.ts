@@ -4,7 +4,12 @@
  */
 
 import { CharStream, CommonTokenStream, ParserRuleContext } from 'antlr4ng';
-import { OpenSearchPPLLexer, OpenSearchPPLParser } from '@osd/antlr-grammar';
+import {
+  OpenSearchPPLLexer,
+  OpenSearchPPLParser,
+  SimplifiedOpenSearchPPLLexer,
+  SimplifiedOpenSearchPPLParser,
+} from '@osd/antlr-grammar';
 import { resolveExplainRanges } from '../resolve_explain_ranges';
 import { createRuntimeRuleNameToIndex } from '../../rule_index';
 import { Diagnostic } from '../../diagnostic';
@@ -28,8 +33,35 @@ function buildTree(query: string): ParserRuleContext {
   return parser.root();
 }
 
+// The window/join commands only exist in the runtime (simplified) grammar —
+// the compiled grammar above has no eventstatsCommand/joinCommand rules, so
+// those tests parse with the same grammar the runtime lint pass uses.
+const runtimeRuleNameToIndex = createRuntimeRuleNameToIndex(
+  new Map(SimplifiedOpenSearchPPLParser.ruleNames.map((name, idx) => [name, idx]))
+);
+
+function buildRuntimeTree(query: string): ParserRuleContext {
+  const lexer = new SimplifiedOpenSearchPPLLexer(CharStream.fromString(query));
+  lexer.removeErrorListeners();
+  const parser = new SimplifiedOpenSearchPPLParser(new CommonTokenStream(lexer));
+  parser.removeErrorListeners();
+  return parser.root();
+}
+
+function resolveRuntime(diagnostics: Diagnostic[], query: string): Diagnostic[] {
+  return resolveExplainRanges(diagnostics, {
+    query,
+    snapshot: buildExplainAttributionSnapshot(
+      buildRuntimeTree(query),
+      runtimeRuleNameToIndex,
+      query,
+      {}
+    ),
+  });
+}
+
 function explainDiag(
-  operation: 'filter' | 'aggregation' | 'sort',
+  operation: 'filter' | 'aggregation' | 'sort' | 'window' | 'join',
   query: string,
   fields: string[] = []
 ): Diagnostic {
@@ -37,6 +69,8 @@ function explainDiag(
     filter: 'filter:script',
     aggregation: 'aggregation:coordinator',
     sort: 'sort:script',
+    window: 'window:coordinator',
+    join: 'join:coordinator',
   };
   return {
     ruleId: 'operation-not-pushed',
@@ -95,6 +129,32 @@ describe('resolveExplainRanges', () => {
 
     expect(resolved.range.startColumn).toBeGreaterThan(0);
     expect(slice(query, resolved)).toContain('avg(balance)');
+  });
+
+  it('narrows a window finding to the eventstats command', () => {
+    const query = 'source=accounts | eventstats avg(balance) as avg_b | head 5';
+    const [resolved] = resolveRuntime([explainDiag('window', query)], query);
+
+    expect(resolved).toBeDefined();
+    expect(resolved.attribution?.confidence).toBe('unique-source');
+    expect(slice(query, resolved)).toBe('eventstats avg(balance) as avg_b');
+    // Window findings never get the filter quick-fix.
+    expect(resolved.fix).toBeUndefined();
+  });
+
+  it('narrows a join finding to the join command', () => {
+    const query = 'source=accounts | join left=l right=r on l.state=r.state other | head 5';
+    const [resolved] = resolveRuntime([explainDiag('join', query)], query);
+
+    expect(resolved).toBeDefined();
+    expect(slice(query, resolved)).toContain('join left=l right=r on l.state=r.state other');
+    expect(slice(query, resolved)).not.toContain('source=accounts');
+  });
+
+  it('suppresses a join finding when a subquery could own the join evidence', () => {
+    const query =
+      'source=accounts | where state in [ source=other | where age > 1 | fields state ]';
+    expect(resolveRuntime([explainDiag('join', query)], query)).toEqual([]);
   });
 
   it('suppresses a finding when several matching commands cannot be disambiguated', () => {

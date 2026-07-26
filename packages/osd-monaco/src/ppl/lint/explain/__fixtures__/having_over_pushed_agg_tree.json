@@ -1,0 +1,262 @@
+{
+  "calcite": {
+    "logical": {
+      "rels": [
+        {
+          "id": "0",
+          "relOp": "org.opensearch.sql.opensearch.storage.scan.CalciteLogicalIndexScan",
+          "table": [
+            "OpenSearch",
+            "accounts"
+          ],
+          "inputs": []
+        },
+        {
+          "id": "1",
+          "relOp": "LogicalProject",
+          "fields": [
+            "state"
+          ],
+          "exprs": [
+            {
+              "input": 7,
+              "name": "$7"
+            }
+          ]
+        },
+        {
+          "id": "2",
+          "relOp": "LogicalAggregate",
+          "group": [
+            0
+          ],
+          "aggs": [
+            {
+              "agg": {
+                "name": "COUNT",
+                "kind": "COUNT",
+                "syntax": "FUNCTION_STAR"
+              },
+              "type": {
+                "type": "BIGINT",
+                "nullable": false
+              },
+              "distinct": false,
+              "operands": [],
+              "name": "cnt"
+            }
+          ]
+        },
+        {
+          "id": "3",
+          "relOp": "LogicalProject",
+          "fields": [
+            "cnt",
+            "state"
+          ],
+          "exprs": [
+            {
+              "input": 1,
+              "name": "$1"
+            },
+            {
+              "input": 0,
+              "name": "$0"
+            }
+          ]
+        },
+        {
+          "id": "4",
+          "relOp": "LogicalFilter",
+          "condition": {
+            "op": {
+              "name": ">",
+              "kind": "GREATER_THAN",
+              "syntax": "BINARY"
+            },
+            "operands": [
+              {
+                "input": 0,
+                "name": "$0"
+              },
+              {
+                "literal": 10,
+                "type": {
+                  "type": "INTEGER",
+                  "nullable": false
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "5",
+          "relOp": "org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit",
+          "collation": [],
+          "fetch": {
+            "literal": 10000,
+            "type": {
+              "type": "INTEGER",
+              "nullable": false
+            }
+          },
+          "type": "QUERY_SIZE_LIMIT"
+        }
+      ]
+    },
+    "physical": {
+      "rels": [
+        {
+          "id": "0",
+          "relOp": "org.opensearch.sql.opensearch.storage.scan.CalciteEnumerableIndexScan",
+          "table": [
+            "OpenSearch",
+            "accounts"
+          ],
+          "PushDownContext": "[AGGREGATION->rel#46552:LogicalAggregate.NONE.[](input=RelSubset#46551,group={0},cnt=COUNT()), PROJECT->[cnt, state]]",
+          "sourceBuilder": {
+            "from": 0,
+            "size": 0,
+            "timeout": "1m",
+            "aggregations": {
+              "composite_buckets": {
+                "composite": {
+                  "size": 10000,
+                  "sources": [
+                    {
+                      "state": {
+                        "terms": {
+                          "field": "state.keyword",
+                          "missing_bucket": true,
+                          "missing_order": "first",
+                          "order": "asc"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "inputs": []
+        },
+        {
+          "id": "1",
+          "relOp": "org.apache.calcite.adapter.enumerable.EnumerableCalc",
+          "exprs": [
+            {
+              "input": 0,
+              "name": "$0"
+            },
+            {
+              "input": 1,
+              "name": "$1"
+            },
+            {
+              "literal": 10,
+              "type": {
+                "type": "INTEGER",
+                "nullable": false
+              }
+            },
+            {
+              "op": {
+                "name": ">",
+                "kind": "GREATER_THAN",
+                "syntax": "BINARY"
+              },
+              "operands": [
+                {
+                  "input": 0,
+                  "name": "$t0",
+                  "type": {
+                    "type": "BIGINT",
+                    "nullable": false
+                  }
+                },
+                {
+                  "input": 2,
+                  "name": "$t2",
+                  "type": {
+                    "type": "INTEGER",
+                    "nullable": false
+                  }
+                }
+              ]
+            }
+          ],
+          "projects": [
+            {
+              "input": 0,
+              "name": "$t0",
+              "type": {
+                "type": "BIGINT",
+                "nullable": false
+              }
+            },
+            {
+              "input": 1,
+              "name": "$t1",
+              "type": {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1
+              }
+            }
+          ],
+          "condition": {
+            "input": 3,
+            "name": "$t3",
+            "type": {
+              "type": "BOOLEAN",
+              "nullable": false
+            }
+          },
+          "inputRowType": {
+            "fields": [
+              {
+                "type": "BIGINT",
+                "nullable": false,
+                "name": "cnt"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "state"
+              }
+            ],
+            "nullable": false
+          },
+          "outputRowType": {
+            "fields": [
+              {
+                "type": "BIGINT",
+                "nullable": false,
+                "name": "cnt"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "state"
+              }
+            ],
+            "nullable": false
+          }
+        },
+        {
+          "id": "2",
+          "relOp": "org.apache.calcite.adapter.enumerable.EnumerableLimit",
+          "fetch": {
+            "literal": 10000,
+            "type": {
+              "type": "INTEGER",
+              "nullable": false
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -4,7 +4,37 @@
  */
 
 import { detectExplainOutcomes } from '../explain_outcomes';
-import { ExplainPlan } from '../explain_types';
+import { ExplainPlan, ExplainRelTree } from '../explain_types';
+
+import havingOverPushedAggTree from '../__fixtures__/having_over_pushed_agg_tree.json';
+import joinMergeJoinLegacy from '../__fixtures__/join_mergejoin_legacy.json';
+import joinMergeJoinTree from '../__fixtures__/join_mergejoin_tree.json';
+import subqueryInSemijoinTree from '../__fixtures__/subquery_in_semijoin_tree.json';
+import topOverPushedAggLegacy from '../__fixtures__/top_over_pushed_agg_legacy.json';
+import topOverPushedAggTree from '../__fixtures__/top_over_pushed_agg_tree.json';
+import windowEventstatsLegacy from '../__fixtures__/window_eventstats_legacy.json';
+import windowEventstatsTree from '../__fixtures__/window_eventstats_tree.json';
+
+/**
+ * Captured live from `POST /_plugins/_ppl/_explain?format=json_tree` on a
+ * 3.8.0-SNAPSHOT engine — rel names are fully-qualified Java class names
+ * (`org.apache.calcite.adapter.enumerable.EnumerableWindow`), unlike the
+ * hand-written short-name fixtures elsewhere in this suite.
+ */
+function capturedTreePlan(payload: { calcite: { physical: unknown } }): ExplainPlan {
+  return {
+    isCalcite: true,
+    physicalTree: payload.calcite.physical as ExplainRelTree,
+  };
+}
+
+/** Captured live from a 3.6 engine, which only emits formatted string plans. */
+function capturedLegacyPlan(payload: { calcite: { physical: unknown } }): ExplainPlan {
+  return {
+    isCalcite: true,
+    physicalText: String(payload.calcite.physical),
+  };
+}
 
 describe('detectExplainOutcomes', () => {
   it('keeps tree evidence relation-local so a native filter cannot hide a residual filter', () => {
@@ -158,5 +188,95 @@ describe('detectExplainOutcomes', () => {
     expect(detectExplainOutcomes(sortedAggregate).map(({ outcome }) => outcome)).toContain(
       'aggregation:coordinator'
     );
+  });
+
+  it('reports a coordinator window from a live FQCN tree plan and its 3.6 legacy twin', () => {
+    // source=... | eventstats avg(...) | head 5
+    const treeOutcomes = detectExplainOutcomes(capturedTreePlan(windowEventstatsTree)).map(
+      ({ outcome }) => outcome
+    );
+    const legacyOutcomes = detectExplainOutcomes(capturedLegacyPlan(windowEventstatsLegacy)).map(
+      ({ outcome }) => outcome
+    );
+
+    expect(treeOutcomes).toContain('window:coordinator');
+    expect(legacyOutcomes).toContain('window:coordinator');
+    // The scan pushed no aggregation, so nothing suppresses the window outcome,
+    // and the projection-only Calc above the window must not read as a filter.
+    expect(treeOutcomes).not.toContain('filter:coordinator');
+  });
+
+  it('reports a coordinator join for join and in-subquery plans without misreading sort/filter', () => {
+    // `EnumerableMergeJoin` / semi `EnumerableHashJoin`; subqueries have no
+    // Correlate rel on the live engine — they are join rels too.
+    const joinTree = detectExplainOutcomes(capturedTreePlan(joinMergeJoinTree)).map(
+      ({ outcome }) => outcome
+    );
+    const joinLegacy = detectExplainOutcomes(capturedLegacyPlan(joinMergeJoinLegacy)).map(
+      ({ outcome }) => outcome
+    );
+    const semiJoinTree = detectExplainOutcomes(capturedTreePlan(subqueryInSemijoinTree)).map(
+      ({ outcome }) => outcome
+    );
+
+    expect(joinTree).toContain('join:coordinator');
+    expect(joinLegacy).toContain('join:coordinator');
+    expect(semiJoinTree).toContain('join:coordinator');
+    // A join condition is not a residual filter, and a MergeJoin is not a sort.
+    expect(joinTree).not.toContain('filter:coordinator');
+    expect(joinTree).not.toContain('sort:coordinator');
+  });
+
+  it('suppresses bucket-space outcomes above a pushed single-scan aggregation', () => {
+    // `top 3 state` compiles to Window+Calc($condition) OVER a pushed
+    // AGGREGATION->: those rels process buckets, not rows, so neither a window
+    // nor a filter coordinator outcome may fire. Same for a post-stats `where`
+    // (having): the filter runs over buckets.
+    const topTree = detectExplainOutcomes(capturedTreePlan(topOverPushedAggTree)).map(
+      ({ outcome }) => outcome
+    );
+    const topLegacy = detectExplainOutcomes(capturedLegacyPlan(topOverPushedAggLegacy)).map(
+      ({ outcome }) => outcome
+    );
+    const havingTree = detectExplainOutcomes(capturedTreePlan(havingOverPushedAggTree)).map(
+      ({ outcome }) => outcome
+    );
+
+    for (const outcomes of [topTree, topLegacy, havingTree]) {
+      expect(outcomes).toContain('aggregation:native');
+      expect(outcomes).not.toContain('window:coordinator');
+      expect(outcomes).not.toContain('filter:coordinator');
+      expect(outcomes).not.toContain('sort:coordinator');
+    }
+  });
+
+  it('does not suppress row-space outcomes: multi-scan joins and unpushed aggregations keep firing', () => {
+    // Two scans (join): even though each scan pushed work, the join and any
+    // residual rels above it are row-space and must be reported.
+    const joinOutcomes = detectExplainOutcomes(capturedTreePlan(joinMergeJoinTree)).map(
+      ({ outcome }) => outcome
+    );
+    expect(joinOutcomes).toContain('join:coordinator');
+
+    // Single scan but the aggregation itself stayed in the coordinator: rels
+    // above it are NOT bucket-space (the scan streams raw rows), so a window
+    // above an EnumerableAggregate keeps firing.
+    const coordinatorAggWithWindow: ExplainPlan = {
+      isCalcite: true,
+      physicalTree: {
+        rels: [
+          {
+            id: '0',
+            relOp: 'org.opensearch.sql.opensearch.storage.scan.CalciteEnumerableIndexScan',
+            PushDownContext: ['PROJECT->[name]'],
+          },
+          { id: '1', relOp: 'org.apache.calcite.adapter.enumerable.EnumerableAggregate' },
+          { id: '2', relOp: 'org.apache.calcite.adapter.enumerable.EnumerableWindow' },
+        ],
+      },
+    };
+    const outcomes = detectExplainOutcomes(coordinatorAggWithWindow).map(({ outcome }) => outcome);
+    expect(outcomes).toContain('aggregation:coordinator');
+    expect(outcomes).toContain('window:coordinator');
   });
 });

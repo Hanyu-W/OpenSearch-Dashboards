@@ -26,5 +26,5 @@ export interface HoverFacts {
    * explain-backed rules (operation-not-pushed / operation-pushed-as-script).
    * Lets the hover card name the clause rather than only the rule.
    */
-  operation?: 'filter' | 'aggregation' | 'sort';
+  operation?: 'filter' | 'aggregation' | 'sort' | 'window' | 'join';
 }

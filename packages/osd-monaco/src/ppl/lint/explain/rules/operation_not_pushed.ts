@@ -16,14 +16,18 @@ import { ExplainDetector, ExplainOutcome } from '../explain_types';
 interface NotPushedSignal {
   outcome: Extract<
     ExplainOutcome,
-    'filter:coordinator' | 'aggregation:coordinator' | 'sort:coordinator'
+    | 'filter:coordinator'
+    | 'aggregation:coordinator'
+    | 'sort:coordinator'
+    | 'window:coordinator'
+    | 'join:coordinator'
   >;
   /**
    * Which pipeline clause this signal is about. Rides the diagnostic as
    * `hoverFacts.operation` and `explainTarget.operation` so the hover card can
    * name the clause and the range resolver can find the offending command.
    */
-  operation: 'filter' | 'aggregation' | 'sort';
+  operation: 'filter' | 'aggregation' | 'sort' | 'window' | 'join';
   /**
    * Context-specific message. Leads with the user-visible consequence and names
    * the operation; the engine-internal "why" (coordinator fallback) lives in the
@@ -54,6 +58,18 @@ const SIGNALS: NotPushedSignal[] = [
     outcome: 'sort:coordinator',
     operation: 'sort',
     message: 'This sort may be slow. Sort by an existing field when possible.',
+  },
+  {
+    outcome: 'window:coordinator',
+    operation: 'window',
+    message:
+      'This calculation processes every matching row outside the index, so it may be slow on large amounts of data.',
+  },
+  {
+    outcome: 'join:coordinator',
+    operation: 'join',
+    message:
+      'This join combines rows outside the index, so it may be slow on large amounts of data. Filter each side first when possible.',
   },
 ];
 

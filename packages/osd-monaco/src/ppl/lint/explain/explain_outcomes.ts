@@ -19,9 +19,55 @@ import {
 } from './explain_tree_utils';
 
 /** Increment when outcome interpretation changes so probe cache keys remain sound. */
-export const EXPLAIN_OUTCOME_DETECTOR_VERSION = '2';
+export const EXPLAIN_OUTCOME_DETECTOR_VERSION = '3';
 
 const SCRIPT_DISCRIMINATOR = 'opensearch_compounded_script';
+
+/**
+ * Join rel suffixes. Anchored suffix matching keeps this correct for both the
+ * short rel names in older payloads (`EnumerableMergeJoin`) and the
+ * fully-qualified class names real `json_tree` responses carry
+ * (`org.apache.calcite.adapter.enumerable.EnumerableMergeJoin`). `in`/`exists`
+ * subqueries compile to join rels too (semi HashJoin / NestedLoopJoin), so this
+ * list covers them without a separate subquery operation.
+ */
+const JOIN_REL_SUFFIXES = ['MergeJoin', 'HashJoin', 'NestedLoopJoin'];
+
+/** Rel suffix for an OpenSearch index scan (short or fully-qualified name). */
+const SCAN_REL_SUFFIX = 'IndexScan';
+
+/**
+ * Coordinator outcomes that describe *bucket-space* work when the plan already
+ * pushed its aggregation: with a single scan whose PushDownContext carries
+ * `AGGREGATION->` (and no coordinator aggregate), every compute rel above the
+ * scan operates on aggregation buckets, not raw rows — `top`/`rare` compile to
+ * Window+Calc over the pushed aggregation, and a post-`stats` `where` is an
+ * unpushable having-filter. Their cost is bounded by bucket count, not index
+ * size, so reporting them as slow-path findings would be false positives.
+ */
+const BUCKET_SPACE_SUPPRESSED_OUTCOMES = new Set<ExplainOutcome>([
+  'filter:coordinator',
+  'sort:coordinator',
+  'window:coordinator',
+]);
+
+interface PlanScanSignals {
+  scanCount: number;
+  hasPushedAggregation: boolean;
+}
+
+function suppressBucketSpaceOutcomes(
+  evidence: ExplainOutcomeEvidence[],
+  signals: PlanScanSignals
+): ExplainOutcomeEvidence[] {
+  const hasCoordinatorAggregate = evidence.some(
+    ({ outcome }) => outcome === 'aggregation:coordinator'
+  );
+  if (signals.scanCount !== 1 || !signals.hasPushedAggregation || hasCoordinatorAggregate) {
+    return evidence;
+  }
+  return evidence.filter(({ outcome }) => !BUCKET_SPACE_SUPPRESSED_OUTCOMES.has(outcome));
+}
 
 function add(
   evidence: ExplainOutcomeEvidence[],
@@ -111,19 +157,38 @@ function addScopeOutcomes(
   if (relOp.endsWith('Sort') && !hasSort && !hasSortExpression) {
     add(evidence, seen, 'sort:coordinator', scope, format);
   }
+
+  // Window and join rels only ever appear above the scan; the engine has no
+  // push tag for them, so their presence alone means coordinator execution.
+  // (`EnumerableSortMergeJoin` ends with `MergeJoin`, not `Sort`, so the sort
+  // branch above cannot double-report a join.)
+  if (relOp.endsWith('Window')) {
+    add(evidence, seen, 'window:coordinator', scope, format);
+  }
+  if (JOIN_REL_SUFFIXES.some((suffix) => relOp.endsWith(suffix))) {
+    add(evidence, seen, 'join:coordinator', scope, format);
+  }
 }
 
 function detectTreeOutcomes(plan: ExplainPlan): ExplainOutcomeEvidence[] {
   const evidence: ExplainOutcomeEvidence[] = [];
   const seen = new Set<string>();
+  const scanSignals: PlanScanSignals = { scanCount: 0, hasPushedAggregation: false };
 
   getPhysicalRels(plan).forEach((rel, index) => {
+    const relOp = String(rel.relOp ?? '');
+    const pushDownText = getPushDownContext(rel);
+    if (relOp.endsWith(SCAN_REL_SUFFIX)) {
+      scanSignals.scanCount += 1;
+      scanSignals.hasPushedAggregation =
+        scanSignals.hasPushedAggregation || pushDownText.includes('AGGREGATION->');
+    }
     addScopeOutcomes(
       evidence,
       seen,
       {
-        relOp: String(rel.relOp ?? ''),
-        pushDownText: getPushDownContext(rel),
+        relOp,
+        pushDownText,
         scriptCarrierText: getSourceBuilder(rel),
         hasResidualCondition: isResidualFilterRel(rel),
         scope: relScope(rel, index),
@@ -132,7 +197,7 @@ function detectTreeOutcomes(plan: ExplainPlan): ExplainOutcomeEvidence[] {
     );
   });
 
-  return evidence;
+  return suppressBucketSpaceOutcomes(evidence, scanSignals);
 }
 
 /** The relation's operator name on one line of a formatted legacy plan. */
@@ -158,11 +223,17 @@ function detectLegacyOutcomes(plan: ExplainPlan): ExplainOutcomeEvidence[] {
 
   const evidence: ExplainOutcomeEvidence[] = [];
   const seen = new Set<string>();
+  const scanSignals: PlanScanSignals = { scanCount: 0, hasPushedAggregation: false };
 
   text.split('\n').forEach((line, index) => {
     const relOp = parseLegacyRelOp(line);
     if (!relOp) {
       return;
+    }
+    if (relOp.endsWith(SCAN_REL_SUFFIX)) {
+      scanSignals.scanCount += 1;
+      scanSignals.hasPushedAggregation =
+        scanSignals.hasPushedAggregation || line.includes('AGGREGATION->');
     }
     addScopeOutcomes(
       evidence,
@@ -178,7 +249,7 @@ function detectLegacyOutcomes(plan: ExplainPlan): ExplainOutcomeEvidence[] {
     );
   });
 
-  return evidence;
+  return suppressBucketSpaceOutcomes(evidence, scanSignals);
 }
 
 export function detectExplainOutcomes(plan: ExplainPlan): ExplainOutcomeEvidence[] {

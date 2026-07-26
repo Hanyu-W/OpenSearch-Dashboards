@@ -6,9 +6,10 @@
 import { DiagnosticRange, LintResult } from '../../diagnostic';
 import { ExplainOperation } from '../explain_types';
 
-export const EXPLAIN_ATTRIBUTION_SNAPSHOT_VERSION = 1 as const;
+export const EXPLAIN_ATTRIBUTION_SNAPSHOT_VERSION = 2 as const;
 
-export type ExplainProbeKind = 'filter-term' | 'aggregate-term' | 'sort-key';
+export type ExplainProbeKind =
+  'filter-term' | 'aggregate-term' | 'sort-key' | 'window-term' | 'join-branch';
 
 export interface ExplainAttributionCandidateSnapshot {
   id: string;
@@ -50,8 +51,14 @@ export interface CompiledPPLLintAnalysis {
   attribution?: ExplainAttributionSnapshot;
 }
 
-const OPERATIONS = new Set<ExplainOperation>(['filter', 'aggregation', 'sort']);
-const PROBE_KINDS = new Set<ExplainProbeKind>(['filter-term', 'aggregate-term', 'sort-key']);
+const OPERATIONS = new Set<ExplainOperation>(['filter', 'aggregation', 'sort', 'window', 'join']);
+const PROBE_KINDS = new Set<ExplainProbeKind>([
+  'filter-term',
+  'aggregate-term',
+  'sort-key',
+  'window-term',
+  'join-branch',
+]);
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {

@@ -1,0 +1,699 @@
+{
+  "calcite": {
+    "logical": {
+      "rels": [
+        {
+          "id": "0",
+          "relOp": "org.opensearch.sql.opensearch.storage.scan.CalciteLogicalIndexScan",
+          "table": [
+            "OpenSearch",
+            "accounts"
+          ],
+          "inputs": []
+        },
+        {
+          "id": "1",
+          "relOp": "LogicalProject",
+          "fields": [
+            "account_number",
+            "firstname",
+            "address",
+            "balance",
+            "gender",
+            "city",
+            "employer",
+            "state",
+            "age",
+            "email",
+            "lastname",
+            "_id",
+            "_index",
+            "_score",
+            "_maxscore",
+            "_sort",
+            "_routing",
+            "a"
+          ],
+          "exprs": [
+            {
+              "input": 0,
+              "name": "$0"
+            },
+            {
+              "input": 1,
+              "name": "$1"
+            },
+            {
+              "input": 2,
+              "name": "$2"
+            },
+            {
+              "input": 3,
+              "name": "$3"
+            },
+            {
+              "input": 4,
+              "name": "$4"
+            },
+            {
+              "input": 5,
+              "name": "$5"
+            },
+            {
+              "input": 6,
+              "name": "$6"
+            },
+            {
+              "input": 7,
+              "name": "$7"
+            },
+            {
+              "input": 8,
+              "name": "$8"
+            },
+            {
+              "input": 9,
+              "name": "$9"
+            },
+            {
+              "input": 10,
+              "name": "$10"
+            },
+            {
+              "input": 11,
+              "name": "$11"
+            },
+            {
+              "input": 12,
+              "name": "$12"
+            },
+            {
+              "input": 13,
+              "name": "$13"
+            },
+            {
+              "input": 14,
+              "name": "$14"
+            },
+            {
+              "input": 15,
+              "name": "$15"
+            },
+            {
+              "input": 16,
+              "name": "$16"
+            },
+            {
+              "op": {
+                "name": "/",
+                "kind": "DIVIDE",
+                "syntax": "BINARY"
+              },
+              "operands": [
+                {
+                  "op": {
+                    "name": "SUM",
+                    "kind": "SUM",
+                    "syntax": "FUNCTION"
+                  },
+                  "operands": [
+                    {
+                      "input": 8,
+                      "name": "$8"
+                    }
+                  ],
+                  "distinct": false,
+                  "type": {
+                    "type": "BIGINT",
+                    "nullable": true
+                  },
+                  "window": {
+                    "range-lower": {
+                      "type": "UNBOUNDED_PRECEDING"
+                    },
+                    "range-upper": {
+                      "type": "UNBOUNDED_FOLLOWING"
+                    }
+                  }
+                },
+                {
+                  "op": {
+                    "name": "CAST",
+                    "kind": "CAST",
+                    "syntax": "SPECIAL"
+                  },
+                  "operands": [
+                    {
+                      "op": {
+                        "name": "COUNT",
+                        "kind": "COUNT",
+                        "syntax": "FUNCTION_STAR"
+                      },
+                      "operands": [
+                        {
+                          "input": 8,
+                          "name": "$8"
+                        }
+                      ],
+                      "distinct": false,
+                      "type": {
+                        "type": "BIGINT",
+                        "nullable": false
+                      },
+                      "window": {
+                        "range-lower": {
+                          "type": "UNBOUNDED_PRECEDING"
+                        },
+                        "range-upper": {
+                          "type": "UNBOUNDED_FOLLOWING"
+                        }
+                      }
+                    }
+                  ],
+                  "type": {
+                    "type": "DOUBLE",
+                    "nullable": false
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "2",
+          "relOp": "LogicalSort",
+          "collation": [],
+          "fetch": {
+            "literal": 5,
+            "type": {
+              "type": "INTEGER",
+              "nullable": false
+            }
+          }
+        },
+        {
+          "id": "3",
+          "relOp": "LogicalProject",
+          "fields": [
+            "account_number",
+            "firstname",
+            "address",
+            "balance",
+            "gender",
+            "city",
+            "employer",
+            "state",
+            "age",
+            "email",
+            "lastname",
+            "a"
+          ],
+          "exprs": [
+            {
+              "input": 0,
+              "name": "$0"
+            },
+            {
+              "input": 1,
+              "name": "$1"
+            },
+            {
+              "input": 2,
+              "name": "$2"
+            },
+            {
+              "input": 3,
+              "name": "$3"
+            },
+            {
+              "input": 4,
+              "name": "$4"
+            },
+            {
+              "input": 5,
+              "name": "$5"
+            },
+            {
+              "input": 6,
+              "name": "$6"
+            },
+            {
+              "input": 7,
+              "name": "$7"
+            },
+            {
+              "input": 8,
+              "name": "$8"
+            },
+            {
+              "input": 9,
+              "name": "$9"
+            },
+            {
+              "input": 10,
+              "name": "$10"
+            },
+            {
+              "input": 17,
+              "name": "$17"
+            }
+          ]
+        },
+        {
+          "id": "4",
+          "relOp": "org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit",
+          "collation": [],
+          "fetch": {
+            "literal": 10000,
+            "type": {
+              "type": "INTEGER",
+              "nullable": false
+            }
+          },
+          "type": "QUERY_SIZE_LIMIT"
+        }
+      ]
+    },
+    "physical": {
+      "rels": [
+        {
+          "id": "0",
+          "relOp": "org.opensearch.sql.opensearch.storage.scan.CalciteEnumerableIndexScan",
+          "table": [
+            "OpenSearch",
+            "accounts"
+          ],
+          "PushDownContext": "[PROJECT->[account_number, firstname, address, balance, gender, city, employer, state, age, email, lastname]]",
+          "sourceBuilder": {
+            "from": 0,
+            "timeout": "1m",
+            "_source": {
+              "includes": [
+                "account_number",
+                "firstname",
+                "address",
+                "balance",
+                "gender",
+                "city",
+                "employer",
+                "state",
+                "age",
+                "email",
+                "lastname"
+              ]
+            }
+          },
+          "inputs": []
+        },
+        {
+          "id": "1",
+          "relOp": "org.apache.calcite.adapter.enumerable.EnumerableWindow",
+          "window#0": "window(aggs [$SUM0($8), COUNT($8)])"
+        },
+        {
+          "id": "2",
+          "relOp": "org.apache.calcite.adapter.enumerable.EnumerableLimit",
+          "fetch": {
+            "literal": 5,
+            "type": {
+              "type": "INTEGER",
+              "nullable": false
+            }
+          }
+        },
+        {
+          "id": "3",
+          "relOp": "org.apache.calcite.adapter.enumerable.EnumerableCalc",
+          "exprs": [
+            {
+              "input": 0,
+              "name": "$0"
+            },
+            {
+              "input": 1,
+              "name": "$1"
+            },
+            {
+              "input": 2,
+              "name": "$2"
+            },
+            {
+              "input": 3,
+              "name": "$3"
+            },
+            {
+              "input": 4,
+              "name": "$4"
+            },
+            {
+              "input": 5,
+              "name": "$5"
+            },
+            {
+              "input": 6,
+              "name": "$6"
+            },
+            {
+              "input": 7,
+              "name": "$7"
+            },
+            {
+              "input": 8,
+              "name": "$8"
+            },
+            {
+              "input": 9,
+              "name": "$9"
+            },
+            {
+              "input": 10,
+              "name": "$10"
+            },
+            {
+              "input": 11,
+              "name": "$11"
+            },
+            {
+              "input": 12,
+              "name": "$12"
+            },
+            {
+              "op": {
+                "name": "CAST",
+                "kind": "CAST",
+                "syntax": "SPECIAL"
+              },
+              "operands": [
+                {
+                  "input": 12,
+                  "name": "$t12",
+                  "type": {
+                    "type": "BIGINT",
+                    "nullable": false
+                  }
+                }
+              ],
+              "type": {
+                "type": "DOUBLE",
+                "nullable": false
+              }
+            },
+            {
+              "op": {
+                "name": "/",
+                "kind": "DIVIDE",
+                "syntax": "BINARY"
+              },
+              "operands": [
+                {
+                  "input": 11,
+                  "name": "$t11",
+                  "type": {
+                    "type": "BIGINT",
+                    "nullable": true
+                  }
+                },
+                {
+                  "input": 13,
+                  "name": "$t13",
+                  "type": {
+                    "type": "DOUBLE",
+                    "nullable": false
+                  }
+                }
+              ]
+            }
+          ],
+          "projects": [
+            {
+              "input": 0,
+              "name": "$t0",
+              "type": {
+                "type": "BIGINT",
+                "nullable": true
+              }
+            },
+            {
+              "input": 1,
+              "name": "$t1",
+              "type": {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1
+              }
+            },
+            {
+              "input": 2,
+              "name": "$t2",
+              "type": {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1
+              }
+            },
+            {
+              "input": 3,
+              "name": "$t3",
+              "type": {
+                "type": "BIGINT",
+                "nullable": true
+              }
+            },
+            {
+              "input": 4,
+              "name": "$t4",
+              "type": {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1
+              }
+            },
+            {
+              "input": 5,
+              "name": "$t5",
+              "type": {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1
+              }
+            },
+            {
+              "input": 6,
+              "name": "$t6",
+              "type": {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1
+              }
+            },
+            {
+              "input": 7,
+              "name": "$t7",
+              "type": {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1
+              }
+            },
+            {
+              "input": 8,
+              "name": "$t8",
+              "type": {
+                "type": "BIGINT",
+                "nullable": true
+              }
+            },
+            {
+              "input": 9,
+              "name": "$t9",
+              "type": {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1
+              }
+            },
+            {
+              "input": 10,
+              "name": "$t10",
+              "type": {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1
+              }
+            },
+            {
+              "input": 14,
+              "name": "$t14",
+              "type": {
+                "type": "DOUBLE",
+                "nullable": true
+              }
+            }
+          ],
+          "inputRowType": {
+            "fields": [
+              {
+                "type": "BIGINT",
+                "nullable": true,
+                "name": "account_number"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "firstname"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "address"
+              },
+              {
+                "type": "BIGINT",
+                "nullable": true,
+                "name": "balance"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "gender"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "city"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "employer"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "state"
+              },
+              {
+                "type": "BIGINT",
+                "nullable": true,
+                "name": "age"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "email"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "lastname"
+              },
+              {
+                "type": "BIGINT",
+                "nullable": true,
+                "name": "w0$o0"
+              },
+              {
+                "type": "BIGINT",
+                "nullable": false,
+                "name": "w0$o1"
+              }
+            ],
+            "nullable": false
+          },
+          "outputRowType": {
+            "fields": [
+              {
+                "type": "BIGINT",
+                "nullable": true,
+                "name": "account_number"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "firstname"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "address"
+              },
+              {
+                "type": "BIGINT",
+                "nullable": true,
+                "name": "balance"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "gender"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "city"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "employer"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "state"
+              },
+              {
+                "type": "BIGINT",
+                "nullable": true,
+                "name": "age"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "email"
+              },
+              {
+                "type": "VARCHAR",
+                "nullable": true,
+                "precision": -1,
+                "name": "lastname"
+              },
+              {
+                "type": "DOUBLE",
+                "nullable": true,
+                "name": "a"
+              }
+            ],
+            "nullable": false
+          }
+        },
+        {
+          "id": "4",
+          "relOp": "org.apache.calcite.adapter.enumerable.EnumerableLimit",
+          "fetch": {
+            "literal": 10000,
+            "type": {
+              "type": "INTEGER",
+              "nullable": false
+            }
+          }
+        }
+      ]
+    }
+  }
+}
