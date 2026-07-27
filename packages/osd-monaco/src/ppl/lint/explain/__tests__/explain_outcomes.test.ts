@@ -7,6 +7,8 @@ import { detectExplainOutcomes } from '../explain_outcomes';
 import { ExplainPlan, ExplainRelTree } from '../explain_types';
 
 import havingOverPushedAggTree from '../__fixtures__/having_over_pushed_agg_tree.json';
+import sortTextTopkLegacy from '../__fixtures__/sort_text_topk_legacy.json';
+import sortTextTopkTree from '../__fixtures__/sort_text_topk_tree.json';
 import joinMergeJoinLegacy from '../__fixtures__/join_mergejoin_legacy.json';
 import joinMergeJoinTree from '../__fixtures__/join_mergejoin_tree.json';
 import subqueryInSemijoinTree from '../__fixtures__/subquery_in_semijoin_tree.json';
@@ -248,6 +250,24 @@ describe('detectExplainOutcomes', () => {
       expect(outcomes).not.toContain('filter:coordinator');
       expect(outcomes).not.toContain('sort:coordinator');
     }
+  });
+
+  it('reports a coordinator sort for TopK over a raw-row scan (text sort key)', () => {
+    // `sort <text-field> | head N`: text has no doc values, the sort cannot
+    // push, and the engine emits CalciteEnumerableTopK above a scan whose
+    // PushDownContext carries only PROJECT->. That is a coordinator sort. The
+    // benign TopK shape (over a pushed aggregation) is covered by the
+    // bucket-space suppression test above via the deep_pipe detector case.
+    const treeOutcomes = detectExplainOutcomes(capturedTreePlan(sortTextTopkTree)).map(
+      ({ outcome }) => outcome
+    );
+    const legacyOutcomes = detectExplainOutcomes(capturedLegacyPlan(sortTextTopkLegacy)).map(
+      ({ outcome }) => outcome
+    );
+
+    expect(treeOutcomes).toContain('sort:coordinator');
+    expect(legacyOutcomes).toContain('sort:coordinator');
+    expect(treeOutcomes).not.toContain('filter:coordinator');
   });
 
   it('does not suppress row-space outcomes: multi-scan joins and unpushed aggregations keep firing', () => {

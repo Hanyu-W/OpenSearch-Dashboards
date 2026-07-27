@@ -1,0 +1,6 @@
+{
+  "calcite": {
+    "logical": "LogicalSystemLimit(sort0=[$0], dir0=[ASC-nulls-first], fetch=[10000], type=[QUERY_SIZE_LIMIT])\n  LogicalProject(msg=[$0], name=[$1], @timestamp=[$2], code=[$3], status=[$4])\n    LogicalSort(sort0=[$0], dir0=[ASC-nulls-first], fetch=[5])\n      CalciteLogicalIndexScan(table=[[OpenSearch, catalog_text]])\n",
+    "physical": "EnumerableLimit(fetch=[10000])\n  CalciteEnumerableTopK(sort0=[$0], dir0=[ASC-nulls-first], fetch=[5])\n    CalciteEnumerableIndexScan(table=[[OpenSearch, catalog_text]], PushDownContext=[[PROJECT->[msg, name, @timestamp, code, status]], OpenSearchRequestBuilder(sourceBuilder={\"from\":0,\"timeout\":\"1m\",\"_source\":{\"includes\":[\"msg\",\"name\",\"@timestamp\",\"code\",\"status\"],\"excludes\":[]}}, requestedTotalSize=2147483647, pageSize=null, startFrom=0)])\n"
+  }
+}

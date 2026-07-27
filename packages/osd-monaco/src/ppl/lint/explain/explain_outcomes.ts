@@ -154,7 +154,13 @@ function addScopeOutcomes(
   if (hasSortExpression) {
     add(evidence, seen, 'sort:script', scope, format);
   }
-  if (relOp.endsWith('Sort') && !hasSort && !hasSortExpression) {
+  // TopK is the engine's bounded sort+limit. When the sort pushed, no TopK rel
+  // exists (the scan absorbs it); a TopK rel above a raw-row scan is a
+  // coordinator sort (e.g. `sort <text-field> | head` — text has no doc
+  // values, so the sort cannot push). The one benign TopK shape — TopK over a
+  // *pushed aggregation* (`stats | sort | head`) — is bucket-space and removed
+  // by the plan-level suppression pass below.
+  if ((relOp.endsWith('Sort') || relOp.endsWith('TopK')) && !hasSort && !hasSortExpression) {
     add(evidence, seen, 'sort:coordinator', scope, format);
   }
 
