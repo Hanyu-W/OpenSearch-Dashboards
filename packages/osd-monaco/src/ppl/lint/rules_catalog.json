@@ -27,7 +27,11 @@
     "message": "dedup consecutive=true relies on engine fallback.",
     "howToFix": "Remove `consecutive=true` to use regular deduplication. No equivalent option preserves consecutive-only behavior.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/limitation/#unsupported-functionalities",
-    "appliesTo": { "minVersion": "3.3.0", "engine": "calcite" }
+    "appliesTo": {
+      "minVersion": "3.3.0",
+      "engine": "calcite",
+      "requiresEngineType": "AnalyticEngine"
+    }
   },
   {
     "id": "replace-wildcard-asymmetry",
@@ -70,7 +74,10 @@
     "message": "Right, full, and cross joins are disabled unless the cluster explicitly enables them.",
     "howToFix": "Use an `inner` or `left` join when it preserves the intended result. Otherwise, ask an administrator to enable `plugins.calcite.all_join_types.allowed`.",
     "docUrl": "https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/join/#limitations",
-    "appliesTo": { "minVersion": "3.0.0" }
+    "appliesTo": {
+      "minVersion": "3.0.0",
+      "excludesEngineType": "AnalyticEngine"
+    }
   },
   {
     "id": "head-without-sort",

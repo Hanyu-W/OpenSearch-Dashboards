@@ -17,6 +17,27 @@ export interface AppliesTo {
   maxVersion?: string;
   /** engine predicate; absent = no engine filtering. */
   engine?: 'calcite';
+  /**
+   * Restricts the rule to a data source whose reported engine type matches —
+   * currently only `AnalyticEngine` (the analytics engine, "Mustang"). Use for
+   * a rule whose engine ground truth holds *only* there: a Mustang domain
+   * enables Calcite too, so `engine: 'calcite'` cannot single it out.
+   *
+   * Matched against `LintPayloadContext.dataSourceEngineType`, which is
+   * resolved once at data-source registration and fails open. An unknown
+   * engine type therefore does NOT satisfy this predicate, so a rule gated
+   * this way self-suppresses rather than risking a false positive.
+   */
+  requiresEngineType?: 'AnalyticEngine';
+  /**
+   * Suppresses the rule on a data source whose reported engine type matches.
+   * Use for a rule that is correct on the standard engine but wrong on the
+   * analytics engine — e.g. a guardrail the analytics engine does not enforce.
+   *
+   * Because the engine type fails open, an unknown value does not suppress:
+   * the rule still runs, matching its pre-existing behaviour.
+   */
+  excludesEngineType?: 'AnalyticEngine';
 }
 
 /**

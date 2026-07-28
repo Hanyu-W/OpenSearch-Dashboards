@@ -17,7 +17,10 @@ function hasParseableDataSourceVersion(dataSourceVersion: string | undefined): b
 }
 
 export interface RunExplainLintOptions
-  extends Pick<LintRunContext, 'overrides' | 'dataSourceVersion' | 'isCalcite'> {
+  extends Pick<
+    LintRunContext,
+    'overrides' | 'dataSourceVersion' | 'isCalcite' | 'dataSourceEngineType'
+  > {
   /** The query text the plan was produced for (sizes the whole-query range). */
   query: string;
   /** The catalog to iterate; defaults to the bundled catalog. */
@@ -36,13 +39,14 @@ function isApplicableExplainEntry(
   overrides: BundleRuleOverrides | undefined,
   dataSourceVersion: string | undefined,
   isCalcite: boolean | undefined,
-  knownVersion: string
+  knownVersion: string,
+  dataSourceEngineType: string | undefined
 ): boolean {
   const config = mergeConfig(localConfig, overrides?.[localConfig.id]);
   return (
     config.needsExplain === true &&
     config.enabled === true &&
-    appliesTo(config, dataSourceVersion, isCalcite, knownVersion)
+    appliesTo(config, dataSourceVersion, isCalcite, knownVersion, dataSourceEngineType)
   );
 }
 
@@ -59,6 +63,7 @@ export function hasExplainRules(options: Omit<RunExplainLintOptions, 'query'>): 
     overrides,
     dataSourceVersion,
     isCalcite,
+    dataSourceEngineType,
     knownVersion = OSD_KNOWN_VERSION,
   } = options;
 
@@ -67,7 +72,14 @@ export function hasExplainRules(options: Omit<RunExplainLintOptions, 'query'>): 
   }
 
   return catalog.some((localConfig) =>
-    isApplicableExplainEntry(localConfig, overrides, dataSourceVersion, isCalcite, knownVersion)
+    isApplicableExplainEntry(
+      localConfig,
+      overrides,
+      dataSourceVersion,
+      isCalcite,
+      knownVersion,
+      dataSourceEngineType
+    )
   );
 }
 
@@ -84,6 +96,7 @@ export function runExplainLint(plan: ExplainPlan, options: RunExplainLintOptions
     overrides,
     dataSourceVersion,
     isCalcite,
+    dataSourceEngineType,
     knownVersion = OSD_KNOWN_VERSION,
   } = options;
 
@@ -98,7 +111,14 @@ export function runExplainLint(plan: ExplainPlan, options: RunExplainLintOptions
     // `hasExplainRules` uses for its pre-flight check (tree rules ran in
     // `runLint`).
     if (
-      !isApplicableExplainEntry(localConfig, overrides, dataSourceVersion, isCalcite, knownVersion)
+      !isApplicableExplainEntry(
+        localConfig,
+        overrides,
+        dataSourceVersion,
+        isCalcite,
+        knownVersion,
+        dataSourceEngineType
+      )
     ) {
       continue;
     }

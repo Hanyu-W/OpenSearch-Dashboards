@@ -63,6 +63,59 @@ describe('version_filter appliesTo', () => {
     });
   });
 
+  describe('engine-type predicate', () => {
+    const KNOWN = OSD_KNOWN_VERSION;
+
+    it('applies a requiresEngineType rule only on that engine type', () => {
+      const rule = makeRule({ appliesTo: { requiresEngineType: 'AnalyticEngine' } });
+      expect(appliesTo(rule, '3.5.0', true, KNOWN, 'AnalyticEngine')).toBe(true);
+      expect(appliesTo(rule, '3.5.0', true, KNOWN, 'OpenSearch')).toBe(false);
+    });
+
+    it('self-suppresses a requiresEngineType rule when the engine type is unknown', () => {
+      // The engine type is resolved once at data-source registration and fails
+      // open, so an unconfirmed value must not satisfy the predicate.
+      const rule = makeRule({ appliesTo: { requiresEngineType: 'AnalyticEngine' } });
+      expect(appliesTo(rule, '3.5.0', true, KNOWN, undefined)).toBe(false);
+    });
+
+    it('suppresses an excludesEngineType rule on that engine type', () => {
+      const rule = makeRule({ appliesTo: { excludesEngineType: 'AnalyticEngine' } });
+      expect(appliesTo(rule, '3.5.0', true, KNOWN, 'AnalyticEngine')).toBe(false);
+      expect(appliesTo(rule, '3.5.0', true, KNOWN, 'OpenSearch')).toBe(true);
+    });
+
+    it('runs an excludesEngineType rule when the engine type is unknown', () => {
+      // Fail-open: an unknown engine type keeps the rule's prior behaviour.
+      const rule = makeRule({ appliesTo: { excludesEngineType: 'AnalyticEngine' } });
+      expect(appliesTo(rule, '3.5.0', true, KNOWN, undefined)).toBe(true);
+    });
+
+    it('gates on engine type even when the version is undefined', () => {
+      const requires = makeRule({ appliesTo: { requiresEngineType: 'AnalyticEngine' } });
+      expect(appliesTo(requires, undefined, undefined, KNOWN, 'AnalyticEngine')).toBe(true);
+      expect(appliesTo(requires, undefined, undefined, KNOWN, 'OpenSearch')).toBe(false);
+
+      const excludes = makeRule({ appliesTo: { excludesEngineType: 'AnalyticEngine' } });
+      expect(appliesTo(excludes, undefined, undefined, KNOWN, 'AnalyticEngine')).toBe(false);
+    });
+
+    it('combines an engine-type predicate with version and calcite gates', () => {
+      // Mirrors dedup-consecutive-unsupported: calcite AND AnalyticEngine AND >= 3.3.
+      const rule = makeRule({
+        appliesTo: {
+          minVersion: '3.3.0',
+          engine: 'calcite',
+          requiresEngineType: 'AnalyticEngine',
+        },
+      });
+      expect(appliesTo(rule, '3.5.0', true, KNOWN, 'AnalyticEngine')).toBe(true);
+      expect(appliesTo(rule, '3.5.0', false, KNOWN, 'AnalyticEngine')).toBe(false);
+      expect(appliesTo(rule, '3.2.0', true, KNOWN, 'AnalyticEngine')).toBe(false);
+      expect(appliesTo(rule, '3.5.0', true, KNOWN, 'OpenSearch')).toBe(false);
+    });
+  });
+
   describe('undefined version policy', () => {
     it('runs a minVersion-only no-engine rule', () => {
       const rule = makeRule({ appliesTo: { minVersion: '3.4.0' } });

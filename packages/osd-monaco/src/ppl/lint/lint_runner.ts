@@ -90,7 +90,15 @@ export function runLint(tree: ParserRuleContext, options: RunLintOptions): Diagn
     }
 
     // R7 — version + engine filtering.
-    if (!appliesTo(config, dataSourceVersion, context?.isCalcite, knownVersion)) {
+    if (
+      !appliesTo(
+        config,
+        dataSourceVersion,
+        context?.isCalcite,
+        knownVersion,
+        context?.dataSourceEngineType
+      )
+    ) {
       continue;
     }
 

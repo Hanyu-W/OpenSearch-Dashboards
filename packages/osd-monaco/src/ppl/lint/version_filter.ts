@@ -26,6 +26,8 @@ function coerce(version: string): string | null {
  *  - above an *explicitly declared* maxVersion → skip (no phantom ceiling: a
  *    rule with no maxVersion is open-ended and runs on any newer cluster)
  *  - engine:'calcite' → applies only when the source runs Calcite
+ *  - requiresEngineType → applies only on that engine type (unknown → skip)
+ *  - excludesEngineType → skipped on that engine type (unknown → runs)
  *  - undefined version policy:
  *      minVersion-only, no engine        → runs
  *      open-ended maxVersion past horizon → self-suppress
@@ -36,10 +38,23 @@ export function appliesTo(
   rule: CatalogEntry,
   dataSourceVersion: string | undefined,
   isCalcite: boolean | undefined,
-  knownVersion: string = OSD_KNOWN_VERSION
+  knownVersion: string = OSD_KNOWN_VERSION,
+  dataSourceEngineType?: string
 ): boolean {
   const { appliesTo: predicate, severity } = rule;
   const isCalciteGated = predicate.engine === 'calcite';
+
+  // Engine-type gating is independent of version, so it runs before the version
+  // branches. The engine type is resolved once at data-source registration and
+  // fails open, so the two predicates deliberately treat "unknown" differently:
+  // a rule that *requires* an engine type self-suppresses when it cannot be
+  // confirmed, while a rule that *excludes* one keeps running.
+  if (predicate.requiresEngineType && dataSourceEngineType !== predicate.requiresEngineType) {
+    return false;
+  }
+  if (predicate.excludesEngineType && dataSourceEngineType === predicate.excludesEngineType) {
+    return false;
+  }
 
   const hasNoVersion = dataSourceVersion === undefined || dataSourceVersion.trim() === '';
 
