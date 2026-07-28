@@ -80,12 +80,26 @@ describe('renderHoverCard', () => {
       severityLabel: 'Info',
       message: 'Source pattern "logs-*" matches no known index.',
       content: getBundledCatalogEntry('wildcard-source-zero-match'),
-      facts: { pattern: 'logs-*', totalIndices: 47, candidateIndices: ['logs_2024', 'logs_2025'] },
+      facts: { pattern: 'logs-*', totalIndices: 47, candidateIndices: ['logs_2024'] },
     });
 
     expect(md).toContain('ℹ️ **Info**');
     expect(md).toContain('**Details** — Checked 47 visible indices.');
-    expect(md).toContain('Similar names: `logs_2024`, `logs_2025`.');
+    expect(md).toContain('Possible match: `logs_2024`.');
+  });
+
+  it('does not repeat a wildcard candidate already shown as the quick fix', () => {
+    const md = render({
+      severityLabel: 'Info',
+      message: 'Source pattern "lgos-*" matches no known index.',
+      content: getBundledCatalogEntry('wildcard-source-zero-match'),
+      facts: { pattern: 'lgos-*', totalIndices: 47, candidateIndices: ['logs-2026.07.25'] },
+      fixText: '`logs-2026.07.25`',
+    });
+
+    expect(md).toContain('**Details** — Checked 47 visible indices.');
+    expect(md).toContain('**Quick fix available** — `` `logs-2026.07.25` ``');
+    expect(md).not.toContain('Possible match');
   });
 
   it('renders a deterministic quick-fix preview without repeating the suggestion facts', () => {

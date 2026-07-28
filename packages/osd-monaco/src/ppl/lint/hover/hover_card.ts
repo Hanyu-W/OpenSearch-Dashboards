@@ -85,7 +85,7 @@ function encodeLinkTarget(url: string): string {
  * detectors already include their field, type, and value in the message, so
  * repeating those facts would make the card longer without helping the user.
  */
-function renderAdditionalContext(facts: HoverFacts): string | undefined {
+function renderAdditionalContext(facts: HoverFacts, fixText?: string): string | undefined {
   // Wildcard zero-match: the count and nearby names are not in the marker text.
   if (facts.pattern !== undefined) {
     const parts: string[] = [];
@@ -93,8 +93,10 @@ function renderAdditionalContext(facts: HoverFacts): string | undefined {
       const noun = facts.totalIndices === 1 ? 'index' : 'indices';
       parts.push(`Checked ${facts.totalIndices} visible ${noun}.`);
     }
-    if (facts.candidateIndices && facts.candidateIndices.length > 0) {
-      parts.push(`Similar names: ${facts.candidateIndices.map(code).join(', ')}.`);
+    // The quick-fix line already previews the selected candidate.
+    if (fixText === undefined && facts.candidateIndices && facts.candidateIndices.length > 0) {
+      const label = facts.candidateIndices.length === 1 ? 'Possible match' : 'Possible matches';
+      parts.push(`${label}: ${facts.candidateIndices.map(code).join(', ')}.`);
     }
     return parts.length > 0 ? parts.join(' ') : undefined;
   }
@@ -131,7 +133,7 @@ export function renderHoverCard(input: HoverCardInput): string {
 
   // Add only facts not already stated by the detector.
   if (facts) {
-    const contextLine = renderAdditionalContext(facts);
+    const contextLine = renderAdditionalContext(facts, fixText);
     if (contextLine) {
       lines.push('');
       lines.push(`**Details** — ${contextLine}`);

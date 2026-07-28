@@ -68,8 +68,9 @@ const PREVIEW_CASES: PreviewCase[] = [
     facts: {
       pattern: 'lgos-*',
       totalIndices: 47,
-      candidateIndices: ['logs-2026.07.25', 'logs-2026.07.26'],
+      candidateIndices: ['logs-2026.07.25'],
     },
+    fixText: '`logs-2026.07.25`',
   },
   {
     ruleId: 'division-by-zero',

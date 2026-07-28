@@ -20,6 +20,10 @@ describe('context-input rules (compiled surface)', () => {
 
   const ids = (code: string, context?: LintRunContext): string[] =>
     analyzer.lint(code, context).diagnostics.map((d) => d.ruleId);
+  const wildcardDiagnostic = (code: string, context: LintRunContext) =>
+    analyzer
+      .lint(code, context)
+      .diagnostics.find((diagnostic) => diagnostic.ruleId === 'wildcard-source-zero-match');
 
   describe('disabled-join-type honors settings.allJoinTypesAllowed', () => {
     const crossJoin = 'search a | cross join left=l right=r on l.id = r.id b';
@@ -76,6 +80,43 @@ describe('context-input rules (compiled surface)', () => {
           visibleIndices: ['logs-2024', 'logs-2025', 'accounts'],
         })
       ).toContain('wildcard-source-zero-match');
+    });
+
+    it('does not fire when a quoted wildcard matches a visible index', () => {
+      expect(
+        ids('source=`logs-*`', {
+          visibleIndices: ['logs-2024', 'logs-2025', 'accounts'],
+        })
+      ).not.toContain('wildcard-source-zero-match');
+    });
+
+    it('offers only the closest visible index as a quick fix', () => {
+      const diagnostic = wildcardDiagnostic('source=`lgos-*`', {
+        visibleIndices: ['logs-2026.07.26', 'accounts', 'logs-2026.07.25'],
+      });
+
+      expect(diagnostic).toMatchObject({
+        message: 'Source pattern "lgos-*" matches no known index.',
+        hoverFacts: {
+          pattern: 'lgos-*',
+          totalIndices: 3,
+          candidateIndices: ['logs-2026.07.25'],
+        },
+        fix: {
+          title: 'Use index "logs-2026.07.25"',
+          text: '`logs-2026.07.25`',
+          expectedText: '`lgos-*`',
+        },
+      });
+    });
+
+    it('does not offer an unrelated index as a quick fix', () => {
+      const diagnostic = wildcardDiagnostic(zeroMatch, {
+        visibleIndices: ['logs-2024', 'logs-2025', 'accounts'],
+      });
+
+      expect(diagnostic?.hoverFacts?.candidateIndices).toBeUndefined();
+      expect(diagnostic?.fix).toBeUndefined();
     });
   });
 });

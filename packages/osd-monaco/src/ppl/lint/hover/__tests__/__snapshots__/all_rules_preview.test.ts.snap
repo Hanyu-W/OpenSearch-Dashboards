@@ -131,9 +131,11 @@ Field \\"status\\" may contain only one value, so expand may have nothing to spl
 
 Source pattern \\"lgos-\\\\*\\" matches no known index.
 
-**Details** — Checked 47 visible indices. Similar names: \`logs-2026.07.25\`, \`logs-2026.07.26\`.
+**Details** — Checked 47 visible indices.
 
 **Fix** — Correct the \`source=\` pattern or choose an existing index.
+
+**Quick fix available** — \`\` \`logs-2026.07.25\` \`\`
 
 [Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/search/)
 
