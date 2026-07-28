@@ -41,7 +41,7 @@ export const enabledFalseObjectDetector: Detector = (tree, config, context, rule
     diagnostics.push({
       ruleId: config.id,
       severity: config.severity,
-      message: `Field "${path}" lives inside object "${root}" mapped with enabled:false; it is not indexed and resolves to null.`,
+      message: `Field "${path}" is stored but not searchable, so PPL returns null for it.`,
       range: rangeFromContext(node),
       docUrl: config.docUrl,
       hoverFacts: { field: path, root },

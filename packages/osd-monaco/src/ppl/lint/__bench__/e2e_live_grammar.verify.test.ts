@@ -72,6 +72,46 @@ describeIf('E2E on the live runtime grammar bundle', () => {
     });
   });
 
+  describe('field creation order (real runtime grammar)', () => {
+    const fieldMessages = (query: string) =>
+      lintRuntime(query, grammar, {
+        ...runtimeContext(),
+        fields: new Set(['age', 'status']),
+      })
+        .filter((diagnostic) => diagnostic.ruleId === 'field-validation')
+        .map((diagnostic) => diagnostic.message);
+
+    it('flags a field before an eval stage creates it', () => {
+      expect(fieldMessages('source=accounts | where x > 0 | eval x = 1')).toEqual([
+        expect.stringContaining('Unknown field "x"'),
+      ]);
+    });
+
+    it('accepts a field after an eval stage creates it', () => {
+      expect(fieldMessages('source=accounts | eval x = 1 | where x > 0')).toEqual([]);
+    });
+
+    it('flags a field before creation in a pipe-first query', () => {
+      expect(fieldMessages('| where x > 0 | eval x = 1')).toEqual([
+        expect.stringContaining('Unknown field "x"'),
+      ]);
+    });
+
+    it('accepts a field after creation in a pipe-first query', () => {
+      expect(fieldMessages('| eval x = 1 | where x > 0')).toEqual([]);
+    });
+
+    it('accepts a field created by an earlier eval clause', () => {
+      expect(fieldMessages('source=accounts | eval x = 1, y = x + 1')).toEqual([]);
+    });
+
+    it('flags a field created by a later eval clause', () => {
+      expect(fieldMessages('source=accounts | eval y = x + 1, x = 1')).toEqual([
+        expect.stringContaining('Unknown field "x"'),
+      ]);
+    });
+  });
+
   describe('Feature A — command-typo suggestion (runtime ParserInterpreter)', () => {
     const commandsRule = grammar.parserRuleNames.indexOf('commands');
 

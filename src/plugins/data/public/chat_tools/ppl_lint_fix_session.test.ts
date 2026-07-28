@@ -10,11 +10,14 @@ import {
   getPPLLintFixSession,
   markPPLLintFixApplied,
   markPPLLintFixDismissed,
-  PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX,
   storePPLLintFixSession,
 } from './ppl_lint_fix_session';
+import { PPL_LINT_FIX_DATA_HOST } from './ppl_lint_fix_tool_registration';
+
+const PREFIX = PPL_LINT_FIX_DATA_HOST.contextIdPrefix;
 
 const createSession = (requestId: string) => ({
+  host: PPL_LINT_FIX_DATA_HOST,
   request: {
     requestId,
     query: 'source=logs',
@@ -51,11 +54,9 @@ describe('PPL lint fix session', () => {
     const newerSession = createSession('request-b');
     storePPLLintFixSession(newerSession);
 
-    cleanupPPLLintFixRequest('request-a', removeContextById);
+    cleanupPPLLintFixRequest('request-a', PREFIX, removeContextById);
 
-    expect(removeContextById).toHaveBeenCalledWith(
-      PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX + 'request-a'
-    );
+    expect(removeContextById).toHaveBeenCalledWith(PREFIX + 'request-a');
     expect(getPPLLintFixSession()).toBe(newerSession);
   });
 
@@ -63,7 +64,7 @@ describe('PPL lint fix session', () => {
     storePPLLintFixSession(createSession('request-a'));
 
     expect(() =>
-      cleanupPPLLintFixRequest('request-a', () => {
+      cleanupPPLLintFixRequest('request-a', PREFIX, () => {
         throw new Error('context store unavailable');
       })
     ).toThrow('context store unavailable');

@@ -61,7 +61,7 @@ export const divisionByZeroDetector: Detector = (tree, config, _context, ruleNam
         diagnostics.push({
           ruleId: config.id,
           severity: config.severity,
-          message: 'Division by literal zero evaluates to null rather than raising an error.',
+          message: 'Dividing by zero returns no value (null) instead of an error.',
           range: rangeFromContext(divisor),
           docUrl: config.docUrl,
           hoverFacts: { literal: divisor.getText() },

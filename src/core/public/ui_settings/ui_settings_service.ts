@@ -43,6 +43,20 @@ export interface UiSettingsServiceDeps {
   injectedMetadata: InjectedMetadataSetup;
 }
 
+const UI_SETTINGS_BROADCAST_CHANNEL = 'opensearch-dashboards-ui-settings';
+
+function createBroadcastChannel(serverBasePath: string) {
+  if (typeof window.BroadcastChannel !== 'function') {
+    return undefined;
+  }
+
+  try {
+    return new window.BroadcastChannel(`${UI_SETTINGS_BROADCAST_CHANNEL}:${serverBasePath}`);
+  } catch {
+    return undefined;
+  }
+}
+
 /** @internal */
 export class UiSettingsService {
   private uiSettingApis?: {
@@ -79,6 +93,7 @@ export class UiSettingsService {
       defaults: legacyMetadata.uiSettings.defaults,
       initialSettings: legacyMetadata.uiSettings.user,
       done$: this.done$,
+      broadcastChannel: createBroadcastChannel(http.basePath.getBasePath()),
     });
 
     return this.uiSettingsClient;

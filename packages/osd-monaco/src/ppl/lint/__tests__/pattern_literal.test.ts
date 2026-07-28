@@ -3,7 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { decodePatternLiteral, leadingLiteralToken } from '../pattern_literal';
+import {
+  analyzeLeadingLiteral,
+  decodePatternLiteral,
+  leadingLiteralToken,
+} from '../pattern_literal';
 
 // `findPatternLiteral` needs a parse tree and is exercised end-to-end through the
 // analyzer in rex_scan_cost.test.ts / invalid_capture_group_name.test.ts. Here we
@@ -125,6 +129,40 @@ describe('leadingLiteralToken', () => {
       // `%` is a literal, then `{` is a metachar terminating the run at `%`,
       // which yields no token — safe by construction.
       expect(leadingLiteralToken('%{IP:client}')).toBeUndefined();
+    });
+  });
+});
+
+describe('analyzeLeadingLiteral', () => {
+  it('returns both the exact required run and analyzer-oriented token', () => {
+    expect(analyzeLeadingLiteral('logtype=(?<x>.*)')).toEqual({
+      literalRun: 'logtype=',
+      token: 'logtype',
+    });
+  });
+
+  it('keeps the decoded punctuation in the exact run', () => {
+    expect(analyzeLeadingLiteral('"level":"(?<x>.*)')).toEqual({
+      literalRun: '"level":"',
+      token: 'level',
+    });
+  });
+
+  it('returns no analysis when alternation makes the run optional', () => {
+    expect(analyzeLeadingLiteral('GET|POST (?<x>.*)')).toBeUndefined();
+  });
+
+  it.each(['logtype?=(?<x>.*)', 'logtype*=(?<x>.*)', 'logtype+=(?<x>.*)', 'logtype{0,1}=(?<x>.*)'])(
+    'returns no analysis when a quantifier makes part of the run optional: %s',
+    (pattern) => {
+      expect(analyzeLeadingLiteral(pattern)).toBeUndefined();
+    }
+  );
+
+  it('can expose a literal run while declining an analyzer token', () => {
+    expect(analyzeLeadingLiteral('://(?<x>.*)')).toEqual({
+      literalRun: '://',
+      token: undefined,
     });
   });
 });

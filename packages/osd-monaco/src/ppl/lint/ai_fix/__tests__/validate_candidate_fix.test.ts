@@ -5,10 +5,12 @@
 
 import {
   validateCandidateFix,
+  validatePPLLintFixCandidate,
   tokenOverlap,
   ValidateCandidateDeps,
   CandidateLintFacts,
 } from '../validate_candidate_fix';
+import type { LintRunContext } from '../../types';
 
 // A stub lint/shape pair driven by a per-query table so each test controls the
 // exact facts the validator sees, with no Monaco/grammar dependency.
@@ -258,5 +260,117 @@ describe('validateCandidateFix', () => {
     expect(validateCandidateFix(rangeOriginal, candidate, 'head-without-sort', deps)).toEqual({
       accepted: true,
     });
+  });
+});
+
+describe('validatePPLLintFixCandidate rex-scan-cost policy', () => {
+  const original =
+    'source=logs | rex field=body "logtype=(?<logtype>[^\\s]+)" ' + "| where logtype = 'ws:access'";
+  const lintContext: LintRunContext = {
+    fields: new Set(['body']),
+    typeMap: new Map([['body', 'text']]),
+    overrides: { 'rex-scan-cost': { enabled: true } },
+  };
+
+  const validate = (fixedQuery: string, originalQuery = original) =>
+    validatePPLLintFixCandidate({
+      originalQuery,
+      fixedQuery,
+      ruleId: 'rex-scan-cost',
+      lintContext,
+    });
+
+  it('accepts the safe exact-substring insertion for the reported shape', () => {
+    expect(
+      validate(
+        "source=logs | WHERE LIKE(body, '%logtype=%') " +
+          '| rex field=body "logtype=(?<logtype>[^\\s]+)" ' +
+          "| where logtype = 'ws:access'"
+      )
+    ).toEqual({ accepted: true });
+  });
+
+  it('accepts the same rewrite for a pipe-first query', () => {
+    const pipeFirstOriginal =
+      '| rex field=body "logtype=(?<logtype>[^\\s]+)" ' + "| where logtype = 'ws:access'";
+    expect(
+      validate(
+        "| WHERE LIKE(body, '%logtype=%') " +
+          '| rex field=body "logtype=(?<logtype>[^\\s]+)" ' +
+          "| where logtype = 'ws:access'",
+        pipeFirstOriginal
+      )
+    ).toEqual({ accepted: true });
+  });
+
+  it('rejects analyzer-dependent match_phrase with a specific reason', () => {
+    expect(
+      validate(
+        "source=logs | where match_phrase(body, 'logtype') " +
+          '| rex field=body "logtype=(?<logtype>[^\\s]+)" ' +
+          "| where logtype = 'ws:access'"
+      )
+    ).toEqual({ accepted: false, reason: 'unsafe-prefilter' });
+  });
+
+  it('keeps diagnostic-clearing precedence for a wrong or misplaced filter', () => {
+    expect(
+      validate(
+        "source=logs | where LIKE(message, '%logtype=%') " +
+          '| rex field=body "logtype=(?<logtype>[^\\s]+)" ' +
+          "| where logtype = 'ws:access'"
+      ).reason
+    ).toBe('diagnostic-not-cleared');
+    expect(
+      validate(
+        'source=logs | rex field=body "logtype=(?<logtype>[^\\s]+)" ' +
+          "| where LIKE(body, '%logtype=%') | where logtype = 'ws:access'"
+      ).reason
+    ).toBe('diagnostic-not-cleared');
+  });
+
+  it('rejects regex, downstream-predicate, and multi-command changes', () => {
+    expect(
+      validate(
+        "source=logs | where LIKE(body, '%message=%') " +
+          '| rex field=body "message=(?<logtype>[^\\s]+)" ' +
+          "| where logtype = 'ws:access'"
+      ).reason
+    ).toBe('multiple-command-changes');
+    expect(
+      validate(
+        "source=logs | where LIKE(body, '%logtype=%') " +
+          '| rex field=body "logtype=(?<logtype>[^\\s]+)" ' +
+          "| where logtype = 'other'"
+      ).reason
+    ).toBe('multiple-command-changes');
+    expect(
+      validate(
+        "source=logs | where LIKE(body, '%logtype=%') | where body != '' " +
+          '| rex field=body "logtype=(?<logtype>[^\\s]+)" ' +
+          "| where logtype = 'ws:access'"
+      ).reason
+    ).toBe('multiple-command-changes');
+  });
+
+  it('requires an immediate null-rejecting consumer in the original query', () => {
+    const noConsumer = 'source=logs | rex field=body "logtype=(?<logtype>[^\\s]+)"';
+    expect(
+      validate(
+        "source=logs | where LIKE(body, '%logtype=%') " +
+          '| rex field=body "logtype=(?<logtype>[^\\s]+)"',
+        noConsumer
+      )
+    ).toEqual({ accepted: false, reason: 'no-null-rejecting-consumer' });
+  });
+
+  it('still rejects a newly introduced diagnostic before rewrite-policy checks', () => {
+    expect(
+      validate(
+        "source=logs | where LIKE(body, '%logtype=%') " +
+          '| rex field=body "logtype=(?<logtype>[^\\s]+)" ' +
+          "| where logtype = 'ws:access' | head 5"
+      ).reason
+    ).toBe('new-diagnostic');
   });
 });

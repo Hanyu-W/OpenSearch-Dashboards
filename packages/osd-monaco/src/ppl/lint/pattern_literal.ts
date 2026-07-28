@@ -81,6 +81,13 @@ export function decodePatternLiteral(raw: string): string {
   return body.split(doubled).join(delim);
 }
 
+export interface LeadingLiteralAnalysis {
+  /** Exact required prefix of every regex match. */
+  literalRun: string;
+  /** Analyzer-oriented token suitable for a manual match_phrase hint. */
+  token?: string;
+}
+
 // Length floor for a candidate prefilter token. Below this, tokens (`get`,
 // `log`, `id`) are usually too low-selectivity to be worth suggesting; length is
 // a usefulness heuristic, not a correctness lever.
@@ -110,6 +117,7 @@ const STOPWORDS: ReadonlySet<string> = new Set([
 // backslash is included so an escape (`\d`, `\.`, `\b`) is a hard stop — the
 // conservative choice, since we never want to reason about what an escape means.
 const REGEX_METACHAR = /[\\^$.|?*+()[\]{}]/;
+const RUN_QUANTIFIER = /[?*+{]/;
 
 // A clean, analyzer-safe candidate token: ASCII letters/digits only. This
 // deliberately rejects a token that contains `_` or any non-ASCII letter,
@@ -167,10 +175,10 @@ function hasTopLevelAlternation(decoded: string): boolean {
  * (find, not full-match), so for a pattern whose first characters form a literal
  * run with no quantifier/anchor/group/alternation affecting it, every matched
  * string contains that run as a contiguous substring. The returned token is
- * therefore a substring of every match — the one provably-safe superset term.
- * It is still only a *superset* (extraction is row-preserving, so a prefilter on
- * it changes `stats`/`count`/`sort` results); the caller must always present it
- * with that caveat and never auto-apply it.
+ * therefore a substring of every match. That fact alone does not make a
+ * prefilter result-preserving: extraction is row-preserving, so automatic
+ * callers must use the exact literal run and separately prove that downstream
+ * logic already rejects failed extraction.
  *
  * Steps (any may abort with `undefined`, always the safe default):
  *   1. bail on a top-level alternation anywhere;
@@ -181,7 +189,7 @@ function hasTopLevelAlternation(decoded: string): boolean {
  *      that is not pure-numeric, not a stopword, and at least MIN_TOKEN_LENGTH;
  *      return the longest survivor.
  */
-export function leadingLiteralToken(decoded: string): string | undefined {
+export function analyzeLeadingLiteral(decoded: string): LeadingLiteralAnalysis | undefined {
   if (hasTopLevelAlternation(decoded)) {
     return undefined;
   }
@@ -189,6 +197,12 @@ export function leadingLiteralToken(decoded: string): string | undefined {
   let run = '';
   for (const ch of decoded) {
     if (REGEX_METACHAR.test(ch)) {
+      // A quantifier here applies to the final character of `run`, so the
+      // complete run is not guaranteed to occur in every match. Decline rather
+      // than trying to shorten and re-analyze it.
+      if (RUN_QUANTIFIER.test(ch)) {
+        return undefined;
+      }
       break;
     }
     run += ch;
@@ -219,5 +233,9 @@ export function leadingLiteralToken(decoded: string): string | undefined {
       best = token;
     }
   }
-  return best;
+  return { literalRun: run, token: best };
+}
+
+export function leadingLiteralToken(decoded: string): string | undefined {
+  return analyzeLeadingLiteral(decoded)?.token;
 }

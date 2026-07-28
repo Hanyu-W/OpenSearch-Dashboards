@@ -68,6 +68,16 @@ describe('field-validation alternate-source suppression (compiled surface)', () 
         )
       ).toEqual([expect.stringContaining('Unknown field "x.response"')]);
     });
+
+    it('does not expose aliases from a join nested in the right-side subsearch', () => {
+      expect(
+        fieldDiags(
+          'search accounts | join left=l right=r on l.id = r.id ' +
+            '[search departments | join left=inner_l right=inner_r ' +
+            'on inner_l.id = inner_r.id teams] | where inner_l.response = 200'
+        )
+      ).toEqual([expect.stringContaining('Unknown field "inner_l.response"')]);
+    });
   });
 
   describe('alternate-source subtrees', () => {
@@ -206,12 +216,10 @@ describe('field-validation alternate-source suppression (compiled surface)', () 
       ).toEqual([expect.stringContaining('Unknown field "bogus"')]);
     });
 
-    it('a field referenced BEFORE the extraction (upstream) is not flagged (order-insensitive)', () => {
-      // Known limitation: createdFields is a flat, order-insensitive set, so a
-      // reference before the grok still resolves. Documented, not a defect.
+    it('flags a field referenced before the extraction creates it', () => {
       expect(
         fieldDiags('search accounts | where duration > 5 | grok status "%{NUMBER:duration}"')
-      ).toEqual([]);
+      ).toEqual([expect.stringContaining('Unknown field "duration"')]);
     });
 
     it('grok with no captures (%{SYNTAX} without colon) registers nothing', () => {
@@ -304,6 +312,70 @@ describe('field-validation alternate-source suppression (compiled surface)', () 
           'search accounts | join left=l right=r on l.id = r.id departments | grok status "%{NUMBER:dur}" | where dur > 5'
         )
       ).toEqual([]);
+    });
+
+    it('does not expose a field created inside append to the outer pipeline', () => {
+      expect(
+        fieldDiags(
+          'search accounts | append [search logs | eval inner_only = 1] | where inner_only = 1'
+        )
+      ).toEqual([expect.stringContaining('Unknown field "inner_only"')]);
+    });
+  });
+
+  describe('pipeline creation order', () => {
+    it('flags an eval field before it is created', () => {
+      expect(fieldDiags('search accounts | where x > 0 | eval x = 1')).toEqual([
+        expect.stringContaining('Unknown field "x"'),
+      ]);
+    });
+
+    it('accepts an eval field after it is created', () => {
+      expect(fieldDiags('search accounts | eval x = 1 | where x > 0')).toEqual([]);
+    });
+
+    it('flags a field before creation in a pipe-first query', () => {
+      expect(fieldDiags('| where x > 0 | eval x = 1')).toEqual([
+        expect.stringContaining('Unknown field "x"'),
+      ]);
+    });
+
+    it('accepts a field after creation in a pipe-first query', () => {
+      expect(fieldDiags('| eval x = 1 | where x > 0')).toEqual([]);
+    });
+
+    it('skips the eval target but still validates its right-hand side', () => {
+      expect(fieldDiags('search accounts | eval x = missing')).toEqual([
+        expect.stringContaining('Unknown field "missing"'),
+      ]);
+    });
+
+    it('makes an eval target available to later clauses in the same command', () => {
+      expect(fieldDiags('search accounts | eval x = 1, y = x + 1')).toEqual([]);
+    });
+
+    it('does not make a later eval target available to an earlier clause', () => {
+      expect(fieldDiags('search accounts | eval y = x + 1, x = 1')).toEqual([
+        expect.stringContaining('Unknown field "x"'),
+      ]);
+    });
+
+    it('flags an aggregate alias before its stage', () => {
+      expect(fieldDiags('search accounts | where total > 0 | stats count() as total')).toEqual([
+        expect.stringContaining('Unknown field "total"'),
+      ]);
+    });
+
+    it('accepts an aggregate alias after its stage', () => {
+      expect(fieldDiags('search accounts | stats count() as total | where total > 0')).toEqual([]);
+    });
+
+    it('does not apply a downstream join alias to an earlier stage', () => {
+      expect(
+        fieldDiags(
+          'search accounts | where l.response = 200 | join left=l right=r on l.id = r.id departments'
+        )
+      ).toEqual([expect.stringContaining('Unknown field "l.response"')]);
     });
   });
 });

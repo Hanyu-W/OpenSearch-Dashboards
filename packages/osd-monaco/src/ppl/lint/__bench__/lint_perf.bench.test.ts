@@ -120,11 +120,11 @@ describeBench('PPL lint performance benchmark', () => {
     );
   });
 
-  it('catalog shape is as documented (18 entries, 16 default-enabled, 6 context-gated)', () => {
+  it('catalog shape is as documented (19 entries, 19 enabled, 7 context-gated)', () => {
     const cat = getBundledCatalog();
-    expect(cat.length).toBe(18);
-    expect(cat.filter((c) => c.enabled).length).toBe(16);
-    expect(cat.filter((c) => c.needsContext).length).toBe(6);
+    expect(cat.length).toBe(19);
+    expect(cat.filter((c) => c.enabled).length).toBe(19);
+    expect(cat.filter((c) => c.needsContext).length).toBe(7);
   });
 
   // ── Axis 1a — compiled-worker path (no context, ~10 rules eligible) ───────

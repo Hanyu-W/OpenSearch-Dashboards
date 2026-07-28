@@ -20,11 +20,19 @@ export interface AppliesTo {
 }
 
 /**
+ * Concise, task-oriented guidance rendered in a lint hover card.
+ */
+export interface RuleHelp {
+  /** A concrete action the user can take. Supports trusted, static Markdown. */
+  howToFix: string;
+}
+
+/**
  * A single rule entry in the bundled JSON catalog. The catalog is the single
  * source of truth for which rules are enabled, their severity, message, doc
- * link, and version applicability.
+ * link, hover guidance, and version applicability.
  */
-export interface CatalogEntry {
+export interface CatalogEntry extends RuleHelp {
   /** rule identifier, e.g. 'invalid-capture-group-name'. */
   id: string;
   /** detector registry key. */
@@ -71,6 +79,20 @@ export type BundleRuleOverrides = Record<string, Partial<CatalogEntry>>;
 export interface LintPayloadContext {
   /** True when the data source is identified as running the Calcite engine. */
   isCalcite?: boolean;
+  /**
+   * Engine type reported by the data source saved object
+   * (`dataSourceEngineType`), e.g. `AnalyticEngine` for a Mustang-backed
+   * domain. Rules whose engine ground truth differs on the analytics engine
+   * read this rather than inferring from `isCalcite`: a Mustang domain sets
+   * both `plugins.calcite.enabled` and `cluster.pluggable.dataformat`, so
+   * `isCalcite` alone cannot tell the two apart.
+   *
+   * Treat as additive: the value is resolved once when the data source is
+   * registered and both the probe and the lint path fail open, so an
+   * analytics-engine domain can present as plain `OpenSearch`. Gate on the
+   * value being present, never on its absence.
+   */
+  dataSourceEngineType?: string;
   /** Index field names; empty/absent gates Bucket-B rules. */
   fields?: Set<string>;
   /** Field name -> esTypes[0]. */
@@ -99,6 +121,7 @@ export interface LintPayloadContext {
  */
 export interface WorkerLintContextPayload {
   isCalcite?: boolean;
+  dataSourceEngineType?: string;
   dataSourceId?: string;
   dataSourceVersion?: string;
   fields?: string[];

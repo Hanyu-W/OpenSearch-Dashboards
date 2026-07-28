@@ -42,6 +42,7 @@ const NOT_PUSHED_CONFIG: CatalogEntry = {
   enabled: true,
   severity: 'warning',
   message: 'fallback',
+  howToFix: 'fix',
   docUrl: 'https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/',
   appliesTo: { minVersion: '3.3.0', engine: 'calcite' },
 };
@@ -52,6 +53,7 @@ const PUSHED_AS_SCRIPT_CONFIG: CatalogEntry = {
   enabled: true,
   severity: 'info',
   message: 'fallback',
+  howToFix: 'fix',
   docUrl: 'https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/',
   appliesTo: { minVersion: '3.3.0', engine: 'calcite' },
 };
@@ -297,7 +299,9 @@ describe('explain detectors against captured and json_tree payloads', () => {
     const [diag] = operationNotPushedDetector(TREE_FIXTURES.aggNotPushedValues, NOT_PUSHED_CONFIG, {
       query: 'source=accounts | stats values(state)',
     });
-    expect(diag.message).toContain('aggregation');
+    expect(diag.message).toBe(
+      'This aggregation runs after the index scan, so every input row is returned to the PPL engine before aggregation.'
+    );
     // Leads with the user-visible consequence, no engine-internal jargon inline.
     expect(diag.message).not.toContain('coordinator');
     expect(diag.message).not.toContain('pushed');
@@ -337,6 +341,9 @@ describe('explain detectors against captured and json_tree payloads', () => {
     );
     expect(script.hoverFacts?.operation).toBe('filter');
     expect(script.explainTarget?.operation).toBe('filter');
+    expect(script.message).toBe(
+      'OpenSearch evaluates this filter as a script for every candidate document instead of using a native index query.'
+    );
 
     const [sortScript] = operationPushedAsScriptDetector(
       TREE_FIXTURES.sortEval,
@@ -345,6 +352,9 @@ describe('explain detectors against captured and json_tree payloads', () => {
     );
     expect(sortScript.hoverFacts?.operation).toBe('sort');
     expect(sortScript.explainTarget?.operation).toBe('sort');
+    expect(sortScript.message).toBe(
+      'OpenSearch computes this sort value with a script for every candidate document instead of reading an indexed field.'
+    );
   });
 });
 

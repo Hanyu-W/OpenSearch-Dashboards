@@ -117,6 +117,10 @@ jest.mock('./lint/hover/hover_registry', () => ({
   setModelHoverFacts: jest.fn(),
   clearModelHoverFacts: jest.fn(),
 }));
+jest.mock('./lint/ai_fix/ai_fix_registry', () => ({
+  setModelAiFixMetadata: jest.fn(),
+  clearModelAiFixMetadata: jest.fn(),
+}));
 
 // language.ts runs registerPPLLanguage() at import; the mocks above absorb it.
 // eslint-disable-next-line @typescript-eslint/no-var-requires

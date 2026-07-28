@@ -3,14 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { renderHook } from '@testing-library/react';
 import { act } from 'react';
 import { validatePPLLintFixCandidate } from '@osd/monaco';
-import { verifyPerformanceFixOutcome } from '../../../../../data/public';
+import { verifyPerformanceFixOutcome } from '../../../../../data/public/ppl_lint/verify_performance_fix_outcome';
 import {
   APPLY_PPL_LINT_FIX_EXPLORE_TOOL_DEFINITION,
+  TEST_PPL_LINT_FIX_EXPLORE_TOOL_DEFINITION,
   registerDisabledPPLLintFixAction,
   renderPPLLintFixAction,
   usePPLLintFixAction,
@@ -18,21 +18,32 @@ import {
 import {
   clearActivePPLLintFixSession,
   getActivePPLLintFixSession,
+  getPPLLintFixOutcome,
   setActivePPLLintFixSession,
 } from './ppl_lint_fix_session';
+import { PPL_LINT_FIX_EXPLORE_HOST } from './ppl_lint_fix_host';
 
 const mockRegisterAssistantAction = jest.fn();
 const mockSetEditorTextWithQuery = jest.fn();
 
+// Spread the real barrel: a bare object here would drop `monaco` itself, which
+// data/public's antlr constants dereference at module load.
 jest.mock('@osd/monaco', () => ({
+  ...jest.requireActual('@osd/monaco'),
   validatePPLLintFixCandidate: jest.fn(),
 }));
 
-jest.mock('../../../../../data/public', () => ({
+// The shared candidate evaluator imports this module directly, so mock the module
+// rather than the data/public barrel — the barrel must stay real because the
+// session store, evaluator and approve card now live behind it.
+jest.mock('../../../../../data/public/ppl_lint/verify_performance_fix_outcome', () => ({
   verifyPerformanceFixOutcome: jest.fn(),
 }));
 
+// Keep the real module's other exports: importing the shared fix flow from
+// data/public also loads data's UI barrel, which needs withOpenSearchDashboards.
 jest.mock('../../../../../opensearch_dashboards_react/public', () => ({
+  ...jest.requireActual('../../../../../opensearch_dashboards_react/public'),
   useOpenSearchDashboards: () => ({
     services: {
       contextProvider: {
@@ -57,6 +68,7 @@ jest.mock('@elastic/eui', () => ({
   EuiCodeBlock: ({ children }: any) => <pre>{children}</pre>,
   EuiFlexGroup: ({ children }: any) => <div>{children}</div>,
   EuiFlexItem: ({ children }: any) => <div>{children}</div>,
+  EuiPanel: ({ children, ...props }: any) => <div {...props}>{children}</div>,
   EuiSpacer: () => <div />,
   EuiText: ({ children }: any) => <div>{children}</div>,
 }));
@@ -100,6 +112,7 @@ describe('usePPLLintFixAction', () => {
 
   const setSession = (currentQuery = request.query) => {
     setActivePPLLintFixSession({
+      host: PPL_LINT_FIX_EXPLORE_HOST,
       request,
       getCurrentQuery: () => currentQuery,
       getLintContext: () =>
@@ -122,6 +135,67 @@ describe('usePPLLintFixAction', () => {
     expect(action.render).toBe(renderPPLLintFixAction);
   });
 
+  it('registers a silent test action that validates without updating the editor', async () => {
+    setSession();
+    act(() => {
+      renderHook(() => usePPLLintFixAction(mockSetEditorTextWithQuery));
+    });
+    const testAction = mockRegisterAssistantAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.name === 'test_ppl_lint_fix_explore');
+
+    expect(testAction.requiresConfirmation).toBe(false);
+    expect(testAction.render).toBeUndefined();
+    const result = await testAction.handler({
+      fixedQuery: 'source=logs | where response_status = 500',
+    });
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
+    expect(mockSetEditorTextWithQuery).not.toHaveBeenCalled();
+  });
+
+  it('returns the exact rewrite contract after a rejected silent candidate', async () => {
+    const fixInstructions =
+      "Insert exactly one `WHERE LIKE(body, '%logtype=%')` stage immediately before rex.";
+    setActivePPLLintFixSession({
+      host: PPL_LINT_FIX_EXPLORE_HOST,
+      request: {
+        ...request,
+        diagnostic: {
+          ...request.diagnostic,
+          ruleId: 'rex-scan-cost',
+          fixInstructions,
+        },
+      },
+      getCurrentQuery: () => request.query,
+      getLintContext: () => request.lintContext,
+    });
+    mockValidatePPLLintFixCandidate.mockReturnValue({
+      accepted: false,
+      reason: 'prefilter-not-exact-substring',
+    });
+    act(() => {
+      renderHook(() => usePPLLintFixAction(mockSetEditorTextWithQuery));
+    });
+    const testAction = mockRegisterAssistantAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.name === 'test_ppl_lint_fix_explore');
+
+    const result = await testAction.handler({
+      fixedQuery: "source=logs | where LIKE(body, '%logtype=ws:access%')",
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: false,
+        reason: 'prefilter-not-exact-substring',
+        requiredRewrite: fixInstructions,
+        message: expect.stringContaining('following requiredRewrite literally'),
+      })
+    );
+    expect(result.message).toContain('do not execute the query');
+    expect(mockSetEditorTextWithQuery).not.toHaveBeenCalled();
+  });
+
   it('applies a valid candidate through setEditorTextWithQuery', async () => {
     setSession();
     const action = renderAndGetAction();
@@ -139,9 +213,9 @@ describe('usePPLLintFixAction', () => {
       ruleId: 'unknown-field',
       lintContext: request.lintContext,
     });
-    expect(mockSetEditorTextWithQuery).toHaveBeenCalledWith(
-      'source=logs | where response_status = 500'
-    );
+    expect(
+      mockSetEditorTextWithQuery
+    ).toHaveBeenCalledWith('source=logs | where response_status = 500', { preserveUndo: true });
     expect(result).toEqual(
       expect.objectContaining({
         success: true,
@@ -186,9 +260,9 @@ describe('usePPLLintFixAction', () => {
     expect(result).toEqual(
       expect.objectContaining({ success: true, applied: true, requestId: 'req-1' })
     );
-    expect(mockSetEditorTextWithQuery).toHaveBeenCalledWith(
-      'source=logs | where response_status = 500'
-    );
+    expect(
+      mockSetEditorTextWithQuery
+    ).toHaveBeenCalledWith('source=logs | where response_status = 500', { preserveUndo: true });
   });
 
   it('rejects when the editor text changed after the request opened', async () => {
@@ -220,11 +294,14 @@ describe('usePPLLintFixAction', () => {
       fixedQuery: 'source=logs | where',
     });
 
+    // The shared evaluator reports a stable `reason` and carries the validator's
+    // own string in `validationReason`, so the model still sees the specific cause.
     expect(result).toEqual(
       expect.objectContaining({
         success: false,
         applied: false,
-        reason: 'syntax-error',
+        reason: 'invalid-candidate',
+        validationReason: 'syntax-error',
       })
     );
     expect(mockVerifyPerformanceFixOutcome).not.toHaveBeenCalled();
@@ -261,6 +338,7 @@ describe('usePPLLintFixAction', () => {
       },
     } as any;
     const session = {
+      host: PPL_LINT_FIX_EXPLORE_HOST,
       request: performanceRequest,
       getCurrentQuery: () => originalQuery,
       getLintContext: () => lintContext,
@@ -285,7 +363,9 @@ describe('usePPLLintFixAction', () => {
       expect.any(Function)
     );
     expect(currentDuringValidation).toBe(true);
-    expect(mockSetEditorTextWithQuery).toHaveBeenCalledWith(fixedQuery);
+    expect(mockSetEditorTextWithQuery).toHaveBeenCalledWith(fixedQuery, {
+      preserveUndo: true,
+    });
     expect(result).toEqual(expect.objectContaining({ success: true, applied: true }));
   });
 
@@ -302,7 +382,7 @@ describe('usePPLLintFixAction', () => {
       expect.objectContaining({
         success: false,
         applied: false,
-        reason: 'invalid-candidate',
+        reason: 'performance-not-cleared',
       })
     );
     expect(mockSetEditorTextWithQuery).not.toHaveBeenCalled();
@@ -317,6 +397,7 @@ describe('usePPLLintFixAction', () => {
       })
     );
     setActivePPLLintFixSession({
+      host: PPL_LINT_FIX_EXPLORE_HOST,
       request,
       getCurrentQuery: () => currentQuery,
       getLintContext: () => request.lintContext as any,
@@ -359,6 +440,11 @@ describe('APPLY_PPL_LINT_FIX_EXPLORE_TOOL_DEFINITION', () => {
   it('uses the Explore-specific action name', () => {
     expect(APPLY_PPL_LINT_FIX_EXPLORE_TOOL_DEFINITION.name).toBe('apply_ppl_lint_fix_explore');
   });
+
+  it('pairs the apply action with the derived silent test name', () => {
+    expect(TEST_PPL_LINT_FIX_EXPLORE_TOOL_DEFINITION.name).toBe('test_ppl_lint_fix_explore');
+    expect(TEST_PPL_LINT_FIX_EXPLORE_TOOL_DEFINITION.requiresConfirmation).toBe(false);
+  });
 });
 
 describe('registerDisabledPPLLintFixAction', () => {
@@ -384,6 +470,15 @@ describe('renderPPLLintFixAction', () => {
     const onApprove = jest.fn();
     const onReject = jest.fn();
 
+    // The card only offers the actions while a session is live — otherwise
+    // approving would fail with missing-request.
+    setActivePPLLintFixSession({
+      host: PPL_LINT_FIX_EXPLORE_HOST,
+      request,
+      getCurrentQuery: () => request.query,
+      getLintContext: () => request.lintContext as any,
+    });
+
     render(
       <>
         {renderPPLLintFixAction({
@@ -404,20 +499,57 @@ describe('renderPPLLintFixAction', () => {
     expect(screen.getByText('Use the mapped status field.')).toBeInTheDocument();
     expect(screen.getByText('source=logs | where response_status = 500')).toBeInTheDocument();
 
+    // Clicking either action retires both: the card is single-shot, so a fast
+    // second click cannot fire a second confirmation.
     fireEvent.click(screen.getByTestId('pplLintFixExploreApplyButton'));
-    fireEvent.click(screen.getByTestId('pplLintFixExploreDismissButton'));
 
     expect(onApprove).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('pplLintFixExploreApplyButton')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('pplLintFixExploreDismissButton')).not.toBeInTheDocument();
+    expect(onReject).not.toHaveBeenCalled();
+  });
+
+  it('marks a dismissal and retires the actions on Dismiss', () => {
+    const onApprove = jest.fn();
+    const onReject = jest.fn();
+
+    setActivePPLLintFixSession({
+      host: PPL_LINT_FIX_EXPLORE_HOST,
+      request,
+      getCurrentQuery: () => request.query,
+      getLintContext: () => request.lintContext as any,
+    });
+
+    render(
+      <>
+        {renderPPLLintFixAction({
+          status: 'pending',
+          args: {
+            requestId: 'req-1',
+            sourceQueryHash: 'hash-1',
+            fixedQuery: 'source=logs | where response_status = 500',
+          },
+          onApprove,
+          onReject,
+        })}
+      </>
+    );
+
+    fireEvent.click(screen.getByTestId('pplLintFixExploreDismissButton'));
+
     expect(onReject).toHaveBeenCalledTimes(1);
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(getPPLLintFixOutcome(request.requestId)).toEqual({ kind: 'dismissed' });
   });
 
   it('uses the short product message for a performance fix card', () => {
     setActivePPLLintFixSession({
+      host: PPL_LINT_FIX_EXPLORE_HOST,
       request: {
         ...request,
         diagnostic: {
           message:
-            'This filter may be slow because it does extra calculations. Compare the field directly instead.',
+            'OpenSearch evaluates this filter as a script for every candidate document instead of using a native index query.',
           ruleId: 'operation-pushed-as-script',
         },
       },
@@ -437,7 +569,7 @@ describe('renderPPLLintFixAction', () => {
 
     expect(
       screen.getByText(
-        'This filter may be slow because it does extra calculations. Compare the field directly instead.'
+        'OpenSearch evaluates this filter as a script for every candidate document instead of using a native index query.'
       )
     ).toBeInTheDocument();
     expect(
@@ -449,7 +581,7 @@ describe('renderPPLLintFixAction', () => {
 
     expect(
       screen.getByText(
-        'This filter may be slow because it does extra calculations. Compare the field directly instead.'
+        'OpenSearch evaluates this filter as a script for every candidate document instead of using a native index query.'
       )
     ).toBeInTheDocument();
     expect(

@@ -38,7 +38,9 @@ import * as antlr from 'antlr4ng';
 import { SimplifiedOpenSearchPPLLexer, SimplifiedOpenSearchPPLParser } from '@osd/antlr-grammar';
 import { getPPLLanguageAnalyzer } from '../../ppl_language_analyzer';
 import { buildPipelineShape } from '../pipeline_shape';
+import { PIPE_FIRST_PREFIX } from '../range_utils';
 import { createCompiledRuleNameToIndex } from '../rule_index';
+import { validateRexPrefilterRewrite } from '../rex_prefilter';
 import { LintRunContext } from '../types';
 
 /** Minimum fraction of the original's content tokens the fix must retain. */
@@ -56,19 +58,33 @@ export interface ValidateCandidateDeps {
   lint: (query: string) => CandidateLintFacts;
   /** The ordered pipeline command names of a query (e.g. ['searchCommand','evalCommand']). */
   pipelineShape: (query: string) => string[];
+  /** Optional test seam for a rule-specific rewrite policy. */
+  rewritePolicy?: (
+    original: string,
+    candidate: string,
+    ruleId: string
+  ) => ValidateCandidateResult | undefined;
 }
+
+export type ValidateCandidateReason =
+  | 'empty'
+  | 'syntax-error'
+  | 'diagnostic-not-cleared'
+  | 'new-diagnostic'
+  | 'shape-changed'
+  | 'low-overlap'
+  | 'operator-inverted'
+  | 'unsafe-prefilter'
+  | 'prefilter-not-before-extraction'
+  | 'prefilter-not-exact-substring'
+  | 'nonmatching-prefilter-field'
+  | 'no-null-rejecting-consumer'
+  | 'multiple-command-changes';
 
 export interface ValidateCandidateResult {
   accepted: boolean;
   /** A machine-readable reason when rejected (for telemetry / debugging). */
-  reason?:
-    | 'empty'
-    | 'syntax-error'
-    | 'diagnostic-not-cleared'
-    | 'new-diagnostic'
-    | 'shape-changed'
-    | 'low-overlap'
-    | 'operator-inverted';
+  reason?: ValidateCandidateReason;
 }
 
 /** Comparison operators, longest-first so `<=`/`>=`/`<>`/`!=`/`==` win over the single-char forms. */
@@ -212,12 +228,19 @@ export function validateCandidateFix(
     return { accepted: false, reason: 'new-diagnostic' };
   }
 
-  // 4. pipeline shape preserved (every original command kept, in order); a fix
-  //    may insert a row-reordering `sort` (the head-without-sort repair) but not
-  //    drop, reorder, or add an intent-changing command. See isShapePreserved.
+  // 4. Apply a registered rule-specific policy, otherwise require the default
+  //    pipeline-shape preservation rule. rex-scan-cost is intentionally always
+  //    policy-checked: changing the regex can preserve command names while
+  //    changing meaning just as surely as inserting an arbitrary WHERE.
   const origShape = deps.pipelineShape(original);
   const fixShape = deps.pipelineShape(trimmed);
-  if (!isShapePreserved(origShape, fixShape)) {
+  const policy =
+    deps.rewritePolicy?.(original, trimmed, originalRuleId) ??
+    compiledRuleRewritePolicy(original, trimmed, originalRuleId);
+  if (policy && !policy.accepted) {
+    return policy;
+  }
+  if (!policy && !isShapePreserved(origShape, fixShape)) {
     return { accepted: false, reason: 'shape-changed' };
   }
 
@@ -242,27 +265,50 @@ export function validateCandidateFix(
  * actually re-fire.
  */
 export function compiledLintFacts(query: string, ctx?: LintRunContext): CandidateLintFacts {
-  const validation = getPPLLanguageAnalyzer().validate(query);
-  const result = getPPLLanguageAnalyzer().lint(query, ctx);
+  const analyzer = getPPLLanguageAnalyzer();
+  const result = analyzer.lint(query, ctx);
   return {
     ruleIds: result.diagnostics.map((d) => d.ruleId),
-    syntaxClean: validation.isValid,
+    syntaxClean: analyzer.validateLintQueries([query])[0] ?? false,
   };
 }
 
 /** The ordered pipeline command names of a query, for intent preservation. */
 export function compiledPipelineShape(query: string): string[] {
+  const tree = compiledParseTree(query);
+  return tree
+    ? buildPipelineShape(tree, createCompiledRuleNameToIndex()).stages.map((s) => s.command)
+    : [];
+}
+
+function compiledParseTree(query: string): antlr.ParserRuleContext | undefined {
   try {
-    const cs = antlr.CharStream.fromString(query);
+    const effectiveQuery = query.trimStart().startsWith('|') ? PIPE_FIRST_PREFIX + query : query;
+    const cs = antlr.CharStream.fromString(effectiveQuery);
     const lx = new SimplifiedOpenSearchPPLLexer(cs);
     const ts = new antlr.CommonTokenStream(lx);
     const parser = new SimplifiedOpenSearchPPLParser(ts);
     parser.removeErrorListeners();
-    const tree = parser.root();
-    return buildPipelineShape(tree, createCompiledRuleNameToIndex()).stages.map((s) => s.command);
+    return parser.root();
   } catch {
-    return [];
+    return undefined;
   }
+}
+
+function compiledRuleRewritePolicy(
+  original: string,
+  candidate: string,
+  ruleId: string
+): ValidateCandidateResult | undefined {
+  if (ruleId !== 'rex-scan-cost') {
+    return undefined;
+  }
+  const originalTree = compiledParseTree(original);
+  const candidateTree = compiledParseTree(candidate);
+  if (!originalTree || !candidateTree) {
+    return { accepted: false, reason: 'multiple-command-changes' };
+  }
+  return validateRexPrefilterRewrite(originalTree, candidateTree, createCompiledRuleNameToIndex());
 }
 
 export function validatePPLLintFixCandidate({

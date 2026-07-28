@@ -465,8 +465,9 @@ describe('ppl_grammar_cache', () => {
 
     // Start ds-1 fetch
     pplGrammarCache.warmUp(http, mockUiSettings, undefined, 'ds-1', '3.6.0');
+    await Promise.resolve();
 
-    // Switch to ds-2 before ds-1 resolves
+    // Switch to ds-2 after ds-1's request starts but before it resolves.
     pplGrammarCache.warmUp(http, mockUiSettings, undefined, 'ds-2', '3.6.0');
     await flushPromises();
 
@@ -478,6 +479,132 @@ describe('ppl_grammar_cache', () => {
     await flushPromises();
 
     expect(pplGrammarCache.getCachedGrammar('ds-2')?.grammarHash).toBe('sha256:ds2');
+  });
+
+  it('should not fetch grammar after a stale remote version lookup resolves', async () => {
+    let resolveDs1Version!: (value: { attributes: { dataSourceVersion: string } }) => void;
+    const ds1Version = new Promise<{ attributes: { dataSourceVersion: string } }>((resolve) => {
+      resolveDs1Version = resolve;
+    });
+    const savedObjectsClient = ({
+      get: jest.fn((_type: string, id: string) =>
+        id === 'ds-1' ? ds1Version : Promise.resolve({ attributes: { dataSourceVersion: '3.7.0' } })
+      ),
+    } as unknown) as SavedObjectsClientContract;
+    const http = ({
+      get: jest.fn().mockResolvedValue(createBundle('sha256:ds2')),
+    } as unknown) as HttpSetup;
+
+    pplGrammarCache.warmUp(http, mockUiSettings, savedObjectsClient, 'ds-1');
+    pplGrammarCache.warmUp(http, mockUiSettings, savedObjectsClient, 'ds-2');
+    await flushPromises();
+
+    expect(pplGrammarCache.getCachedGrammar('ds-2')?.grammarHash).toBe('sha256:ds2');
+
+    resolveDs1Version({ attributes: { dataSourceVersion: '3.6.0' } });
+    await flushPromises();
+
+    expect(http.get).toHaveBeenCalledTimes(1);
+    expect(http.get).toHaveBeenCalledWith('/api/enhancements/ppl/grammar', {
+      query: { dataSourceId: 'ds-2' },
+      signal: expect.any(AbortSignal),
+    });
+    expect(pplGrammarCache.getCachedGrammar('ds-2')?.grammarHash).toBe('sha256:ds2');
+  });
+
+  it('should supersede a pending lookup when the same datasource receives a version', async () => {
+    let resolveLookup!: (value: { attributes: { dataSourceVersion: string } }) => void;
+    const lookup = new Promise<{ attributes: { dataSourceVersion: string } }>((resolve) => {
+      resolveLookup = resolve;
+    });
+    const savedObjectsClient = ({
+      get: jest.fn().mockReturnValue(lookup),
+    } as unknown) as SavedObjectsClientContract;
+    const http = ({
+      get: jest.fn().mockResolvedValue(createBundle('sha256:explicit-version')),
+    } as unknown) as HttpSetup;
+    const listener = jest.fn();
+    pplGrammarCache.subscribeToGrammarUpdates(listener);
+
+    pplGrammarCache.warmUp(http, mockUiSettings, savedObjectsClient, 'ds-1');
+    pplGrammarCache.warmUp(http, mockUiSettings, savedObjectsClient, 'ds-1', '3.7.0');
+    await flushPromises();
+
+    expect(http.get).toHaveBeenCalledTimes(1);
+    expect(pplGrammarCache.getCachedGrammar('ds-1')?.grammarHash).toBe('sha256:explicit-version');
+
+    resolveLookup({ attributes: { dataSourceVersion: '3.6.0' } });
+    await flushPromises();
+
+    expect(http.get).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(pplGrammarCache.getCachedGrammar('ds-1')?.grammarHash).toBe('sha256:explicit-version');
+  });
+
+  it('should not fetch local grammar after switching to a remote datasource', async () => {
+    let resolveLocalVersion!: (value: { version: string }) => void;
+    const localVersion = new Promise<{ version: string }>((resolve) => {
+      resolveLocalVersion = resolve;
+    });
+    const http = ({
+      get: jest.fn((url: string, options?: { query?: Record<string, string> }) => {
+        if (url === '/internal/data-source-management/localClusterVersion') {
+          return localVersion;
+        }
+        return Promise.resolve(createBundle(`sha256:${options?.query?.dataSourceId ?? 'local'}`));
+      }),
+    } as unknown) as HttpSetup;
+    const savedObjectsClient = ({
+      get: jest.fn().mockResolvedValue({ attributes: { dataSourceVersion: '3.7.0' } }),
+    } as unknown) as SavedObjectsClientContract;
+
+    pplGrammarCache.warmUp(http, mockUiSettings, savedObjectsClient);
+    pplGrammarCache.warmUp(http, mockUiSettings, savedObjectsClient, 'ds-remote');
+    await flushPromises();
+
+    expect(pplGrammarCache.getCachedGrammar('ds-remote')?.grammarHash).toBe('sha256:ds-remote');
+
+    resolveLocalVersion({ version: '3.6.0' });
+    await flushPromises();
+
+    const grammarCalls = (http.get as jest.Mock).mock.calls.filter(
+      ([url]) => url === '/api/enhancements/ppl/grammar'
+    );
+    expect(grammarCalls).toHaveLength(1);
+    expect(grammarCalls[0][1]).toEqual({
+      query: { dataSourceId: 'ds-remote' },
+      signal: expect.any(AbortSignal),
+    });
+    expect(pplGrammarCache.getCachedGrammar('ds-remote')?.grammarHash).toBe('sha256:ds-remote');
+  });
+
+  it('should discard an original datasource lookup after an A to B to A switch', async () => {
+    let resolveOriginalA!: (value: { attributes: { dataSourceVersion: string } }) => void;
+    const originalA = new Promise<{ attributes: { dataSourceVersion: string } }>((resolve) => {
+      resolveOriginalA = resolve;
+    });
+    const savedObjectsClient = ({
+      get: jest.fn().mockReturnValue(originalA),
+    } as unknown) as SavedObjectsClientContract;
+    const http = ({
+      get: jest
+        .fn()
+        .mockResolvedValueOnce(createBundle('sha256:new-a'))
+        .mockResolvedValueOnce(createBundle('sha256:stale-a')),
+    } as unknown) as HttpSetup;
+
+    pplGrammarCache.warmUp(http, mockUiSettings, savedObjectsClient, 'ds-a');
+    pplGrammarCache.warmUp(http, mockUiSettings, savedObjectsClient, 'ds-b', '2.17.0');
+    pplGrammarCache.warmUp(http, mockUiSettings, savedObjectsClient, 'ds-a', '3.7.0');
+    await flushPromises();
+
+    expect(pplGrammarCache.getCachedGrammar('ds-a')?.grammarHash).toBe('sha256:new-a');
+
+    resolveOriginalA({ attributes: { dataSourceVersion: '3.6.0' } });
+    await flushPromises();
+
+    expect(http.get).toHaveBeenCalledTimes(1);
+    expect(pplGrammarCache.getCachedGrammar('ds-a')?.grammarHash).toBe('sha256:new-a');
   });
 
   it('should not set fetchFailed from stale fetch failure when datasource changed', async () => {
@@ -497,8 +624,9 @@ describe('ppl_grammar_cache', () => {
 
     // Start ds-1 fetch
     pplGrammarCache.warmUp(http, mockUiSettings, undefined, 'ds-1', '3.6.0');
+    await Promise.resolve();
 
-    // Switch to ds-2 before ds-1 fails
+    // Switch to ds-2 after ds-1's request starts but before it fails.
     pplGrammarCache.warmUp(http, mockUiSettings, undefined, 'ds-2', '3.6.0');
     await flushPromises();
 
@@ -529,6 +657,7 @@ describe('ppl_grammar_cache', () => {
     pplGrammarCache.subscribeToGrammarUpdates(listener);
 
     pplGrammarCache.warmUp(http, mockUiSettings, undefined, 'ds-1', '3.6.0');
+    await Promise.resolve();
     pplGrammarCache.warmUp(http, mockUiSettings, undefined, 'ds-2', '3.6.0');
     await flushPromises();
 

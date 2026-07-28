@@ -114,6 +114,17 @@ jest.mock('../../../../../../data/public', () => {
     buildOverridesFromSettings: jest.fn(() => overrides),
     fetchVisibleIndices: jest.fn(() => Promise.resolve([])),
     fetchDisabledObjectFields: jest.fn(() => Promise.resolve(undefined)),
+    isPPLLintEnabled: jest.fn((capabilities) => capabilities?.queryEnhancements?.pplLint === true),
+    loadPPLLintFields: jest.fn(async ({ enabled, datasetId, getIndexPattern }) => {
+      if (!enabled || !datasetId) {
+        return {};
+      }
+      await getIndexPattern(datasetId);
+      return { datasetId };
+    }),
+    resolvePPLLintSettings: jest.fn((enabled, http) =>
+      enabled && http ? Promise.resolve() : undefined
+    ),
     calciteSettingsCache: {
       getCached: jest.fn(() => undefined),
       resolve: jest.fn(() => Promise.resolve({ isCalcite: false, allJoinTypesAllowed: false })),
@@ -205,6 +216,8 @@ import {
   getEffectiveLanguageForAutoComplete,
   attachPPLContexts,
   buildPPLLintContext,
+  loadPPLLintFields,
+  resolvePPLLintSettings,
   syncPPLLintContext,
 } from '../../../../../../data/public';
 import { onEditorRunActionCreator } from '../../../../application/utils/state_management/actions/query_editor';
@@ -218,6 +231,7 @@ import {
   selectQueryLanguage,
   selectQueryString,
   selectIsQueryEditorDirty,
+  selectDataset,
 } from '../../../../application/utils/state_management/selectors';
 
 const mockUseSelector = jest.mocked(useSelector);
@@ -275,6 +289,11 @@ describe('useQueryPanelEditor', () => {
     };
 
     mockServices = {
+      capabilities: {
+        queryEnhancements: {
+          pplLint: true,
+        },
+      },
       core: {
         chat: {
           isAvailable: jest.fn(() => true),
@@ -305,6 +324,9 @@ describe('useQueryPanelEditor', () => {
       },
       datasets: {
         get: jest.fn(() => Promise.resolve(mockDataset)),
+      },
+      dataViews: {
+        get: jest.fn(() => Promise.resolve({ fields: [] })),
       },
       uiSettings: {
         get: jest.fn(),
@@ -766,6 +788,43 @@ describe('useQueryPanelEditor', () => {
       const lastCtx = calls[calls.length - 1][1];
       expect(lastCtx.datasetTitle).toBe('MDS Dataset');
       expect(lastCtx.enableAIFeatures).toBe(true);
+    });
+  });
+
+  describe('PPL lint capability gating', () => {
+    it('does not start editor metadata or settings requests when lint is disabled', async () => {
+      const dataset = {
+        id: 'logs',
+        title: 'Logs',
+        dataSource: { id: 'ds-1', version: '3.7.0' },
+      };
+      mockServices.capabilities.queryEnhancements.pplLint = false;
+      mockServices.http = { get: jest.fn() };
+      mockUseSelector.mockImplementation((selector) => {
+        if (selector === selectDataset) return dataset;
+        if (selector === selectPromptModeIsAvailable) return false;
+        if (selector === selectQueryLanguage) return 'PPL';
+        if (selector === selectIsPromptEditorMode) return false;
+        if (selector === selectQueryString) return '';
+        if (selector === selectIsQueryEditorDirty) return false;
+        return '';
+      });
+
+      renderHook(() => useQueryPanelEditor());
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(loadPPLLintFields).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enabled: false,
+          datasetId: 'logs',
+          dataSourceId: 'ds-1',
+        })
+      );
+      expect(resolvePPLLintSettings).toHaveBeenCalledWith(false, mockServices.http, 'ds-1');
+      expect(mockServices.dataViews.get).not.toHaveBeenCalled();
+      expect(mockServices.http.get).not.toHaveBeenCalled();
     });
   });
 

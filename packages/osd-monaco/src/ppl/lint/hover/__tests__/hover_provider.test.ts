@@ -85,8 +85,9 @@ describe('pplLintHoverProvider', () => {
     markersByOwner[LINT_OWNER] = [makeMarker()];
     const hover = hoverAt(1, 7);
     expect(hover).not.toBeNull();
-    expect(markdownOf(hover)).toContain('**division-by-zero** · Warning');
-    expect(markdownOf(hover)).toContain('**Engine behavior** —');
+    expect(markdownOf(hover)).toContain('⚠️ **Warning**');
+    expect(markdownOf(hover)).toContain('**Fix** —');
+    expect(markdownOf(hover)).not.toContain('division-by-zero');
   });
 
   it('returns null when the cursor is outside every marker range', () => {
@@ -115,8 +116,8 @@ describe('pplLintHoverProvider', () => {
     setModelFixes(model, new Map([[markerFixKey(marker), fix]]));
 
     const md = markdownOf(hoverAt(1, 7));
-    expect(md).toContain('Closest known field: `revenue`');
-    expect(md).toContain('**Suggested fix** → `revenue`');
+    expect(md).not.toContain('Closest known field');
+    expect(md).toContain('**Quick fix available** — `revenue`');
   });
 
   it('picks the innermost marker when several overlap', () => {
@@ -134,17 +135,17 @@ describe('pplLintHoverProvider', () => {
     });
     markersByOwner[LINT_OWNER] = [outer, inner];
     const md = markdownOf(hoverAt(1, 7));
-    expect(md).toContain('**division-by-zero**');
-    expect(md).not.toContain('**agg-on-text**');
+    expect(md).toContain('inner');
+    expect(md).not.toContain('outer');
   });
 
-  it('still renders when code (ruleId) is absent, using a fallback id', () => {
+  it('still renders when code (ruleId) is absent', () => {
     const marker = makeMarker({ code: undefined, message: 'no code here' });
     markersByOwner[LINT_OWNER] = [marker];
     const md = markdownOf(hoverAt(1, 7));
     expect(md).toContain('no code here');
     // No static content, no doc link — but never throws / never blank.
-    expect(md).not.toContain('**Engine behavior**');
+    expect(md).not.toContain('**Fix**');
   });
 
   describe('AI "Ask AI to fix" action is not on the hover card', () => {

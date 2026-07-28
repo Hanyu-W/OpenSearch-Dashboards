@@ -4,10 +4,10 @@
  */
 
 import { monaco } from '../../../monaco';
+import { getBundledCatalogEntry } from '../catalog';
 import { LINT_MARKER_SOURCE, ruleIdOf } from '../diagnostic_to_marker';
 import { getModelFix, markerFixKey } from '../fix_registry';
 import { getModelHoverFacts } from './hover_registry';
-import { getRuleHoverContent } from './engine_outcomes';
 import { renderHoverCard, SeverityLabel } from './hover_card';
 
 /**
@@ -90,11 +90,10 @@ export const pplLintHoverProvider: monaco.languages.HoverProvider = {
     const fix = getModelFix(model, key);
 
     const value = renderHoverCard({
-      ruleId: ruleId ?? 'ppl-lint',
       severityLabel: severityLabel(marker.severity),
       message: marker.message,
       docUrl: docUrlOf(marker),
-      content: ruleId ? getRuleHoverContent(ruleId) : undefined,
+      content: ruleId ? getBundledCatalogEntry(ruleId) : undefined,
       facts,
       fixText: fix?.text,
     });

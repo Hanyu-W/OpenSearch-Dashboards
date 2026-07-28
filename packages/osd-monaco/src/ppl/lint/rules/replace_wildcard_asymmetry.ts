@@ -65,7 +65,9 @@ export const replaceWildcardAsymmetryDetector: Detector = (
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,
-        message: `replace wildcard counts are asymmetric: pattern has ${patternCount}, replacement has ${replacementCount}.`,
+        message: `The replace match has ${patternCount} "*" wildcard${
+          patternCount === 1 ? '' : 's'
+        }, but the replacement has ${replacementCount}. The counts must match.`,
         range: rangeFromContext(pair),
         docUrl: config.docUrl,
       });

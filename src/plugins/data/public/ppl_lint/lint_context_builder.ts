@@ -39,7 +39,13 @@ interface LintContextDataset {
   id?: string;
   /** Human-readable dataset name included in chat-based lint-fix requests. */
   title?: string;
-  dataSource?: { id?: string; version?: string };
+  /**
+   * `type` carries the saved object's `dataSourceEngineType` (see
+   * `DataView.dataSource`), which is how an analytics-engine (Mustang) domain
+   * is distinguished from a plain Calcite one — a Mustang domain enables
+   * Calcite too, so `isCalcite` cannot tell them apart.
+   */
+  dataSource?: { id?: string; version?: string; type?: string };
 }
 
 type PPLLintAiFixHooks = Pick<PPLLintContext, 'onAskAiFix' | 'aiFixToolName'>;
@@ -74,6 +80,7 @@ export function buildPPLLintContext(
     dataSourceId: dsId,
     dataSourceVersion: dsVersion,
     isCalcite: calcite?.isCalcite ?? deriveIsCalcite(dsVersion),
+    dataSourceEngineType: dataset?.dataSource?.type,
     settings: { allJoinTypesAllowed: calcite?.allJoinTypesAllowed ?? false },
     fields: cacheMatchesDataset ? lintFields.fields : undefined,
     typeMap: cacheMatchesDataset ? lintFields.typeMap : undefined,

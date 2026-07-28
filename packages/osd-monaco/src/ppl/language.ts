@@ -24,6 +24,8 @@ import {
 } from './lint/fix_registry';
 import { LINT_OWNER, pplLintHoverProvider } from './lint/hover/hover_provider';
 import { clearModelHoverFacts, HoverFacts, setModelHoverFacts } from './lint/hover/hover_registry';
+import { clearModelAiFixMetadata, setModelAiFixMetadata } from './lint/ai_fix/ai_fix_registry';
+import type { DiagnosticAiFix } from './lint/diagnostic';
 import {
   analyzeCompiledPPLLint,
   lintCompiledPPL,
@@ -245,6 +247,7 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
     monaco.editor.setModelMarkers(model, LINT_OWNER, []);
     clearModelFixes(model);
     clearModelHoverFacts(model);
+    clearModelAiFixMetadata(model);
     return;
   }
 
@@ -252,6 +255,7 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
     monaco.editor.setModelMarkers(model, LINT_OWNER, []);
     clearModelFixes(model);
     clearModelHoverFacts(model);
+    clearModelAiFixMetadata(model);
     return;
   }
 
@@ -282,10 +286,12 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
     // marker before handing it over.
     const fixes = new Map<string, MarkerFix>();
     const hoverFacts = new Map<string, HoverFacts>();
+    const aiFixMetadata = new Map<string, DiagnosticAiFix>();
     for (const marker of markers) {
       const withExtras = marker as monaco.editor.IMarkerData & {
         fix?: MarkerFix;
         hoverFacts?: HoverFacts;
+        aiFix?: DiagnosticAiFix;
       };
       const key = markerFixKey(marker);
       if (withExtras.fix) {
@@ -296,9 +302,14 @@ const processLintHighlighting = (model: monaco.editor.IModel): void => {
         hoverFacts.set(key, withExtras.hoverFacts);
         delete withExtras.hoverFacts;
       }
+      if (withExtras.aiFix) {
+        aiFixMetadata.set(key, withExtras.aiFix);
+        delete withExtras.aiFix;
+      }
     }
     setModelFixes(model, fixes);
     setModelHoverFacts(model, hoverFacts);
+    setModelAiFixMetadata(model, aiFixMetadata);
     monaco.editor.setModelMarkers(model, LINT_OWNER, markers);
   };
 
@@ -372,6 +383,7 @@ const setupPPLSyntaxHighlighting = () => {
           clearModelFixes(model);
           clearModelSyntaxFixes(model);
           clearModelHoverFacts(model);
+          clearModelAiFixMetadata(model);
         }
       })
     );
@@ -400,6 +412,7 @@ const setupPPLSyntaxHighlighting = () => {
       clearModelFixes(model);
       clearModelSyntaxFixes(model);
       clearModelHoverFacts(model);
+      clearModelAiFixMetadata(model);
     })
   );
 

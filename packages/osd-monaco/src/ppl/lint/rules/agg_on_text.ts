@@ -76,7 +76,7 @@ export const aggOnTextDetector: Detector = (tree, config, context, ruleNameToInd
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,
-        message: `Numeric aggregation "${aggName}" on text field "${fieldExpr.getText()}" returns null rather than a numeric result.`,
+        message: `${aggName} cannot calculate a number from text field "${fieldExpr.getText()}", so it returns no value (null).`,
         range: rangeFromContext(statsFunction),
         docUrl: config.docUrl,
         hoverFacts: { field: fieldExpr.getText(), esType, aggName },

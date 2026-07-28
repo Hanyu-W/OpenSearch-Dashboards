@@ -15,6 +15,13 @@ import { rangeFromContext } from '../range_utils';
 // and must never be flagged. Fires on all clusters regardless of engine.
 const DISABLED_JOIN_KEYWORDS: ReadonlySet<string> = new Set(['right', 'full', 'cross']);
 
+const DISABLED_JOIN_MESSAGES: Readonly<Record<string, string>> = {
+  right: 'A "right" join retains every row from the right dataset and is disabled by default.',
+  full: 'A "full" join retains unmatched rows from both datasets and is disabled by default.',
+  cross:
+    'A "cross" join can produce one result row for every pair of input rows and is disabled by default.',
+};
+
 /**
  * Collect the direct terminal token texts (lowercased) of a node.
  */
@@ -68,7 +75,7 @@ export const disabledJoinTypeDetector: Detector = (tree, config, context, ruleNa
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,
-        message: `Join type "${detected.keyword}" is disabled by default (set plugins.calcite.all_join_types.allowed to enable).`,
+        message: DISABLED_JOIN_MESSAGES[detected.keyword],
         range: rangeFromContext(detected.node),
         docUrl: config.docUrl,
       });

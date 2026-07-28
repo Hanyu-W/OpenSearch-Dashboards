@@ -5,7 +5,7 @@
 
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { UiSettingsParams } from 'opensearch-dashboards/server';
+import { UiSettingScope, UiSettingsParams } from 'opensearch-dashboards/server';
 import { getPplLintRuleSettings } from './ui_settings';
 import { UI_SETTINGS } from '../../data/common';
 
@@ -56,6 +56,11 @@ describe('query_enhancements PPL lint rules uiSetting', () => {
     it('groups the key under the search category', () => {
       const settings = getPplLintRuleSettings();
       expect(settings[KEY].category).toEqual(['search']);
+    });
+
+    it('is explicitly global scoped', () => {
+      const settings = getPplLintRuleSettings();
+      expect(settings[KEY].scope).toBe(UiSettingScope.GLOBAL);
     });
   });
 

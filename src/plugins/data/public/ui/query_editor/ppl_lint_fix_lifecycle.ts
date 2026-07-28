@@ -5,10 +5,8 @@
 
 import { withTimeout } from '@osd/std';
 import type { AssistantContextStore } from '../../../../context_provider/public';
-import {
-  cleanupPPLLintFixRequest,
-  PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX,
-} from '../../chat_tools/ppl_lint_fix_session';
+import { cleanupPPLLintFixRequest } from '../../chat_tools/ppl_lint_fix_session';
+import { PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX } from '../../chat_tools/ppl_lint_fix_tool_registration';
 import type {
   AskPPLLintFixRequest,
   RemovePPLLintFixContextById,
@@ -80,7 +78,11 @@ export class PPLLintFixLifecycle {
 
   public abandonRequest(requestId: string): boolean {
     const abandonedOwnedRequest = this.ownsRequest(requestId);
-    cleanupPPLLintFixRequest(requestId, this.removeContextById);
+    cleanupPPLLintFixRequest(
+      requestId,
+      PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX,
+      this.removeContextById
+    );
     if (abandonedOwnedRequest) {
       this.clearExpiryTimer();
       this.ownedRequestId = undefined;

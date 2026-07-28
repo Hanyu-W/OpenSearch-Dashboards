@@ -1,0 +1,243 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`all rule hover preview renders a reviewable card for every catalog rule 1`] = `
+"## \`invalid-capture-group-name\`
+
+❌ **Error**
+
+Capture group name \\"user\\\\_name\\" is invalid. Start with a letter and use only letters and numbers.
+
+**Fix** — Use PPL named groups in the form \`(?<name>...)\`. Start each name with a letter and use only letters and numbers.
+
+**Quick fix available** — \`username\`
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/rex/#parameters)
+
+---
+
+## \`unsupported-window-function-in-eventstats\`
+
+❌ **Error**
+
+Window function \\"rank\\" is not supported in eventstats/streamstats. Only row\\\\_number is supported.
+
+**Fix** — Use \`row_number()\` for a window value, or choose an aggregation supported by \`eventstats\` or \`streamstats\`, such as \`avg()\`.
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/eventstats/#aggregation-functions)
+
+---
+
+## \`dedup-consecutive-unsupported\`
+
+⚠️ **Warning**
+
+consecutive=true uses an older query engine and may make this query slower.
+
+**Fix** — Remove \`consecutive=true\` to use regular deduplication. No equivalent option preserves consecutive-only behavior.
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/limitation/#unsupported-functionalities)
+
+---
+
+## \`replace-wildcard-asymmetry\`
+
+❌ **Error**
+
+The replace match has 2 \\"\\\\*\\" wildcards, but the replacement has 1. The counts must match.
+
+**Fix** — Use the same number of \`*\` wildcards in the match and replacement patterns.
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/replace/#limitations)
+
+---
+
+## \`union-min-datasets\`
+
+❌ **Error**
+
+The union command requires at least two datasets.
+
+**Fix** — Add another dataset to \`union\`, or remove \`union\` when using only one dataset.
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/)
+
+---
+
+## \`multisearch-min-subsearch\`
+
+❌ **Error**
+
+The multisearch command requires at least two subsearches.
+
+**Fix** — Add a second subsearch, or run the single subsearch as a normal query.
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/multisearch/#limitations)
+
+---
+
+## \`disabled-join-type\`
+
+⚠️ **Warning**
+
+A \\"cross\\" join can produce one result row for every pair of input rows and is disabled by default.
+
+**Fix** — Use an \`inner\` or \`left\` join when it preserves the intended result. Otherwise, ask an administrator to enable \`plugins.calcite.all_join_types.allowed\`.
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/join/#limitations)
+
+---
+
+## \`head-without-sort\`
+
+ℹ️ **Info**
+
+Without sort, head can return different rows each time the query runs.
+
+**Fix** — Add \`sort\` before \`head\` when you need stable top or bottom results.
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/head/)
+
+---
+
+## \`field-validation\`
+
+❌ **Error**
+
+Unknown field \\"reveneu\\". Did you mean \\"revenue\\"?
+
+**Fix** — Correct the field name or PPL syntax. PPL runs commands left to right, so define a new field with \`eval\` before referencing it in a later command.
+
+**Quick fix available** — \`revenue\`
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/fields/)
+
+---
+
+## \`expand-on-non-array\`
+
+⚠️ **Warning**
+
+Field \\"status\\" may contain only one value, so expand may have nothing to split into rows.
+
+**Fix** — Use \`expand\` only with a field that contains multiple values. Otherwise, remove it.
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/expand/#limitations)
+
+---
+
+## \`wildcard-source-zero-match\`
+
+ℹ️ **Info**
+
+Source pattern \\"lgos-\\\\*\\" matches no known index.
+
+**Details** — Checked 47 visible indices. Similar names: \`logs-2026.07.25\`, \`logs-2026.07.26\`.
+
+**Fix** — Correct the \`source=\` pattern or choose an existing index.
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/search/)
+
+---
+
+## \`division-by-zero\`
+
+⚠️ **Warning**
+
+Dividing by zero returns no value (null) instead of an error.
+
+**Fix** — Use the intended divisor, or handle zero before dividing, for example \`if(total = 0, 0, errors / total)\`.
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/expressions/#arithmetic-operators)
+
+---
+
+## \`agg-on-text\`
+
+⚠️ **Warning**
+
+avg cannot calculate a number from text field \\"message\\", so it returns no value (null).
+
+**Fix** — Use a numeric field, or convert numeric text to a number before applying \`avg\`, \`sum\`, or a similar function.
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/aggregations/)
+
+---
+
+## \`flat-object-subfield\`
+
+❌ **Error**
+
+PPL cannot search \\"attributes.region\\" because it is stored inside the flat\\\\_object field \\"attributes\\".
+
+**Fix** — Use another field or query this data with DQL or the Search API. To use it in PPL, map and reindex it as a regular object field.
+
+[Learn more →](https://docs.opensearch.org/latest/mappings/supported-field-types/flat-object/#limitations)
+
+---
+
+## \`type-mismatch-numeric\`
+
+⚠️ **Warning**
+
+Field \\"status\\\\_code\\" is numeric, but \\"error\\" is not a number, so the comparison returns no rows.
+
+**Fix** — Compare the field with a number, such as \`500\`, or use the text field that contains the value you want.
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/conversion/#string-to-numeric-type-conversion)
+
+---
+
+## \`enabled-false-object\`
+
+⚠️ **Warning**
+
+Field \\"metadata.trace\\\\_id\\" is stored but not searchable, so PPL returns null for it.
+
+**Fix** — Query an indexed field instead. To make this value searchable, enable indexing in the mapping and reindex the data.
+
+[Learn more →](https://docs.opensearch.org/latest/mappings/mapping-parameters/enabled/#disabling-object-fields)
+
+---
+
+## \`rex-scan-cost\`
+
+ℹ️ **Info**
+
+rex runs the pattern against every input row from text field \\"body\\", even when it finds no match.
+
+**Fix** — Filter out rows that cannot match the pattern before extraction, using time or an indexed field.
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/commands/rex/)
+
+---
+
+## \`operation-not-pushed\`
+
+⚠️ **Warning**
+
+This filter runs after the index scan, so rows it rejects are still read and returned to the PPL engine.
+
+**Details** — Affected field: \`age\`. Comparison value: \`30\`.
+
+**Fix** — Rewrite the highlighted operation with indexed fields and supported functions so the PPL engine can include it in the index request.
+
+**Quick fix available** — \`age > 32\`
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/limitation/)
+
+---
+
+## \`operation-pushed-as-script\`
+
+ℹ️ **Info**
+
+OpenSearch evaluates this filter as a script for every candidate document instead of using a native index query.
+
+**Details** — Affected field: \`age\`. Comparison value: \`30\`.
+
+**Fix** — Use a direct field comparison or sort on an indexed field so OpenSearch can use a native query or field sort.
+
+**Quick fix available** — \`age > 32\`
+
+[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/limitation/)"
+`;

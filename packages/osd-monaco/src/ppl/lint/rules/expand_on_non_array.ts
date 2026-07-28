@@ -34,7 +34,7 @@ export const expandOnNonArrayDetector: Detector = (tree, config, context, ruleNa
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,
-        message: `expand target "${fieldName}" has type "${esType}", which is not an array/nested/object type.`,
+        message: `Field "${fieldName}" may contain only one value, so expand may have nothing to split into rows.`,
         range: rangeFromContext(fieldExpr),
         docUrl: config.docUrl,
         hoverFacts: { field: fieldName, esType },

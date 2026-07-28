@@ -665,5 +665,53 @@ export { calciteSettingsCache } from './ppl_lint/calcite_settings';
 export { buildOverridesFromSettings } from './ppl_lint/lint_overrides';
 export { fetchVisibleIndices } from './ppl_lint/visible_indices';
 export { getAiAgentAvailableForDataSource } from './ppl_lint/ai_agent_availability';
+export {
+  isPPLLintEnabled,
+  loadPPLLintFields,
+  resolvePPLLintSettings,
+} from './ppl_lint/lint_metadata';
 export { verifyPerformanceFixOutcome } from './ppl_lint/verify_performance_fix_outcome';
 export { pplGrammarCache, shouldUseRuntimeGrammar } from './antlr/opensearch_ppl/ppl_grammar_cache';
+
+// AI lint-fix flow, shared by every editor host. A host supplies a PPLLintFixHost
+// descriptor and an apply handler; the session store, candidate evaluator, silent
+// test tool, and approve card are common.
+export {
+  cleanupPPLLintFixRequest,
+  clearPPLLintFixSession,
+  getPPLLintFixOutcome,
+  getPPLLintFixSession,
+  markPPLLintFixApplied,
+  markPPLLintFixDismissed,
+  markPPLLintFixFailed,
+  storePPLLintFixSession,
+  subscribePPLLintFixOutcome,
+} from './chat_tools/ppl_lint_fix_session';
+export type {
+  PPLLintFixOutcome,
+  PPLLintFixSession,
+  RemovePPLLintFixContextById,
+} from './chat_tools/ppl_lint_fix_session';
+export {
+  buildApplyToolDescription,
+  buildRetryContractMessage,
+  buildTestToolDescription,
+  PERFORMANCE_RULE_IDS,
+  PPL_LINT_FIX_APPLY_PARAMETERS,
+  PPL_LINT_FIX_TEST_PARAMETERS,
+} from './chat_tools/ppl_lint_fix_host';
+export type { PPLLintFixHost } from './chat_tools/ppl_lint_fix_host';
+export {
+  evaluatePPLLintFixCandidate,
+  runPPLLintFixTestTool,
+} from './chat_tools/evaluate_ppl_lint_fix_candidate';
+export type {
+  PPLLintFixCandidateEvaluation,
+  PPLLintFixTestToolResult,
+} from './chat_tools/evaluate_ppl_lint_fix_candidate';
+export { PPLLintFixCard, PPL_LINT_FIX_UI_BINDING } from './chat_tools/ppl_lint_fix_card';
+export type {
+  BoundPPLLintFixToolArgs,
+  PPLLintFixCardProps,
+  PPLLintFixToolArgs,
+} from './chat_tools/ppl_lint_fix_card';

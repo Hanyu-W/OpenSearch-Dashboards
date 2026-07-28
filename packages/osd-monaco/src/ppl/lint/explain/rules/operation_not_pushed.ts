@@ -42,18 +42,19 @@ const SIGNALS: NotPushedSignal[] = [
     outcome: 'filter:coordinator',
     operation: 'filter',
     message:
-      'This filter may be slow because it does extra work. Use a simpler filter when possible.',
+      'This filter runs after the index scan, so rows it rejects are still read and returned to the PPL engine.',
   },
   {
     outcome: 'aggregation:coordinator',
     operation: 'aggregation',
     message:
-      'This aggregation may be slow on large amounts of data. Use a simpler calculation when possible.',
+      'This aggregation runs after the index scan, so every input row is returned to the PPL engine before aggregation.',
   },
   {
     outcome: 'sort:coordinator',
     operation: 'sort',
-    message: 'This sort may be slow. Sort by an existing field when possible.',
+    message:
+      'This sort runs after the index scan, so all input rows are returned and sorted by the PPL engine.',
   },
 ];
 

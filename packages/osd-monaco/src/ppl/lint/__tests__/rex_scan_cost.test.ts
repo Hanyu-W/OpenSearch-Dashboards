@@ -27,6 +27,7 @@ describe('rex-scan-cost (compiled surface)', () => {
     ['raw_log', 'text'],
     ['message', 'text'],
     ['email', 'text'],
+    ['body', 'text'],
     ['host', 'keyword'],
     ['status', 'long'],
   ]);
@@ -109,10 +110,10 @@ describe('rex-scan-cost (compiled surface)', () => {
       ).not.toContain('rex-scan-cost');
     });
 
-    it('ships disabled by default (no finding without the override)', () => {
+    it('ships enabled by default', () => {
       expect(
         ids('source=logs | rex field=raw_log "GET (?<path>\\S+)"', { fields, typeMap })
-      ).not.toContain('rex-scan-cost');
+      ).toContain('rex-scan-cost');
     });
   });
 
@@ -145,30 +146,25 @@ describe('rex-scan-cost (compiled surface)', () => {
     });
   });
 
-  describe('leading-literal prefilter hint', () => {
-    // The exhaustive token matrix lives in pattern_literal.test.ts; here we
-    // verify the rule wires the token into the message end-to-end and leaves the
-    // hoverFacts / advisory posture untouched.
+  describe('prefilter mitigation', () => {
+    const advisory =
+      'rex runs the pattern against every input row from text field "raw_log", even when it finds no match.';
 
-    it('names the analyzed token and both filter forms when the pattern has a clean leading literal', () => {
+    it('keeps an unsafe-to-insert prefix advisory-only', () => {
       const found = diag(`source=logs | rex field=raw_log '"level":"(?<lvl>[^"]+)"'`);
-      expect(found?.message).toContain('the token "level"');
-      expect(found?.message).toContain("where raw_log like '%level%'");
-      expect(found?.message).toContain("match_phrase(raw_log, 'level')");
-      // The verify caveat is always present, base or enriched.
-      expect(found?.message).toContain('can drop rows');
+      expect(found?.message).toBe(advisory);
+      expect(found?.aiFix).toEqual({ eligible: false });
     });
 
     it('decodes a doubled-double-quote literal before scanning', () => {
       const found = diag('source=logs | rex field=raw_log """level"":""(?<l>[^""]+)"""');
-      expect(found?.message).toContain('the token "level"');
+      expect(found?.message).toBe(advisory);
     });
 
-    it('emits only the base message (no token) on a top-level alternation', () => {
+    it('keeps a top-level alternation advisory-only', () => {
       const found = diag('source=logs | rex field=raw_log "GET|POST (?<m>\\S+)"');
       expect(found?.ruleId).toBe('rex-scan-cost'); // still fires
-      expect(found?.message).not.toContain('the token');
-      expect(found?.message).not.toContain('match_phrase');
+      expect(found?.message).toBe(advisory);
     });
 
     it('emits only the base message on a leading metaclass', () => {
@@ -187,18 +183,116 @@ describe('rex-scan-cost (compiled surface)', () => {
       expect(found?.message).not.toContain('the token');
     });
 
-    it('never sets hoverFacts.suggestion (the token rides the message only)', () => {
+    it('keeps hover facts limited to source-field metadata', () => {
       // hoverFacts.suggestion renders as "Closest known field", which would
-      // wrongly imply the token replaces the source field — so the enriched
-      // finding must keep hoverFacts to { field, esType }.
+      // wrongly imply that a pattern token replaces the source field.
       const found = diag(`source=logs | rex field=raw_log '"level":"(?<lvl>[^"]+)"'`);
       expect(found?.hoverFacts).toEqual({ field: 'raw_log', esType: 'text' });
     });
 
-    it('keeps the advisory posture on the enriched finding (info, no fix)', () => {
+    it('keeps the advisory posture on an unproven finding (info, no fix)', () => {
       const found = diag(`source=logs | rex field=raw_log '"level":"(?<lvl>[^"]+)"'`);
       expect(found?.severity).toBe('info');
       expect(found?.fix).toBeUndefined();
+    });
+
+    it('suppresses a rex with an exact preceding match_phrase prefilter', () => {
+      expect(
+        diag(
+          "source=logs | where match_phrase(body, 'logtype') " +
+            '| rex field=body "logtype=(?<logtype>[^\\s]+)"'
+        )
+      ).toBeUndefined();
+    });
+
+    it('suppresses a rex with an exact preceding substring prefilter', () => {
+      expect(
+        diag(
+          "source=logs | where LIKE(body, '%logtype=%') " +
+            '| rex field=body "logtype=(?<logtype>[^\\s]+)"'
+        )
+      ).toBeUndefined();
+    });
+
+    it('does not suppress for a wrong or post-extraction prefilter', () => {
+      expect(
+        diag(
+          "source=logs | where match_phrase(body, 'message') " +
+            '| rex field=body "logtype=(?<logtype>[^\\s]+)"'
+        )
+      ).toBeDefined();
+      expect(
+        diag(
+          'source=logs | rex field=body "logtype=(?<logtype>[^\\s]+)" ' +
+            "| where LIKE(body, '%logtype=%')"
+        )
+      ).toBeDefined();
+    });
+
+    it('suppresses only the extraction covered by the prefilter', () => {
+      const diagnostics = analyzer
+        .lint(
+          "source=logs | where match_phrase(body, 'logtype') " +
+            '| rex field=body "logtype=(?<logtype>[^\\s]+)" ' +
+            '| rex field=body "message=(?<message>.*)"',
+          enabled
+        )
+        .diagnostics.filter((candidate) => candidate.ruleId === 'rex-scan-cost');
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0].range.startColumn).toBeGreaterThan(70);
+    });
+
+    it('marks the reported safe shape as AI-fixable with an exact LIKE contract', () => {
+      const found = diag(
+        'source=logs | rex field=body "logtype=(?<logtype>[^\\s]+)" ' +
+          "| where logtype = 'ws:access'"
+      );
+      expect(found?.message).toContain('later WHERE on "logtype"');
+      expect(found?.aiFix).toEqual(
+        expect.objectContaining({
+          eligible: true,
+          instructions: expect.stringContaining("WHERE LIKE(body, '%logtype=%')"),
+        })
+      );
+    });
+
+    it('does not offer AI without an immediate null-rejecting consumer', () => {
+      const found = diag(
+        'source=logs | rex field=body "logtype=(?<logtype>[^\\s]+)" | stats count()'
+      );
+      expect(found?.aiFix).toEqual({ eligible: false });
+    });
+
+    it('fixes the reported detector loop with the exact-substring prefilter', () => {
+      const original = [
+        'source=logs-pr172502-2026.04.05',
+        "| WHERE `@timestamp` >= '2026-04-05 00:00:00' AND `@timestamp` <= '2026-04-05 23:59:59'",
+        '| rex field=body "logtype=(?<logtype>[^\\s]+) http_status=(?<httpstatus>\\d+) uri=\\"(?<uri>[^\\"]+)\\""',
+        "| WHERE logtype = 'ws:access'",
+        "| WHERE LIKE(httpstatus, '5%')",
+        '| stats count() as errors by uri, httpstatus',
+        '| eventstats sum(errors) as total_errors',
+        '| eval error_share_pct = round(errors * 100.0 / total_errors, 2)',
+        '| sort - errors, + uri',
+        '| head 10',
+      ].join(' ');
+      expect(diag(original)).toBeDefined();
+
+      const fixed = original.replace(
+        '| rex field=body',
+        "| WHERE LIKE(body, '%logtype=%') | rex field=body"
+      );
+      expect(diag(fixed)).toBeUndefined();
+    });
+
+    it('never throws on malformed or partially parsed extraction input', () => {
+      for (const query of [
+        'source=logs | rex field=body "logtype=(?<logtype>',
+        'source=logs | where LIKE(body,',
+        'source=logs | rex',
+      ]) {
+        expect(() => analyzer.lint(query, enabled)).not.toThrow();
+      }
     });
   });
 });

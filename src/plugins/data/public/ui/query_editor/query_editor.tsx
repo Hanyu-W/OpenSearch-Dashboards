@@ -49,11 +49,13 @@ import {
   PPLDetachRefs,
 } from './lint_context';
 import { buildPPLLintContext, LintFieldsCache } from '../../ppl_lint/lint_context_builder';
-import { fetchDisabledObjectFields } from '../../ppl_lint/disabled_object_fields';
-import { calciteSettingsCache } from '../../ppl_lint/calcite_settings';
-import { fetchVisibleIndices } from '../../ppl_lint/visible_indices';
-import { getAiAgentAvailableForDataSource } from '../../ppl_lint/ai_agent_availability';
+import {
+  isPPLLintEnabled,
+  loadPPLLintFields,
+  resolvePPLLintSettings,
+} from '../../ppl_lint/lint_metadata';
 import { storePPLLintFixSession } from '../../chat_tools/ppl_lint_fix_session';
+import { PPL_LINT_FIX_DATA_HOST } from '../../chat_tools/ppl_lint_fix_tool_registration';
 import type { AskPPLLintFixRequest } from '../../chat_tools/ppl_lint_fix_session';
 import { addPPLLintFixAssistantContext, PPLLintFixLifecycle } from './ppl_lint_fix_lifecycle';
 
@@ -121,6 +123,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
   const languageManager = queryString.getLanguageService();
   const extensionMap = languageManager.getQueryEditorExtensionMap();
   const services = props.opensearchDashboards.services;
+  const pplLintEnabled = isPPLLintEnabled(services.application?.capabilities);
   const pplLintFixLifecycleRef = useRef<PPLLintFixLifecycle>();
   if (!pplLintFixLifecycleRef.current) {
     pplLintFixLifecycleRef.current = new PPLLintFixLifecycle((contextId) => {
@@ -166,6 +169,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
   function onAskAiFix(request: AskPPLLintFixRequest): void {
     pplLintFixLifecycle.beginRequest(request.requestId);
     const session = {
+      host: PPL_LINT_FIX_DATA_HOST,
       request,
       getCurrentQuery: () => inputRef.current?.getValue() ?? toUser(queryRef.current.query),
       getCurrentQueryState: () => queryString.getQuery(),
@@ -290,80 +294,34 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     };
 
     const loadFields = async () => {
-      if (!datasetId) {
-        // No dataset selected: drop any cached fields so field-aware rules
-        // self-suppress instead of running against the previous dataset's
-        // metadata, then push the cleared context.
-        lintFieldsRef.current = {};
-        syncLint();
-        return;
-      }
       try {
-        const indexPattern = await getIndexPatterns().get(datasetId);
-        if (cancelled) {
-          return;
-        }
-        const fields = new Set<string>();
-        const typeMap = new Map<string, string>();
-        for (const field of indexPattern.fields ?? []) {
-          if (!field?.name) {
-            continue;
-          }
-          fields.add(field.name);
-          const esType = field.esTypes?.[0];
-          if (esType) {
-            typeMap.set(field.name, esType);
-          }
-        }
-
-        // The `enabled: false` object attribute is stripped by `_field_caps`
-        // (and so absent from `indexPattern.fields`); fetch it separately from
-        // the read-only mappings route. Best-effort: on any failure the set is
-        // left undefined and the `enabled-false-object` rule self-suppresses.
-        // The visible-index list (for wildcard-source-zero-match) is fetched
-        // concurrently so the two loads stay in step — both gate the same
-        // single-phase context update below.
-        // Probe per-source AI reachability only when chat is wired at all —
-        // otherwise the AI button is already hidden by the missing opener, so the
-        // probe would be a wasted call on every dataset switch. Fail-open when
-        // unprobed (undefined leaves the action shown).
-        const shouldProbeAi = Boolean(services.http && (services.chat?.isAvailable?.() ?? false));
-        const [
-          disabledObjectFields,
-          visibleIndices,
-          aiAgentAvailableForSource,
-        ] = await Promise.all([
-          services.http
-            ? fetchDisabledObjectFields(services.http, indexPattern)
-            : Promise.resolve(undefined),
-          services.http ? fetchVisibleIndices(services.http, dsId) : Promise.resolve([]),
-          shouldProbeAi
-            ? getAiAgentAvailableForDataSource(services.http!, dsId, 5000)
-            : Promise.resolve(undefined),
-        ]);
-        if (cancelled) {
-          return;
-        }
-
-        lintFieldsRef.current = {
+        const lintFields = await loadPPLLintFields({
+          enabled: pplLintEnabled,
           datasetId,
-          fields,
-          typeMap,
-          disabledObjectFields,
-          visibleIndices,
-          aiAgentAvailableForSource,
-        };
+          dataSourceId: dsId,
+          getIndexPattern: (id) => getIndexPatterns().get(id),
+          http: services.http,
+          probeAiAgent: Boolean(services.chat?.isAvailable?.() ?? false),
+        });
+        if (cancelled) {
+          return;
+        }
+        lintFieldsRef.current = lintFields;
         // Single-phase update after the async load resolves (R8.5).
         syncLint();
       } catch {
-        // On failure, leave fields unset so field-aware rules self-suppress.
+        if (!cancelled) {
+          lintFieldsRef.current = {};
+          syncLint();
+        }
       }
     };
 
     void loadFields();
 
-    if (services.http) {
-      calciteSettingsCache.resolve(services.http, dsId).then(() => {
+    const settingsRequest = resolvePPLLintSettings(pplLintEnabled, services.http, dsId);
+    if (settingsRequest) {
+      settingsRequest.then(() => {
         if (!cancelled) syncLint();
       });
     }
@@ -379,6 +337,7 @@ export const QueryEditorUI: React.FC<Props> = (props) => {
     query.dataset?.id,
     query.dataset?.dataSource?.id,
     query.dataset?.dataSource?.version,
+    pplLintEnabled,
     services.http,
     services.uiSettings,
   ]);

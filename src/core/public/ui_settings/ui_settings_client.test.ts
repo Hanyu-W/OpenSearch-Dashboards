@@ -36,7 +36,13 @@ import { UiSettingsApi } from './ui_settings_api';
 
 let done$: Subject<unknown>;
 
-function setup(options: { defaults?: any; initialSettings?: any } = {}) {
+function setup(
+  options: {
+    defaults?: any;
+    initialSettings?: any;
+    broadcastChannel?: BroadcastChannel;
+  } = {}
+) {
   const {
     defaults = {
       dateFormat: { value: 'Browser' },
@@ -78,6 +84,7 @@ function setup(options: { defaults?: any; initialSettings?: any } = {}) {
     initialSettings,
     uiSettingApis,
     done$,
+    broadcastChannel: options.broadcastChannel,
   });
 
   return { client, batchSet, getAll };
@@ -424,6 +431,94 @@ describe('#getUpdate$', () => {
     expect(onComplete).not.toHaveBeenCalled();
     done$.complete();
     expect(onComplete).toHaveBeenCalled();
+  });
+});
+
+describe('cross-tab synchronization', () => {
+  class MockBroadcastChannel {
+    public readonly postMessage = jest.fn();
+    public readonly close = jest.fn();
+    private messageListener?: (event: MessageEvent<unknown>) => void;
+
+    public addEventListener(type: string, listener: (event: MessageEvent<unknown>) => void) {
+      if (type === 'message') {
+        this.messageListener = listener;
+      }
+    }
+
+    public removeEventListener(type: string, listener: (event: MessageEvent<unknown>) => void) {
+      if (type === 'message' && this.messageListener === listener) {
+        this.messageListener = undefined;
+      }
+    }
+
+    public receive(data: unknown) {
+      this.messageListener?.({ data } as MessageEvent<unknown>);
+    }
+  }
+
+  const asBroadcastChannel = (channel: MockBroadcastChannel) =>
+    (channel as unknown) as BroadcastChannel;
+
+  it('broadcasts an invalidation only after a setting is saved', async () => {
+    const channel = new MockBroadcastChannel();
+    const { client } = setup({ broadcastChannel: asBroadcastChannel(channel) });
+
+    await expect(client.set('dateFormat', 'ISO')).resolves.toBe(true);
+
+    expect(channel.postMessage).toHaveBeenCalledWith({
+      type: 'saved',
+      key: 'dateFormat',
+    });
+  });
+
+  it('refreshes its cache and emits updates for a save in another tab', async () => {
+    const channel = new MockBroadcastChannel();
+    const handler = jest.fn();
+    const savedHandler = jest.fn();
+    const { client, getAll } = setup({ broadcastChannel: asBroadcastChannel(channel) });
+    getAll.mockResolvedValue({
+      settings: {
+        dateFormat: { userValue: 'ISO' },
+      },
+    });
+    const updateReceived = new Promise<void>((resolve) => {
+      client.getUpdate$().subscribe(() => resolve());
+    });
+    client.getUpdate$().subscribe(handler);
+    client.getSaved$().subscribe(savedHandler);
+
+    channel.receive({ type: 'saved', key: 'dateFormat' });
+    await updateReceived;
+
+    expect(getAll).toHaveBeenCalledTimes(1);
+    expect(client.get('dateFormat')).toBe('ISO');
+    expect(handler).toHaveBeenCalledWith({
+      key: 'dateFormat',
+      newValue: 'ISO',
+      oldValue: 'Browser',
+    });
+    expect(savedHandler).not.toHaveBeenCalled();
+  });
+
+  it('ignores malformed cross-tab messages', async () => {
+    const channel = new MockBroadcastChannel();
+    const { getAll } = setup({ broadcastChannel: asBroadcastChannel(channel) });
+
+    channel.receive({ type: 'saved' });
+    channel.receive({ type: 'unknown', key: 'dateFormat' });
+    await Promise.resolve();
+
+    expect(getAll).not.toHaveBeenCalled();
+  });
+
+  it('closes the broadcast channel when the client stops', () => {
+    const channel = new MockBroadcastChannel();
+    setup({ broadcastChannel: asBroadcastChannel(channel) });
+
+    done$.complete();
+
+    expect(channel.close).toHaveBeenCalledTimes(1);
   });
 });
 

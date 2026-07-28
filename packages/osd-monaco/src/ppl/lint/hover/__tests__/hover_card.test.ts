@@ -3,222 +3,147 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { renderHoverCard } from '../hover_card';
-import { getRuleHoverContent } from '../engine_outcomes';
+import { getBundledCatalogEntry } from '../../catalog';
+import { HoverCardInput, renderHoverCard } from '../hover_card';
+
+function render(overrides: Partial<HoverCardInput> = {}): string {
+  return renderHoverCard({
+    severityLabel: 'Warning',
+    message: 'Something happened.',
+    ...overrides,
+  });
+}
 
 describe('renderHoverCard', () => {
-  it('renders the engine-behavior line and verified version for division-by-zero', () => {
-    const md = renderHoverCard({
-      ruleId: 'division-by-zero',
-      severityLabel: 'Warning',
-      message: 'Division by literal zero evaluates to null rather than raising an error.',
+  it('renders a concise, action-oriented division-by-zero card', () => {
+    const md = render({
+      message: 'Dividing by zero returns no value (null) instead of an error.',
       docUrl:
         'https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/expressions/#arithmetic-operators',
-      content: getRuleHoverContent('division-by-zero'),
+      content: getBundledCatalogEntry('division-by-zero'),
       facts: { literal: '0' },
     });
-    expect(md).toContain('**division-by-zero** · Warning');
-    expect(md).toContain('**Engine behavior** —');
-    expect(md).toContain('evaluates to null');
-    expect(md).toContain('verified on OpenSearch 3.7');
-    expect(md).toContain('**Why warning** —');
-    expect(md).toContain('Offending value:');
-    expect(md).toContain('`0`');
-    expect(md).toContain('**Safe to ignore** —');
+
+    expect(md).toContain('⚠️ **Warning**');
+    expect(md).toContain('Dividing by zero returns no value');
+    expect(md).toContain('**Fix** — Use the intended divisor');
     expect(md).toContain(
       '[Learn more →](https://docs.opensearch.org/latest/sql-and-ppl/ppl/functions/expressions/#arithmetic-operators)'
     );
+    expect(md).not.toContain('Engine behavior');
+    expect(md).not.toContain('Why warning');
+    expect(md).not.toContain('verified on');
+    expect(md).not.toContain('division-by-zero');
+    expect(md).not.toContain('Offending value');
   });
 
-  it('renders the slow-path engine behavior and clause line for operation-not-pushed', () => {
-    const md = renderHoverCard({
-      ruleId: 'operation-not-pushed',
-      severityLabel: 'Warning',
+  it('adds an attributed field for an explain-backed finding', () => {
+    const md = render({
       message:
-        'This filter may be slow because it does extra work. Use a simpler filter when possible.',
-      docUrl: 'https://docs.opensearch.org/latest/sql-and-ppl/limitation/',
-      content: getRuleHoverContent('operation-not-pushed'),
-      facts: { operation: 'filter', field: 'balance' },
+        'This filter runs after the index scan, so rows it rejects are still read and returned to the PPL engine.',
+      content: getBundledCatalogEntry('operation-not-pushed'),
+      facts: { operation: 'filter', field: 'balance', literal: '30' },
     });
-    expect(md).toContain('**operation-not-pushed** · Warning');
-    expect(md).toContain('**Engine behavior** —');
-    expect(md).toContain('coordinator');
-    expect(md).toContain('**Your query** — The filter on `balance` runs on a slower path.');
-    expect(md).toContain('**Why warning** —');
-    expect(md).toContain('slower path');
-    expect(md).toContain('**Safe to ignore** —');
+
+    expect(md).toContain('**Details** — Affected field: `balance`. Comparison value: `30`.');
+    expect(md).toContain('**Fix** — Rewrite the highlighted operation');
   });
 
-  it('names only the clause when the resolver could not isolate a field', () => {
-    const md = renderHoverCard({
-      ruleId: 'operation-pushed-as-script',
-      severityLabel: 'Info',
+  it('does not add an empty details section when no field was attributed', () => {
+    const md = render({
       message:
-        'This filter may be slow because it does extra calculations. Compare the field directly instead.',
-      content: getRuleHoverContent('operation-pushed-as-script'),
+        'OpenSearch evaluates this filter as a script for every candidate document instead of using a native index query.',
+      content: getBundledCatalogEntry('operation-pushed-as-script'),
       facts: { operation: 'filter' },
     });
-    expect(md).toContain('**Your query** — The filter runs on a slower path.');
+
+    expect(md).not.toContain('**Details**');
     expect(md).not.toContain('undefined');
   });
 
-  it('renders a field/type "Your query" line for agg-on-text', () => {
-    const md = renderHoverCard({
-      ruleId: 'agg-on-text',
-      severityLabel: 'Warning',
+  it('does not repeat field metadata already present in the diagnostic message', () => {
+    const md = render({
       message:
-        'Numeric aggregation "avg" on text field "response_body" returns null rather than a numeric result.',
-      content: getRuleHoverContent('agg-on-text'),
+        'avg cannot calculate a number from text field "response_body", so it returns no value (null).',
+      content: getBundledCatalogEntry('agg-on-text'),
       facts: { field: 'response_body', esType: 'text', aggName: 'avg' },
     });
-    expect(md).toContain('**Your query** —');
-    expect(md).toContain('`response_body` is mapped as `text`');
-    expect(md).toContain('`avg()` needs a numeric type');
+
+    expect(md).toContain('text field "response\\_body"');
+    expect(md).toContain('**Fix** — Use a numeric field');
+    expect(md).not.toContain('**Details**');
+    expect(md.match(/response\\_body/g)).toHaveLength(1);
   });
 
-  it('enumerates candidate indices for wildcard-source-zero-match', () => {
-    const md = renderHoverCard({
-      ruleId: 'wildcard-source-zero-match',
+  it('adds visible-index counts and similar names for a wildcard source', () => {
+    const md = render({
       severityLabel: 'Info',
       message: 'Source pattern "logs-*" matches no known index.',
-      content: getRuleHoverContent('wildcard-source-zero-match'),
+      content: getBundledCatalogEntry('wildcard-source-zero-match'),
       facts: { pattern: 'logs-*', totalIndices: 47, candidateIndices: ['logs_2024', 'logs_2025'] },
     });
-    expect(md).toContain('`logs-*` matched 0 of 47 visible indices');
-    expect(md).toContain('Did you mean one of: `logs_2024`, `logs_2025`?');
+
+    expect(md).toContain('ℹ️ **Info**');
+    expect(md).toContain('**Details** — Checked 47 visible indices.');
+    expect(md).toContain('Similar names: `logs_2024`, `logs_2025`.');
   });
 
-  it('renders a fix preview when fixText is present', () => {
-    const md = renderHoverCard({
-      ruleId: 'field-validation',
-      severityLabel: 'Warning',
+  it('renders a deterministic quick-fix preview without repeating the suggestion facts', () => {
+    const md = render({
+      severityLabel: 'Error',
       message: 'Unknown field "reveneu". Did you mean "revenue"?',
-      content: getRuleHoverContent('field-validation'),
+      content: getBundledCatalogEntry('field-validation'),
       facts: { field: 'reveneu', suggestion: 'revenue' },
       fixText: 'revenue',
     });
-    expect(md).toContain('**Suggested fix** → `revenue`');
-    expect(md).toContain('Closest known field: `revenue`');
+
+    expect(md).toContain('**Quick fix available** — `revenue`');
+    expect(md).not.toContain('Closest known field');
   });
 
-  it('omits "safe to ignore" and shows engine-throw wording for an error rule', () => {
-    const md = renderHoverCard({
-      ruleId: 'flat-object-subfield',
+  it('renders an error rule without extra sections', () => {
+    const md = render({
       severityLabel: 'Error',
       message:
         'Subfield "attributes.http.method" of flat_object field "attributes" is not queryable.',
-      content: getRuleHoverContent('flat-object-subfield'),
+      content: getBundledCatalogEntry('flat-object-subfield'),
       facts: { field: 'attributes.http.method', root: 'attributes', esType: 'flat_object' },
     });
-    expect(md).toContain('· Error');
-    expect(md).not.toContain('**Safe to ignore**');
-    expect(md).toContain('the engine rejects the query');
+
+    expect(md).toContain('❌ **Error**');
+    expect(md).toContain('**Fix** — Use another field');
+    expect(md).not.toContain('**Details**');
   });
 
-  it('attributes esType to the root object, never to the subfield', () => {
-    const md = renderHoverCard({
-      ruleId: 'flat-object-subfield',
-      severityLabel: 'Error',
-      message: 'Subfield "attributes.http.method" of flat_object field "attributes".',
-      content: getRuleHoverContent('flat-object-subfield'),
-      facts: { field: 'attributes.http.method', root: 'attributes', esType: 'flat_object' },
-    });
-    // The subfield has no mapping of its own; the type describes the root.
-    expect(md).toContain(
-      '`attributes.http.method` lives inside `attributes`, mapped as `flat_object`'
-    );
-    expect(md).not.toContain('`attributes.http.method` is mapped as `flat_object`');
-  });
-
-  it('labels the escape hatch "Possible false positive" for an engine-throw rule', () => {
-    const md = renderHoverCard({
-      ruleId: 'disabled-join-type',
-      severityLabel: 'Warning',
-      message: 'Performance-sensitive join type is disabled by default.',
-      content: getRuleHoverContent('disabled-join-type'),
-    });
-    // engine-throw means the query would be rejected, so it is never "Safe to
-    // ignore" — only a possible false positive when the linter is conservative.
-    expect(md).toContain('the engine rejects the query');
-    expect(md).toContain('**Possible false positive** —');
-    expect(md).not.toContain('**Safe to ignore**');
-  });
-
-  it('shows advisory wording (not "matches zero rows") for expand-on-non-array', () => {
-    const md = renderHoverCard({
-      ruleId: 'expand-on-non-array',
-      severityLabel: 'Warning',
-      message: 'expand target "tags" has type "keyword", which is not an array/nested/object type.',
-      content: getRuleHoverContent('expand-on-non-array'),
-      facts: { field: 'tags', esType: 'keyword' },
-    });
-    expect(md).toContain('the query runs and may return data');
-    expect(md).not.toContain('matches zero rows');
-    // advisory rules keep the "Safe to ignore" label (the query does run).
-    expect(md).toContain('**Safe to ignore** —');
-  });
-
-  it('fences inline code containing a backtick verbatim (no lookalike substitution)', () => {
-    const md = renderHoverCard({
-      ruleId: 'field-validation',
-      severityLabel: 'Warning',
-      message: 'Unknown field.',
-      content: getRuleHoverContent('field-validation'),
-      facts: { field: 'weird`name' },
-    });
-    // The real backtick survives; the U+02CB lookalike must not appear.
+  it('fences a quick fix containing a backtick verbatim', () => {
+    const md = render({ fixText: 'weird`name' });
     expect(md).toContain('weird`name');
     expect(md).not.toContain('weirdˋname');
   });
 
-  it('escapes tilde and pipe in the message', () => {
-    const md = renderHoverCard({
-      ruleId: 'r',
-      severityLabel: 'Info',
-      message: 'strike ~~through~~ and pipe | here',
-    });
-    expect(md).toContain('strike \\~\\~through\\~\\~ and pipe \\| here');
+  it('escapes markdown-significant characters in the detector message', () => {
+    const md = render({ message: 'use *star*, _under_, [brackets], ~~strike~~, and pipe |' });
+    expect(md).toContain(
+      'use \\*star\\*, \\_under\\_, \\[brackets\\], \\~\\~strike\\~\\~, and pipe \\|'
+    );
   });
 
-  it('percent-encodes parentheses in the doc link target so it cannot close early', () => {
-    const md = renderHoverCard({
-      ruleId: 'r',
-      severityLabel: 'Info',
-      message: 'm',
+  it('percent-encodes parentheses in the doc link target', () => {
+    const md = render({
       docUrl: 'https://docs.example/path_(disambiguation)/#a',
     });
     expect(md).toContain('[Learn more →](https://docs.example/path_%28disambiguation%29/#a)');
   });
 
-  it('degrades to just the header + message when no static content or facts', () => {
-    const md = renderHoverCard({
-      ruleId: 'ppl-lint',
-      severityLabel: 'Info',
-      message: 'Something happened.',
-    });
-    expect(md).toContain('**ppl-lint** · Info');
-    expect(md).toContain('Something happened.');
-    expect(md).not.toContain('**Engine behavior**');
-    expect(md).not.toContain('Learn more');
+  it('degrades to the severity and message when no rule help is available', () => {
+    const md = render({ severityLabel: 'Info', message: 'Something happened.' });
+    expect(md).toBe('ℹ️ **Info**\n\nSomething happened.');
   });
 
-  it('escapes markdown-significant characters in the message', () => {
-    const md = renderHoverCard({
-      ruleId: 'r',
-      severityLabel: 'Info',
-      message: 'use *star* and _under_ and [brackets]',
-    });
-    expect(md).toContain('use \\*star\\* and \\_under\\_ and \\[brackets\\]');
-  });
-
-  it('never renders the AI-fix action on the card (it lives only in the ⌘. menu)', () => {
-    // The "Ask AI to fix" action was intentionally removed from the hover card
-    // to avoid presenting the same action twice — the quick-fix lightbulb offers
-    // it. The card must not carry the action label or any command link.
-    const md = renderHoverCard({
-      ruleId: 'type-mismatch-numeric',
-      severityLabel: 'Warning',
+  it('never renders the AI-fix action on the card', () => {
+    const md = render({
       message: 'Comparing numeric field to a string literal.',
+      content: getBundledCatalogEntry('type-mismatch-numeric'),
     });
     expect(md).not.toContain('Ask AI to fix this');
     expect(md).not.toContain('command:');

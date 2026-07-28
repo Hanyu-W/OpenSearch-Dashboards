@@ -27,7 +27,7 @@ export const unionMinDatasetsDetector: Detector = (tree, config, context, ruleNa
       diagnostics.push({
         ruleId: config.id,
         severity: config.severity,
-        message: 'union requires at least two datasets.',
+        message: 'The union command requires at least two datasets.',
         range: rangeFromContext(command),
         docUrl: config.docUrl,
       });

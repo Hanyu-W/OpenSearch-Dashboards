@@ -11,6 +11,19 @@ import rawCatalog from './rules_catalog.json';
 // maxVersion to the first engine release that accepts underscore/hyphen group
 // names once that issue ships. Until then maxVersion is left open. See
 // requirements R7.11/R14.
+//
+// Its minVersion IS pinned, at 3.3.0: the `rex` command does not exist before
+// then (verified in ppl/src/main/antlr/OpenSearchPPLParser.g4 across release
+// branches — no rexCommand on 2.19/3.0/3.1/3.2). Without that floor the rule
+// reported "invalid capture group name" on engines where every `rex` query is
+// already a syntax error, which the multi-version contract caught on a live
+// 2.19.6 engine: the trigger AND its control were both rejected.
+//
+// `disabled-join-type` carries a floor for the same reason, at 3.0.0 — no
+// joinCommand and no CROSS alternative in the 2.19 grammar, and on live 2.19.6
+// even the inner-join CONTROL was rejected. A rejection only means what a rule
+// claims when a comparable valid query succeeds; when the control fails too, the
+// command itself is missing and the rule does not belong on that version.
 
 const VALID_SEVERITIES: ReadonlySet<string> = new Set<LintSeverity>(['error', 'warning', 'info']);
 
@@ -52,6 +65,7 @@ export function validateCatalogEntry(value: unknown): CatalogEntry | null {
     typeof candidate.severity !== 'string' ||
     !VALID_SEVERITIES.has(candidate.severity) ||
     typeof candidate.message !== 'string' ||
+    !isNonEmptyString(candidate.howToFix) ||
     typeof candidate.docUrl !== 'string' ||
     !isValidAppliesTo(candidate.appliesTo)
   ) {
@@ -74,6 +88,7 @@ export function validateCatalogEntry(value: unknown): CatalogEntry | null {
     enabled: candidate.enabled,
     severity: candidate.severity as LintSeverity,
     message: candidate.message,
+    howToFix: candidate.howToFix,
     docUrl: candidate.docUrl,
     appliesTo: candidate.appliesTo as AppliesTo,
     runtimeOnly: candidate.runtimeOnly as boolean | undefined,
@@ -122,4 +137,9 @@ export function getBundledCatalog(): CatalogEntry[] {
     bundledCatalog = loadCatalog(source);
   }
   return bundledCatalog;
+}
+
+/** Look up one validated entry in the bundled catalog. */
+export function getBundledCatalogEntry(ruleId: string): CatalogEntry | undefined {
+  return getBundledCatalog().find((entry) => entry.id === ruleId);
 }

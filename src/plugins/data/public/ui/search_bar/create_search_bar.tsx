@@ -41,8 +41,11 @@ import { DataPublicPluginStart } from '../../types';
 import { DataStorage, Filter, Query, TimeRange } from '../../../common';
 import { useQueryStringManager } from './lib/use_query_string_manager';
 import { TimeRangeToolRegistration } from '../../chat_tools/time_range_tool_registration';
-import { PPLLintFixToolRegistration } from '../../chat_tools/ppl_lint_fix_tool_registration';
-import { PPL_LINT_FIX_DATA_TOOL_NAME } from '../../chat_tools/ppl_lint_fix_session';
+import {
+  PPLLintFixToolRegistration,
+  PPLLintFixTestToolRegistration,
+  PPL_LINT_FIX_DATA_TOOL_NAME,
+} from '../../chat_tools/ppl_lint_fix_tool_registration';
 import { ContextProviderStart } from '../../../../../plugins/context_provider/public';
 
 interface StatefulSearchBarDeps {
@@ -210,6 +213,11 @@ export function createSearchBar({ core, storage, data, contextProvider }: Statef
           queryString={data.query.queryString}
           useAssistantAction={contextProvider?.hooks?.useAssistantAction}
           removeContextById={removePPLLintFixContextById}
+          enabled={pplLintFixEnabled}
+        />
+        <PPLLintFixTestToolRegistration
+          queryString={data.query.queryString}
+          useAssistantAction={contextProvider?.hooks?.useAssistantAction}
           enabled={pplLintFixEnabled}
         />
         <SearchBar

@@ -28,7 +28,7 @@
  * under the License.
  */
 
-import { cloneDeep, defaultsDeep } from 'lodash';
+import { cloneDeep, defaultsDeep, isEqual } from 'lodash';
 import { Observable, Subject, concat, defer, of } from 'rxjs';
 import { filter, map } from 'rxjs/operators';
 
@@ -46,10 +46,16 @@ interface UiSettingsClientParams {
   defaults: Record<string, PublicUiSettingsParams>;
   initialSettings?: UiSettingsState;
   done$: Observable<unknown>;
+  broadcastChannel?: BroadcastChannel;
   uiSettingApis: {
     default: UiSettingsApi;
     [scope: string]: UiSettingsApi;
   };
+}
+
+interface UiSettingsBroadcastMessage {
+  type: 'saved';
+  key: string;
 }
 
 export class UiSettingsClient implements IUiSettingsClient {
@@ -58,11 +64,18 @@ export class UiSettingsClient implements IUiSettingsClient {
   private readonly updateErrors$ = new Subject<Error>();
 
   private readonly uiSettingApis: UiSettingsClientParams['uiSettingApis'];
+  private readonly broadcastChannel?: BroadcastChannel;
   private readonly defaults: Record<string, PublicUiSettingsParams>;
   private cache: Record<string, PublicUiSettingsParams & UserProvidedValues>;
+  private readonly crossTabInvalidations = new Set<string>();
+  private crossTabRefreshInProgress = false;
+  private localUpdateCount = 0;
+  private localUpdateVersion = 0;
+  private stopped = false;
 
   constructor(params: UiSettingsClientParams) {
     this.uiSettingApis = params.uiSettingApis;
+    this.broadcastChannel = params.broadcastChannel;
     this.defaults = cloneDeep(params.defaults);
     this.cache = defaultsDeep({}, this.defaults, cloneDeep(params.initialSettings));
 
@@ -81,8 +94,13 @@ export class UiSettingsClient implements IUiSettingsClient {
       }
     }
 
+    this.broadcastChannel?.addEventListener('message', this.onBroadcastMessage);
+
     params.done$.subscribe({
       complete: () => {
+        this.stopped = true;
+        this.broadcastChannel?.removeEventListener('message', this.onBroadcastMessage);
+        this.broadcastChannel?.close();
         this.update$.complete();
         this.saved$.complete();
         this.updateErrors$.complete();
@@ -317,6 +335,8 @@ You can use \`IUiSettingsClient.get("${key}", defaultValue)\`, which will just r
     }
 
     const initialVal = declared ? this.get(key) : undefined;
+    this.localUpdateCount += 1;
+    this.localUpdateVersion += 1;
     this.setLocally(key, newVal);
 
     try {
@@ -334,11 +354,17 @@ You can use \`IUiSettingsClient.get("${key}", defaultValue)\`, which will just r
         this.mergeSettingsIntoCache(key, defaults, false, settings);
       }
       this.saved$.next({ key, newValue: newVal, oldValue: initialVal });
+      this.broadcastSavedSetting(key);
       return true;
     } catch (error) {
       this.setLocally(key, initialVal);
       this.updateErrors$.next(error);
       return false;
+    } finally {
+      this.localUpdateCount -= 1;
+      if (this.localUpdateCount === 0 && this.crossTabInvalidations.size > 0) {
+        void this.refreshCrossTabSettings();
+      }
     }
   }
 
@@ -363,5 +389,110 @@ You can use \`IUiSettingsClient.get("${key}", defaultValue)\`, which will just r
     }
 
     this.update$.next({ key, newValue, oldValue });
+  }
+
+  private readonly onBroadcastMessage = (event: MessageEvent<unknown>) => {
+    const message = event.data;
+    if (
+      !message ||
+      typeof message !== 'object' ||
+      (message as Partial<UiSettingsBroadcastMessage>).type !== 'saved' ||
+      typeof (message as Partial<UiSettingsBroadcastMessage>).key !== 'string'
+    ) {
+      return;
+    }
+
+    this.crossTabInvalidations.add((message as UiSettingsBroadcastMessage).key);
+    void this.refreshCrossTabSettings();
+  };
+
+  private broadcastSavedSetting(key: string) {
+    try {
+      this.broadcastChannel?.postMessage({
+        type: 'saved',
+        key,
+      } as UiSettingsBroadcastMessage);
+    } catch {
+      // Cross-tab synchronization is best effort; the setting itself is already saved.
+    }
+  }
+
+  private async refreshCrossTabSettings() {
+    if (
+      this.stopped ||
+      this.crossTabRefreshInProgress ||
+      this.localUpdateCount > 0 ||
+      this.crossTabInvalidations.size === 0
+    ) {
+      return;
+    }
+
+    this.crossTabRefreshInProgress = true;
+    try {
+      while (!this.stopped && this.localUpdateCount === 0 && this.crossTabInvalidations.size > 0) {
+        const invalidatedKeys = [...this.crossTabInvalidations];
+        this.crossTabInvalidations.clear();
+        const updateVersion = this.localUpdateVersion;
+
+        try {
+          const freshSettings = await this.selectedApi().getAll();
+
+          if (this.stopped) {
+            return;
+          }
+
+          if (this.localUpdateCount > 0 || this.localUpdateVersion !== updateVersion) {
+            invalidatedKeys.forEach((key) => this.crossTabInvalidations.add(key));
+            return;
+          }
+
+          this.replaceCacheFromServer(freshSettings.settings);
+        } catch {
+          // A remote save already succeeded; a best-effort refresh failure is not a local update error.
+        }
+      }
+    } finally {
+      this.crossTabRefreshInProgress = false;
+      if (!this.stopped && this.localUpdateCount === 0 && this.crossTabInvalidations.size > 0) {
+        void this.refreshCrossTabSettings();
+      }
+    }
+  }
+
+  private replaceCacheFromServer(settings: UiSettingsState = {}) {
+    const oldCache = this.cache;
+    const serverCache = defaultsDeep({}, this.defaults, settings);
+    const enableUserControl =
+      serverCache['theme:enableUserControl']?.userValue ??
+      serverCache['theme:enableUserControl']?.value;
+
+    this.cache = defaultsDeep(
+      {},
+      this.defaults,
+      ...(enableUserControl ? [this.getBrowserStoredSettings()] : []),
+      settings
+    );
+
+    const keys = new Set([...Object.keys(oldCache), ...Object.keys(this.cache)]);
+    for (const key of keys) {
+      const oldValue = this.resolveCachedValue(oldCache, key);
+      const newValue = this.resolveCachedValue(this.cache, key);
+      if (!isEqual(oldValue, newValue)) {
+        this.update$.next({ key, newValue, oldValue });
+      }
+    }
+  }
+
+  private resolveCachedValue(
+    cache: Record<string, PublicUiSettingsParams & UserProvidedValues>,
+    key: string
+  ) {
+    const setting = cache[key];
+    if (!setting) {
+      return undefined;
+    }
+
+    const value = setting.userValue == null ? setting.value : setting.userValue;
+    return this.resolveValue(value, setting.type);
   }
 }

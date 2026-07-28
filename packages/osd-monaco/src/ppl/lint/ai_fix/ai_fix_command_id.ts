@@ -29,4 +29,5 @@ export interface AiFixCommandArgs {
   targetText?: string;
   targetRange?: { startOffset: number; endOffset: number };
   relatedTexts?: string[];
+  fixInstructions?: string;
 }

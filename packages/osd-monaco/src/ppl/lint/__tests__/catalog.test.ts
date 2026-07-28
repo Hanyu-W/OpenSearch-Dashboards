@@ -40,6 +40,7 @@ describe('catalog loading', () => {
         enabled: true,
         severity: 'error',
         message: 'm',
+        howToFix: 'fix',
         docUrl: 'd',
         appliesTo: {},
       },
@@ -50,6 +51,7 @@ describe('catalog loading', () => {
         enabled: true,
         severity: 'bogus',
         message: 'm',
+        howToFix: 'fix',
         docUrl: 'd',
         appliesTo: {},
       },
@@ -73,10 +75,32 @@ describe('catalog loading', () => {
         enabled: true,
         severity: 'warning',
         message: 'm',
+        howToFix: 'fix',
         docUrl: 'd',
         appliesTo: { minVersion: '3.4.0', engine: 'calcite' },
       })
     ).not.toBeNull();
+  });
+
+  it('requires fix guidance', () => {
+    const entry = {
+      id: 'x',
+      detector: 'x',
+      enabled: true,
+      severity: 'warning',
+      message: 'm',
+      howToFix: 'Take this action.',
+      docUrl: 'd',
+      appliesTo: {},
+    };
+
+    expect(validateCatalogEntry(entry)).toEqual(
+      expect.objectContaining({
+        howToFix: 'Take this action.',
+      })
+    );
+    expect(validateCatalogEntry({ ...entry, howToFix: '' })).toBeNull();
+    expect(validateCatalogEntry({ ...entry, howToFix: undefined })).toBeNull();
   });
 
   it('preserves the needsExplain flag through validation', () => {
@@ -86,6 +110,7 @@ describe('catalog loading', () => {
       enabled: false,
       severity: 'warning',
       message: 'm',
+      howToFix: 'fix',
       docUrl: 'd',
       appliesTo: { minVersion: '3.3.0', engine: 'calcite' },
       needsExplain: true,
@@ -103,6 +128,7 @@ describe('catalog loading', () => {
         enabled: true,
         severity: 'warning',
         message: 'm',
+        howToFix: 'fix',
         docUrl: 'd',
         appliesTo: {},
         needsExplain: 'yes',
@@ -110,13 +136,13 @@ describe('catalog loading', () => {
     ).toBeNull();
   });
 
-  it('loads the two explain rules with needsExplain set, disabled by default', () => {
+  it('loads the two explain rules with needsExplain set, enabled', () => {
     const byId = new Map(getBundledCatalog().map((c) => [c.id, c]));
     for (const id of ['operation-not-pushed', 'operation-pushed-as-script']) {
       const entry = byId.get(id);
       expect(entry).toBeDefined();
       expect(entry!.needsExplain).toBe(true);
-      expect(entry!.enabled).toBe(false);
+      expect(entry!.enabled).toBe(true);
       expect(entry!.runtimeOnly).toBeUndefined();
     }
   });
@@ -129,6 +155,7 @@ describe('catalog loading', () => {
         enabled: true,
         severity: 'warning',
         message: 'm',
+        howToFix: 'fix',
         docUrl: 'd',
         appliesTo: { engine: 'spark' },
       })

@@ -81,6 +81,7 @@ describe('WorkspaceUiSettingsClientWrapper', () => {
             uiSettings: {
               defaultDashboard: 'default-dashboard-workspace',
               [DEFAULT_DATA_SOURCE_UI_SETTINGS_ID]: 'default-ds-workspace',
+              [GLOBAL_SCOPE_SETTING_ID]: 'stale-global-value',
             },
           },
         });
@@ -133,7 +134,7 @@ describe('WorkspaceUiSettingsClientWrapper', () => {
     });
   });
 
-  it('should return workspace settings and use default value if key value is undefined to get workspace level settings in a workspace', async () => {
+  it('should return workspace-scoped settings and ignore stale global-only values', async () => {
     // Currently in a workspace
     jest.spyOn(utils, 'getWorkspaceState').mockReturnValue({ requestWorkspaceId: 'workspace-id' });
 
@@ -198,6 +199,7 @@ describe('WorkspaceUiSettingsClientWrapper', () => {
         uiSettings: {
           defaultDashboard: 'new-dashboard-id',
           [DEFAULT_DATA_SOURCE_UI_SETTINGS_ID]: 'default-ds-workspace',
+          [GLOBAL_SCOPE_SETTING_ID]: null,
         },
       },
       {}
@@ -272,6 +274,27 @@ describe('WorkspaceUiSettingsClientWrapper', () => {
     expect(logger.warn).toBeCalledWith(
       'Deprecation warning: updating workspace settings through global scope will no longer be supported.'
     );
+  });
+
+  it('should update a global-only setting globally when inside a workspace', async () => {
+    jest.spyOn(utils, 'getWorkspaceState').mockReturnValue({ requestWorkspaceId: 'workspace-id' });
+
+    const { wrappedClient, clientMock, logger } = createWrappedClient();
+
+    await wrappedClient.update('config', '3.0.0', {
+      [GLOBAL_SCOPE_SETTING_ID]: 'new-global-value',
+    });
+
+    expect(clientMock.update).toHaveBeenCalledTimes(1);
+    expect(clientMock.update).toHaveBeenCalledWith(
+      'config',
+      '3.0.0',
+      {
+        [GLOBAL_SCOPE_SETTING_ID]: 'new-global-value',
+      },
+      {}
+    );
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it('should not throw error if global config does not exist when calling get / update', async () => {

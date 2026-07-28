@@ -104,7 +104,7 @@ export const invalidCaptureGroupNameDetector: Detector = (
         diagnostics.push({
           ruleId: config.id,
           severity: config.severity,
-          message: `Python/PCRE named-group opener "(?P<${group.name}>" is invalid in Java regex; use "(?<${group.name}>" instead.`,
+          message: `Capture group "${group.name}" uses Python syntax. PPL uses "(?<${group.name}>...)" instead.`,
           range,
           docUrl: config.docUrl,
           ...(fixRange
@@ -128,7 +128,7 @@ export const invalidCaptureGroupNameDetector: Detector = (
         diagnostics.push({
           ruleId: config.id,
           severity: config.severity,
-          message: `Invalid capture group name "${group.name}". Names must match ^[A-Za-z][A-Za-z0-9]*$.`,
+          message: `Capture group name "${group.name}" is invalid. Start with a letter and use only letters and numbers.`,
           range,
           docUrl: config.docUrl,
           ...(fixed

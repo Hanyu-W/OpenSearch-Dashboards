@@ -6,9 +6,12 @@
 import {
   clearPPLLintFixSession,
   getPPLLintFixSession,
-  PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX,
   storePPLLintFixSession,
 } from '../../chat_tools/ppl_lint_fix_session';
+import {
+  PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX,
+  PPL_LINT_FIX_DATA_HOST,
+} from '../../chat_tools/ppl_lint_fix_tool_registration';
 import {
   addPPLLintFixAssistantContext,
   PPL_LINT_FIX_CHAT_TIMEOUT_ERROR,
@@ -16,6 +19,7 @@ import {
 } from './ppl_lint_fix_lifecycle';
 
 const createSession = (requestId: string) => ({
+  host: PPL_LINT_FIX_DATA_HOST,
   request: {
     requestId,
     query: 'source=logs',

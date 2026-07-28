@@ -10,6 +10,18 @@ export type BuildChatFixMessageInput = Omit<AskPPLLintFixRequest, 'chatMessage' 
 
 export const DEFAULT_PPL_LINT_FIX_TOOL_NAME = 'apply_ppl_lint_fix';
 
+/**
+ * Derive the silent test-tool name from the apply-tool name by swapping the
+ * `apply_` prefix for `test_`. The host registers the two names as a pair (see
+ * PPL_LINT_FIX_DATA_TOOL_NAME / PPL_LINT_FIX_TEST_DATA_TOOL_NAME); deriving it
+ * here keeps the leaf package from needing a second injected name.
+ */
+export function deriveTestToolName(applyToolName: string): string {
+  return applyToolName.startsWith('apply_')
+    ? `test_${applyToolName.slice('apply_'.length)}`
+    : `test_${applyToolName}`;
+}
+
 /** Stable, non-cryptographic hash used only to correlate a fix with its source text. */
 export function hashPPLLintFixSource(query: string): string {
   let hash = 0;
@@ -53,6 +65,8 @@ export function buildChatFixContext(request: BuildChatFixMessageInput): string {
   const ruleId = request.diagnostic.ruleId || 'ppl-lint';
   const target = request.diagnostic.targetText;
   const related = request.diagnostic.relatedTexts?.filter(Boolean) ?? [];
+  const rewriteContract = request.diagnostic.fixInstructions?.trim();
+  const testToolName = deriveTestToolName(request.toolName);
 
   return [
     'You are correcting a PPL query for the OpenSearch Explore lint quick-fix flow.',
@@ -68,13 +82,43 @@ export function buildChatFixContext(request: BuildChatFixMessageInput): string {
                   .join(', ')}`,
               ]
             : []),
-          'Make a localized change to that attributed expression. Do not regenerate unrelated pipeline text.',
+          ...(rewriteContract
+            ? [
+                'This source slice identifies where the finding occurs; do not rewrite it unless the mandatory contract below explicitly says to.',
+              ]
+            : [
+                'Change ONLY that attributed slice. Every other part of the query — the source, each WHERE clause (including any time-range filter), rex/grok/parse, stats, eventstats, eval, sort, head, and every field name and literal — MUST be copied into your candidate character-for-character, unchanged and in the same order.',
+                'Do NOT remove, reorder, add, merge, or "improve" any other stage, even one that looks unrelated or redundant. A time-range filter or any other WHERE is intentional; dropping it is wrong.',
+                'A candidate that alters, drops, or reorders any stage other than the attributed slice is WRONG and must not be proposed, even if it happens to clear the finding. If your only way to clear the finding would change another stage, treat the query as not automatically fixable.',
+              ]),
         ]
       : [
-          'Make the smallest correction that clears the diagnostic while preserving the pipeline commands, fields, filters, and user intent.',
+          'Make the smallest possible correction that clears the diagnostic. Preserve every pipeline command, field, filter (including any time-range WHERE), literal, and the command order exactly; change only the minimal text needed. Do not remove or reorder stages that look unrelated — they are intentional.',
         ]),
+    ...(rewriteContract
+      ? [
+          'MANDATORY rule-specific rewrite contract:',
+          rewriteContract,
+          'Your FIRST candidate MUST implement that contract literally. Copy every quoted query stage and literal character-for-character; do not specialize, broaden, substitute, or otherwise reinterpret it.',
+        ]
+      : []),
     'Do not execute the query.',
-    'Keep the explanation to one short sentence in plain language. Say what changed and why it helps. Do not mention rule IDs, attribution, Painless scripts, pushdown, indexes, data nodes, coordinators, or per-document evaluation.',
-    `When you have the correction, call the ${request.toolName} tool with just the fixedQuery (and optionally a short explanation). Do not ask the user for a request id or hash — the UI already tracks the active request.`,
+    `For this fix flow, call only ${testToolName} and ${request.toolName}. Never call a query execution, search, visualization, or other tool.`,
+    // The core behavioral change: test candidates silently, then only surface the
+    // best one that actually clears the finding — never propose a fix that would
+    // be rejected in front of the user.
+    `First, silently verify the candidate with the ${testToolName} tool, which returns { ok, reason, message }. It shows the user nothing.`,
+    ...(rewriteContract
+      ? [
+          `If ${testToolName} returns ok:false, reread the mandatory contract and correct only transcription or placement mistakes. Do not improvise a different rewrite.`,
+        ]
+      : [
+          `If ${testToolName} returns ok:false, use its reason and message to try a genuinely different candidate.`,
+        ]),
+    `Only call the ${request.toolName} tool for a candidate whose ${testToolName} result was ok:true — that is the only call the user sees, so it must be a fix that works.`,
+    `As soon as ${testToolName} returns ok:true, immediately call ${request.toolName} with that same candidate. Do NOT stop to ask the user whether to apply it, and do NOT describe the fix and wait — calling ${request.toolName} renders an Apply / Dismiss card, which IS the user's approval step, so asking first is redundant and leaves the fix unusable.`,
+    `If, after a few genuinely different candidates, none return ok:true, tell the user in one plain sentence that this query cannot be automatically fixed, and do NOT call ${request.toolName} at all. Never present a fix you could not verify.`,
+    'Keep any explanation to one short sentence in plain language. Say what changed and why it helps. Do not mention rule IDs, attribution, Painless scripts, pushdown, indexes, data nodes, coordinators, or per-document evaluation.',
+    'Do not ask the user for a request id or hash — the UI already tracks the active request.',
   ].join('\n');
 }

@@ -3,31 +3,32 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { RuleHoverContent, FailureClass } from './engine_outcomes';
+import { RuleHelp } from '../types';
 import { HoverFacts } from './hover_registry';
 
 /**
  * Pure renderer for the lint hover card ("view more") body. Composes the static
- * per-rule content, per-instance facts, an optional fix preview, and the doc
- * link into a single Markdown string. Intentionally free of any Monaco import so
- * it is trivially unit-testable; the provider does the Monaco-specific marker
- * extraction and hands plain values here.
+ * per-rule guidance, additive per-instance context, an optional quick-fix
+ * preview, and the doc link into a single Markdown string. Intentionally free of
+ * any Monaco import so it is trivially unit-testable; the provider does the
+ * Monaco-specific marker extraction and hands plain values here.
  *
- * Every section renders only when its data is present, so a bare rule (no static
- * entry, no facts) degrades to just the message — never throws, never blank.
+ * The detector message already identifies the problem and its consequence.
+ * Keeping the card focused on that message and the next action avoids repeating
+ * the same field, value, and engine outcome in several differently named
+ * sections.
  */
 
 export type SeverityLabel = 'Error' | 'Warning' | 'Info';
 
 export interface HoverCardInput {
-  ruleId: string;
   severityLabel: SeverityLabel;
   /** The marker's short message — always shown as the card lead. */
   message: string;
-  /** code.target — the specific doc link from the catalog (Part A). */
+  /** code.target — the specific doc link from the catalog. */
   docUrl?: string;
-  /** Static per-rule content from engine_outcomes, when present. */
-  content?: RuleHoverContent;
+  /** Static, task-oriented guidance for this rule. */
+  content?: RuleHelp;
   /** Per-instance facts from the detector, when present. */
   facts?: HoverFacts;
   /** Quick-fix preview text (the replacement), when a DiagnosticFix exists. */
@@ -38,25 +39,6 @@ const SEVERITY_GLYPH: Record<SeverityLabel, string> = {
   Error: '❌', // ❌
   Warning: '⚠️', // ⚠️
   Info: 'ℹ️', // ℹ️
-};
-
-// How each runtime outcome class reads in the "Why <severity>" line. Decodes the
-// severity into the consequence the user actually faces — the silent classes are
-// the ones users most often under-rate.
-const FAILURE_CLASS_EXPLAINER: Record<FailureClass, string> = {
-  'silent-null':
-    'the query succeeds (HTTP 200) but a value resolves to null and propagates silently — nothing signals that anything went wrong.',
-  'silent-empty':
-    'the query succeeds (HTTP 200) but matches zero rows — it looks like "no data" rather than a mistake.',
-  'engine-throw': 'the engine rejects the query, so it will not run.',
-  nondeterministic:
-    'the query runs, but the rows it returns are not stable across identical re-runs.',
-  fallback:
-    'the primary engine cannot run this natively and falls back to a secondary engine — it succeeds, but on a slower path.',
-  advisory:
-    'the query runs and may return data, but the command can behave differently than intended on this input — this is a heads-up, not a guaranteed outcome.',
-  'slow-path':
-    'the query returns correct results, but the engine cannot push this operation into the index, so it runs on a slower path — the cost grows with index size.',
 };
 
 /**
@@ -99,80 +81,33 @@ function encodeLinkTarget(url: string): string {
 }
 
 /**
- * Build the "Your query" line from per-instance facts. Returns undefined when
- * there is nothing instance-specific worth showing.
+ * Render only context that adds information beyond the detector message. Most
+ * detectors already include their field, type, and value in the message, so
+ * repeating those facts would make the card longer without helping the user.
  */
-function renderFactsLine(facts: HoverFacts): string | undefined {
-  // Wildcard zero-match: enumerate near candidates so the user is unstuck.
+function renderAdditionalContext(facts: HoverFacts): string | undefined {
+  // Wildcard zero-match: the count and nearby names are not in the marker text.
   if (facts.pattern !== undefined) {
-    const head =
-      facts.totalIndices !== undefined
-        ? `${code(facts.pattern)} matched 0 of ${facts.totalIndices} visible indices.`
-        : `${code(facts.pattern)} matched no visible index.`;
+    const parts: string[] = [];
+    if (facts.totalIndices !== undefined) {
+      const noun = facts.totalIndices === 1 ? 'index' : 'indices';
+      parts.push(`Checked ${facts.totalIndices} visible ${noun}.`);
+    }
     if (facts.candidateIndices && facts.candidateIndices.length > 0) {
-      return `${head} Did you mean one of: ${facts.candidateIndices.map(code).join(', ')}?`;
+      parts.push(`Similar names: ${facts.candidateIndices.map(code).join(', ')}.`);
     }
-    return head;
+    return parts.length > 0 ? parts.join(' ') : undefined;
   }
 
-  // Pushdown/perf rules: name the offending clause (and, when the resolver found
-  // it, the field it acts on) so the card is about the user's query. The clause
-  // label comes first because these findings may carry no `field` (e.g. a
-  // multi-field predicate the resolver could not isolate).
-  const clauseLabel: Record<'filter' | 'aggregation' | 'sort', string> = {
-    filter: 'filter',
-    aggregation: 'aggregation',
-    sort: 'sort',
-  };
-  if (facts.operation !== undefined) {
+  // Explain-backed messages identify the operation but may not name the field
+  // that attribution resolved after the diagnostic was created.
+  if (facts.operation !== undefined && facts.field !== undefined) {
     const parts: string[] = [];
-    const clause = clauseLabel[facts.operation];
-    parts.push(
-      facts.field !== undefined
-        ? `The ${clause} on ${code(facts.field)} runs on a slower path.`
-        : `The ${clause} runs on a slower path.`
-    );
+    parts.push(`Affected field: ${code(facts.field)}.`);
     if (facts.literal !== undefined) {
-      parts.push(`Compared to ${code(facts.literal)}.`);
+      parts.push(`Comparison value: ${code(facts.literal)}.`);
     }
     return parts.join(' ');
-  }
-
-  // Field/type-centric rules.
-  if (facts.field !== undefined) {
-    const parts: string[] = [];
-    if (facts.root !== undefined) {
-      // The field is a subfield of `root`; here `esType` describes the *root*
-      // object's mapping, not the subfield (the subfield has no mapping of its
-      // own). Attribute the type to the root so the card never claims the
-      // subfield "is mapped as <type>".
-      parts.push(
-        facts.esType !== undefined
-          ? `${code(facts.field)} lives inside ${code(facts.root)}, mapped as ${code(
-              facts.esType
-            )} on this index.`
-          : `${code(facts.field)} lives inside ${code(facts.root)}.`
-      );
-    } else if (facts.esType !== undefined) {
-      parts.push(`${code(facts.field)} is mapped as ${code(facts.esType)} on this index.`);
-    } else {
-      parts.push(`${code(facts.field)}.`);
-    }
-    if (facts.aggName !== undefined) {
-      parts.push(`${code(facts.aggName + '()')} needs a numeric type.`);
-    }
-    if (facts.literal !== undefined) {
-      parts.push(`Compared to ${code(facts.literal)}.`);
-    }
-    if (facts.suggestion !== undefined) {
-      parts.push(`Closest known field: ${code(facts.suggestion)}.`);
-    }
-    return parts.join(' ');
-  }
-
-  // Bare literal (e.g. the actual zero divisor).
-  if (facts.literal !== undefined) {
-    return `Offending value: ${code(facts.literal)}.`;
   }
 
   return undefined;
@@ -183,63 +118,42 @@ function renderFactsLine(facts: HoverFacts): string | undefined {
  * in `{ value, isTrusted: false }` and hands it to Monaco.
  */
 export function renderHoverCard(input: HoverCardInput): string {
-  const { ruleId, severityLabel, message, docUrl, content, facts, fixText } = input;
+  const { severityLabel, message, docUrl, content, facts, fixText } = input;
   const lines: string[] = [];
 
-  // Header: glyph · ruleId · severity.
-  lines.push(`${SEVERITY_GLYPH[severityLabel]} **${escapeInline(ruleId)}** · ${severityLabel}`);
+  // The rule id remains on the marker for lookup and support diagnostics, but it
+  // is implementation detail rather than the card's headline.
+  lines.push(`${SEVERITY_GLYPH[severityLabel]} **${severityLabel}**`);
 
   // Lead: the short message (always present).
   lines.push('');
   lines.push(escapeInline(message));
 
-  // Engine behavior — the highest-value line.
-  if (content) {
-    const verified = content.verifiedVersion
-      ? ` _(verified on OpenSearch ${escapeInline(content.verifiedVersion)})_`
-      : '';
-    lines.push('');
-    lines.push(`**Engine behavior** — ${escapeInline(content.engineBehavior)}${verified}`);
-  }
-
-  // Your query — per-instance facts.
+  // Add only facts not already stated by the detector.
   if (facts) {
-    const factsLine = renderFactsLine(facts);
-    if (factsLine) {
+    const contextLine = renderAdditionalContext(facts);
+    if (contextLine) {
       lines.push('');
-      lines.push(`**Your query** — ${factsLine}`);
+      lines.push(`**Details** — ${contextLine}`);
     }
   }
 
-  // Why <severity> — decode the runtime outcome class.
+  // Every known rule gives the user a concrete next action, whether or not an
+  // automatic edit can be offered safely.
   if (content) {
     lines.push('');
-    lines.push(
-      `**Why ${severityLabel.toLowerCase()}** — ${FAILURE_CLASS_EXPLAINER[content.failureClass]}`
-    );
+    lines.push(`**Fix** — ${content.howToFix}`);
   }
 
-  // Suggested fix preview.
+  // Exact replacement preview for deterministic quick fixes.
   if (fixText !== undefined) {
     lines.push('');
-    lines.push(`**Suggested fix** → ${code(fixText)}`);
+    lines.push(`**Quick fix available** — ${code(fixText)}`);
   }
 
   // Note: the AI ("Ask AI to fix") action is intentionally NOT rendered on the
   // hover card. It is offered solely through the ⌘. quick-fix menu (see
   // code_action_provider) to avoid presenting the same action twice.
-
-  // Escape hatch — only when present (never for error severity, by data rule).
-  // For engine-throw rules the query genuinely would not run, so the only reason
-  // to dismiss the warning is that the linter is being conservative: label it a
-  // "Possible false positive". For the runs-anyway classes it really is "Safe to
-  // ignore". This keeps the line from contradicting the "Why <severity>" line.
-  if (content?.safeToIgnoreWhen) {
-    const label =
-      content.failureClass === 'engine-throw' ? 'Possible false positive' : 'Safe to ignore';
-    lines.push('');
-    lines.push(`**${label}** — ${escapeInline(content.safeToIgnoreWhen)}`);
-  }
 
   // Learn more — the specific doc link.
   if (docUrl) {

@@ -131,7 +131,7 @@ export const typeMismatchNumericDetector: Detector = (tree, config, context, rul
     diagnostics.push({
       ruleId: config.id,
       severity: config.severity,
-      message: `Comparing numeric field "${fieldName}" (${esType}) to non-numeric string ${literalSide.getText()} matches no documents (returns 0 rows, no error).`,
+      message: `Field "${fieldName}" is numeric, but ${literalSide.getText()} is not a number, so the comparison returns no rows.`,
       range: rangeFromContext(parent),
       docUrl: config.docUrl,
       hoverFacts: { field: fieldName, esType, literal: literalSide.getText() },

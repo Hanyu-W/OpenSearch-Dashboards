@@ -155,6 +155,7 @@ class PPLGrammarCache {
   private pendingFetch: Promise<CachedGrammar | null> | null = null;
   private fetchFailed = false;
   private fetchFailedAt = 0;
+  private selectionGeneration = 0;
 
   /**
    * Returns true if version >= 3.6.0 (grammar artifact endpoint support).
@@ -190,8 +191,14 @@ class PPLGrammarCache {
       return;
     }
 
-    // Datasource changed — reset everything.
-    if (datasourceId !== this.cachedDatasourceId) {
+    // A datasource switch or a newly supplied version supersedes every pending
+    // lookup/fetch for the previous selection. Treat a same-datasource version
+    // change as a new generation too: an older saved-object lookup must not
+    // overwrite an explicit version that arrived while it was in flight.
+    const datasourceChanged = datasourceId !== this.cachedDatasourceId;
+    const versionChanged =
+      datasourceVersion !== undefined && datasourceVersion !== this.cachedVersion;
+    if (datasourceChanged || versionChanged) {
       this.reset();
       this.cachedDatasourceId = datasourceId;
     }
@@ -208,13 +215,22 @@ class PPLGrammarCache {
     // Already cached, in-flight, or recently failed — nothing to do.
     if (this.cachedGrammar || this.pendingFetch || this.fetchFailed) return;
 
-    const promise = this.doWarmUp(http, savedObjectsClient, datasourceId, datasourceVersion);
+    const generation = this.selectionGeneration;
+    const promise = this.doWarmUp(
+      http,
+      savedObjectsClient,
+      datasourceId,
+      datasourceVersion,
+      generation
+    );
     this.pendingFetch = promise;
 
     promise
       .catch(() => {
-        this.fetchFailed = true;
-        this.fetchFailedAt = Date.now();
+        if (this.isActiveSelection(datasourceId, generation)) {
+          this.fetchFailed = true;
+          this.fetchFailedAt = Date.now();
+        }
       })
       .finally(() => {
         if (this.pendingFetch === promise) {
@@ -225,6 +241,7 @@ class PPLGrammarCache {
 
   /** Reset cache state. Used internally and by tests via `dispose()`. */
   private reset(): void {
+    this.selectionGeneration++;
     this.cachedDatasourceId = undefined;
     this.cachedVersion = undefined;
     this.cachedGrammar = null;
@@ -251,23 +268,31 @@ class PPLGrammarCache {
   private async doWarmUp(
     http: HttpSetup,
     savedObjectsClient: SavedObjectsClientContract | undefined,
-    datasourceId?: string,
-    datasourceVersion?: string
+    datasourceId: string | undefined,
+    datasourceVersion: string | undefined,
+    generation: number
   ): Promise<CachedGrammar | null> {
     const version = await this.resolveVersion(
       http,
       savedObjectsClient,
       datasourceId,
-      datasourceVersion
+      datasourceVersion,
+      generation
     );
+    // The version lookup may resolve after the active datasource changed.
+    // Do not let a stale continuation issue a grammar request for the old
+    // datasource, even when the version was supplied synchronously.
+    if (!this.isActiveSelection(datasourceId, generation)) {
+      return null;
+    }
     if (!this.shouldFetchFromBackend(version)) {
       // Version unsupported or unknown — not a failure, just nothing to fetch.
       // Don't set fetchFailed so that future warmUp calls can retry when the
       // version becomes available (e.g. the cluster wasn't ready on page load).
       return null;
     }
-    const result = await this.doFetch(http, datasourceId);
-    if (!result && datasourceId === this.cachedDatasourceId) {
+    const result = await this.doFetch(http, datasourceId, generation);
+    if (!result && this.isActiveSelection(datasourceId, generation)) {
       // Grammar endpoint was reachable but returned an invalid bundle, or the
       // request itself failed — treat as a real failure to avoid hammering.
       // Only set if datasource hasn't changed while we were fetching.
@@ -281,8 +306,9 @@ class PPLGrammarCache {
   private async resolveVersion(
     http: HttpSetup,
     savedObjectsClient: SavedObjectsClientContract | undefined,
-    datasourceId?: string,
-    datasourceVersion?: string
+    datasourceId: string | undefined,
+    datasourceVersion: string | undefined,
+    generation: number
   ): Promise<string | undefined> {
     if (datasourceVersion) return datasourceVersion;
     if (this.cachedVersion) return this.cachedVersion;
@@ -309,16 +335,22 @@ class PPLGrammarCache {
         );
         version = response?.version || undefined;
       }
-      if (version) {
+      // A saved-object or local-cluster lookup can outlive a datasource
+      // switch. Only the active datasource may update the single-slot cache.
+      if (version && this.isActiveSelection(datasourceId, generation)) {
         this.cachedVersion = version;
       }
-      return version;
+      return this.isActiveSelection(datasourceId, generation) ? version : undefined;
     } catch {
       return undefined;
     }
   }
 
-  private async doFetch(http: HttpSetup, datasourceId?: string): Promise<CachedGrammar | null> {
+  private async doFetch(
+    http: HttpSetup,
+    datasourceId: string | undefined,
+    generation: number
+  ): Promise<CachedGrammar | null> {
     try {
       const query: Record<string, string> = {};
       if (datasourceId) {
@@ -375,7 +407,7 @@ class PPLGrammarCache {
       // Only cache if the datasource hasn't changed while we were fetching.
       // A rapid ds-1 → ds-2 switch resets cachedDatasourceId; if ds-1's fetch
       // resolves late we must not overwrite ds-2's state.
-      if (datasourceId !== this.cachedDatasourceId) {
+      if (!this.isActiveSelection(datasourceId, generation)) {
         return null;
       }
 
@@ -385,6 +417,10 @@ class PPLGrammarCache {
     } catch {
       return null;
     }
+  }
+
+  private isActiveSelection(datasourceId: string | undefined, generation: number): boolean {
+    return datasourceId === this.cachedDatasourceId && generation === this.selectionGeneration;
   }
 
   private notifyGrammarUpdate(datasourceId: string | undefined, entry: CachedGrammar): void {

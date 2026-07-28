@@ -19,6 +19,7 @@ export function toWorkerLintContextPayload(
 
   const payload: WorkerLintContextPayload = {
     isCalcite: context.isCalcite,
+    dataSourceEngineType: context.dataSourceEngineType,
     dataSourceId: context.dataSourceId,
     dataSourceVersion: context.dataSourceVersion,
     fields: context.fields ? Array.from(context.fields) : undefined,
@@ -43,6 +44,7 @@ export function hydrateWorkerLintContext(
 
   return {
     isCalcite: payload.isCalcite,
+    dataSourceEngineType: payload.dataSourceEngineType,
     dataSourceId: payload.dataSourceId,
     dataSourceVersion: payload.dataSourceVersion,
     fields: payload.fields ? new Set(payload.fields) : undefined,

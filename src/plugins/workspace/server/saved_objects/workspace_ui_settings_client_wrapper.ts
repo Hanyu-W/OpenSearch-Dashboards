@@ -62,6 +62,42 @@ export class WorkspaceUiSettingsClientWrapper {
   }
 
   public wrapperFactory: SavedObjectsClientWrapperFactory = (wrapperOptions) => {
+    const getRegisteredConfigs = () => {
+      const savedObjectsClient = this.getWorkspaceTypeEnabledClient(wrapperOptions.request);
+      return this.getUISettingsClient(savedObjectsClient).getRegistered();
+    };
+
+    const supportsWorkspaceScope = (
+      config: { scope?: UiSettingScope | UiSettingScope[] } | undefined
+    ) =>
+      Array<UiSettingScope>()
+        .concat(config?.scope || [])
+        .includes(UiSettingScope.WORKSPACE);
+
+    const partitionWorkspaceSettings = (settings: Record<string, any> = {}) => {
+      const registeredConfigs = getRegisteredConfigs();
+      return Object.entries(settings).reduce(
+        (partitioned, [key, value]) => {
+          const config = registeredConfigs[key];
+          // Preserve unregistered legacy/custom keys, but never let a value stored
+          // in a workspace override a registered setting that is global-only.
+          if (!config || supportsWorkspaceScope(config)) {
+            partitioned.workspace[key] = value;
+          } else {
+            partitioned.globalOnly[key] = value;
+          }
+          return partitioned;
+        },
+        {
+          workspace: {} as Record<string, any>,
+          globalOnly: {} as Record<string, any>,
+        }
+      );
+    };
+
+    const filterWorkspaceSettings = (settings: Record<string, any> = {}) =>
+      partitionWorkspaceSettings(settings).workspace;
+
     const getUiSettingsWithWorkspace = async <T = unknown>(
       type: string,
       id: string,
@@ -109,8 +145,7 @@ export class WorkspaceUiSettingsClientWrapper {
           this.logger.error(`Unable to get workspaceObject with id: ${requestWorkspaceId}`);
         }
 
-        const UISettingsClient = this.getUISettingsClient(workspaceTypeEnabledClient);
-        const registeredConfigs = UISettingsClient.getRegistered();
+        const registeredConfigs = getRegisteredConfigs();
 
         const workspaceScopeConfigDefaults = Object.entries(registeredConfigs)
           .filter(([, config]) =>
@@ -123,7 +158,7 @@ export class WorkspaceUiSettingsClientWrapper {
             return acc;
           }, {} as Record<string, any>);
 
-        const workspaceSettings = workspaceObject?.attributes?.uiSettings || {};
+        const workspaceSettings = filterWorkspaceSettings(workspaceObject?.attributes?.uiSettings);
 
         Object.entries(workspaceScopeConfigDefaults).forEach(([key, value]) => {
           workspaceSettings[key] = workspaceSettings[key] || value;
@@ -167,18 +202,37 @@ export class WorkspaceUiSettingsClientWrapper {
           WORKSPACE_TYPE,
           workspaceId
         );
+        const existingSettings = partitionWorkspaceSettings(workspaceObject.attributes.uiSettings);
+        const incomingSettings = partitionWorkspaceSettings(
+          workspaceAttributes as Record<string, any>
+        );
+        const staleGlobalOnlySettings = Object.keys({
+          ...existingSettings.globalOnly,
+          ...incomingSettings.globalOnly,
+        }).reduce((tombstones, key) => {
+          // Saved object updates merge nested uiSettings, so omission cannot
+          // remove a stale key. Null is an explicit delete tombstone.
+          tombstones[key] = null;
+          return tombstones;
+        }, {} as Record<string, null>);
 
         const workspaceUpdateResult = await savedObjectsClient.update<WorkspaceAttribute>(
           WORKSPACE_TYPE,
           workspaceId,
           {
             ...workspaceObject.attributes,
-            uiSettings: { ...workspaceObject.attributes.uiSettings, ...workspaceAttributes },
+            uiSettings: {
+              ...existingSettings.workspace,
+              ...incomingSettings.workspace,
+              ...staleGlobalOnlySettings,
+            },
           },
           options
         );
 
-        configObject.attributes = (workspaceUpdateResult.attributes.uiSettings || {}) as T;
+        configObject.attributes = filterWorkspaceSettings(
+          workspaceUpdateResult.attributes.uiSettings
+        ) as T;
 
         return configObject;
       };
@@ -202,10 +256,53 @@ export class WorkspaceUiSettingsClientWrapper {
         } else if (requestWorkspaceId && id === this.env.packageInfo.version) {
           // The code below maintains backward compatibility for UI setting updates in version 3.0.0.
           // Remove if no external code is modifying these settings through the global scope.
-          this.logger.warn(
-            'Deprecation warning: updating workspace settings through global scope will no longer be supported.'
-          );
-          return updateWorkspaceSettings(id, requestWorkspaceId, attributes);
+          const registeredConfigs = getRegisteredConfigs();
+          const workspaceAttributes: Record<string, unknown> = {};
+          const globalAttributes: Record<string, unknown> = {};
+
+          Object.entries(attributes as Record<string, unknown>).forEach(([key, value]) => {
+            const config = registeredConfigs[key];
+            if (!config || supportsWorkspaceScope(config)) {
+              workspaceAttributes[key] = value;
+            } else {
+              globalAttributes[key] = value;
+            }
+          });
+
+          let globalResult: SavedObjectsUpdateResponse<T> | undefined;
+          let workspaceResult: SavedObjectsUpdateResponse<T> | undefined;
+
+          if (Object.keys(globalAttributes).length > 0) {
+            globalResult = await wrapperOptions.client.update(
+              type,
+              id,
+              globalAttributes as Partial<T>,
+              options
+            );
+          }
+
+          if (Object.keys(workspaceAttributes).length > 0) {
+            this.logger.warn(
+              'Deprecation warning: updating workspace settings through global scope will no longer be supported.'
+            );
+            workspaceResult = await updateWorkspaceSettings(
+              id,
+              requestWorkspaceId,
+              workspaceAttributes as Partial<T>
+            );
+          }
+
+          if (globalResult && workspaceResult) {
+            return {
+              ...globalResult,
+              attributes: {
+                ...globalResult.attributes,
+                ...workspaceResult.attributes,
+              },
+            };
+          }
+
+          return (globalResult || workspaceResult) as SavedObjectsUpdateResponse<T>;
         }
       }
       return wrapperOptions.client.update(type, id, attributes, options);

@@ -139,6 +139,21 @@ describe('diagnosticToMarker', () => {
       }),
     ]);
   });
+
+  it('carries per-instance AI eligibility for the marker side table', () => {
+    const marker = diagnosticToMarker(
+      makeDiagnostic({
+        aiFix: {
+          eligible: true,
+          instructions: "Insert WHERE LIKE(body, '%logtype=%') before rex.",
+        },
+      })
+    ) as monaco.editor.IMarkerData & { aiFix?: Diagnostic['aiFix'] };
+    expect(marker.aiFix).toEqual({
+      eligible: true,
+      instructions: "Insert WHERE LIKE(body, '%logtype=%') before rex.",
+    });
+  });
 });
 
 // The shared decoder used by both the code-action and hover providers (Issue

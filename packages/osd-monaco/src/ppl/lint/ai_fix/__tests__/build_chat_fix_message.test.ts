@@ -61,8 +61,56 @@ describe('buildChatFixMessage', () => {
     expect(context).toContain('apply_ppl_lint_fix_data');
     expect(context).toContain('age = "thirty"');
     expect(context).toContain('eval age = raw_age');
-    expect(context).toContain('localized change');
+    // Generic (no-contract) branch scopes the edit hard: change ONLY the
+    // attributed slice, copy every other stage character-for-character, and
+    // never drop an unrelated stage (e.g. the time-range WHERE). Guards the
+    // "model removed the @timestamp filter" case.
+    expect(context).toContain('Change ONLY that attributed slice');
+    expect(context).toContain('character-for-character');
+    expect(context).toContain('time-range filter');
     expect(context).toContain('one short sentence in plain language');
+  });
+
+  it('instructs the model to verify candidates silently before proposing a fix', () => {
+    const context = buildChatFixContext(request);
+    // The silent test tool name is derived from the apply tool name.
+    expect(context).toContain('test_ppl_lint_fix_data');
+    // Test-first, propose-only-if-ok, and give-up-without-a-fix are all present.
+    expect(context).toContain('ok:true');
+    expect(context).toContain('cannot be automatically fixed');
+    // On ok:true the model must call the apply tool immediately, not pause to ask
+    // (the Apply/Dismiss card is the approval step). Guards the "why is there no
+    // fix box?" case where the model validated then asked in text instead.
+    expect(context).toContain('immediately call');
+    expect(context).toContain('Do NOT stop to ask the user');
+    // The apply tool is only mentioned as the gated, user-visible step.
+    const applyIdx = context.indexOf('apply_ppl_lint_fix_data');
+    const testIdx = context.indexOf('test_ppl_lint_fix_data');
+    expect(testIdx).toBeGreaterThanOrEqual(0);
+    expect(testIdx).toBeLessThan(applyIdx);
+  });
+
+  it('makes a rule-specific rewrite contract literal and limits the available tools', () => {
+    const context = buildChatFixContext({
+      ...request,
+      diagnostic: {
+        ...request.diagnostic,
+        targetText: 'rex field=body "logtype=(?<logtype>.*)"',
+        fixInstructions:
+          "Insert exactly one `WHERE LIKE(body, '%logtype=%')` stage immediately before rex.",
+      },
+    });
+
+    expect(context).toContain('MANDATORY rule-specific rewrite contract');
+    expect(context).toContain("WHERE LIKE(body, '%logtype=%')");
+    expect(context).toContain('FIRST candidate MUST implement that contract literally');
+    expect(context).toContain('character-for-character');
+    expect(context).toContain('call only test_ppl_lint_fix_data and apply_ppl_lint_fix_data');
+    expect(context).toContain('Never call a query execution');
+    expect(context).toContain('correct only transcription or placement mistakes');
+    // When a rewrite contract is present, the generic "change ONLY that slice"
+    // scoping must NOT also appear — the contract governs instead.
+    expect(context).not.toContain('Change ONLY that attributed slice');
   });
 
   it('caps long queries before embedding them in the chat prompt', () => {

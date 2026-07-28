@@ -8,13 +8,19 @@ import * as osdMonaco from '@osd/monaco';
 import { hasExplainOutcome } from '@osd/monaco/target/ppl/lint/explain/explain_outcomes';
 import { explainCache } from '../ppl_lint/explain_cache';
 import { buildPerformanceFixProbeQueries } from '../ppl_lint/performance_fix_revalidation';
-import { PPLLintFixToolArgs, PPLLintFixToolRegistration } from './ppl_lint_fix_tool_registration';
+import {
+  PPLLintFixToolArgs,
+  PPLLintFixToolRegistration,
+  PPLLintFixTestToolRegistration,
+  PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX,
+  PPL_LINT_FIX_DATA_HOST,
+  PPL_LINT_FIX_DATA_TOOL_NAME,
+  PPL_LINT_FIX_TEST_DATA_TOOL_NAME,
+} from './ppl_lint_fix_tool_registration';
 import {
   clearPPLLintFixSession,
   getPPLLintFixOutcome,
   getPPLLintFixSession,
-  PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX,
-  PPL_LINT_FIX_DATA_TOOL_NAME,
   storePPLLintFixSession,
 } from './ppl_lint_fix_session';
 
@@ -74,6 +80,7 @@ describe('PPLLintFixToolRegistration', () => {
 
   const storeSession = (overrides: Partial<Parameters<typeof storePPLLintFixSession>[0]> = {}) => {
     storePPLLintFixSession({
+      host: PPL_LINT_FIX_DATA_HOST,
       request: request as any,
       getCurrentQuery: jest.fn(() => request.query),
       getCurrentQueryState: jest.fn(() => queryState as any),
@@ -417,7 +424,7 @@ describe('PPLLintFixToolRegistration', () => {
     expect(result).toEqual(
       expect.objectContaining({
         success: false,
-        reason: 'invalid-candidate',
+        reason: 'performance-not-cleared',
       })
     );
     expect(queryString.setQuery).not.toHaveBeenCalled();
@@ -451,7 +458,7 @@ describe('PPLLintFixToolRegistration', () => {
     expect(result).toEqual(
       expect.objectContaining({
         success: false,
-        reason: 'invalid-candidate',
+        reason: 'performance-not-cleared',
       })
     );
     expect(queryString.setQuery).not.toHaveBeenCalled();
@@ -592,7 +599,7 @@ describe('PPLLintFixToolRegistration', () => {
         ...request,
         diagnostic: {
           message:
-            'This filter may be slow because it does extra calculations. Compare the field directly instead.',
+            'OpenSearch evaluates this filter as a script for every candidate document instead of using a native index query.',
           ruleId: 'operation-pushed-as-script',
         },
       } as any,
@@ -613,7 +620,7 @@ describe('PPLLintFixToolRegistration', () => {
 
     expect(
       screen.getByText(
-        'This filter may be slow because it does extra calculations. Compare the field directly instead.'
+        'OpenSearch evaluates this filter as a script for every candidate document instead of using a native index query.'
       )
     ).toBeInTheDocument();
     expect(
@@ -702,7 +709,10 @@ describe('PPLLintFixToolRegistration', () => {
       });
     });
 
-    expect(getPPLLintFixOutcome(request.requestId)).toEqual({ kind: 'applied' });
+    expect(getPPLLintFixOutcome(request.requestId)).toEqual({
+      kind: 'applied',
+      fixedQuery: args.fixedQuery,
+    });
     expect(getPPLLintFixSession()).toBeUndefined();
     expect(removeContextById).toHaveBeenCalledWith(
       PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX + request.requestId
@@ -727,6 +737,7 @@ describe('PPLLintFixToolRegistration', () => {
     );
 
     const newerSession = {
+      host: PPL_LINT_FIX_DATA_HOST,
       request: { ...request, requestId: 'request-2' } as any,
       getCurrentQuery: jest.fn(() => request.query),
       getCurrentQueryState: jest.fn(() => queryState as any),
@@ -759,6 +770,7 @@ describe('PPLLintFixToolRegistration', () => {
 
     act(() => {
       storePPLLintFixSession({
+        host: PPL_LINT_FIX_DATA_HOST,
         request: { ...request, requestId: 'request-2' } as any,
         getCurrentQuery: jest.fn(() => request.query),
         getCurrentQueryState: jest.fn(() => queryState as any),
@@ -827,6 +839,7 @@ describe('PPLLintFixToolRegistration', () => {
     );
 
     const newerSession = {
+      host: PPL_LINT_FIX_DATA_HOST,
       request: { ...request, requestId: 'request-2' } as any,
       getCurrentQuery: jest.fn(() => request.query),
       getCurrentQueryState: jest.fn(() => queryState as any),
@@ -861,5 +874,131 @@ describe('PPLLintFixToolRegistration', () => {
     expect(removeContextById).toHaveBeenCalledWith(
       PPL_LINT_FIX_DATA_CONTEXT_ID_PREFIX + request.requestId
     );
+  });
+
+  describe('silent test tool', () => {
+    const renderTestTool = (enabled = true) => {
+      render(
+        <PPLLintFixTestToolRegistration
+          queryString={queryString as any}
+          useAssistantAction={mockUseAssistantAction as any}
+          enabled={enabled}
+        />
+      );
+      return mockUseAssistantAction.mock.calls[0][0];
+    };
+
+    it('registers a silent, no-confirmation tool with no renderer', () => {
+      const config = renderTestTool();
+
+      expect(config.name).toBe(PPL_LINT_FIX_TEST_DATA_TOOL_NAME);
+      // Must run silently: no confirmation prompt and no card renderer, so the
+      // user never sees a candidate that is only being probed.
+      expect(config.requiresConfirmation).toBe(false);
+      expect(config.render).toBeUndefined();
+      expect(config.useCustomRenderer).toBeUndefined();
+    });
+
+    it('returns ok:true for a candidate that clears the finding, without applying it', async () => {
+      storeSession();
+      mockValidate.mockReturnValue({ accepted: true });
+      const config = renderTestTool();
+
+      const result = await config.handler({
+        fixedQuery: 'source=logs | where status_code = 500',
+      });
+
+      expect(result).toEqual(expect.objectContaining({ ok: true }));
+      // The test tool never applies anything.
+      expect(queryString.setQuery).not.toHaveBeenCalled();
+    });
+
+    it('returns ok:false with a machine-readable reason for a failing candidate', async () => {
+      storeSession();
+      mockValidate.mockReturnValue({ accepted: false, reason: 'syntax-error' });
+      const config = renderTestTool();
+
+      const result = await config.handler({
+        fixedQuery: 'source=logs | not valid',
+      });
+
+      expect(result).toEqual(expect.objectContaining({ ok: false, reason: 'syntax-error' }));
+      expect(queryString.setQuery).not.toHaveBeenCalled();
+    });
+
+    it('returns the rule-specific unsafe-prefilter reason to the model', async () => {
+      const fixInstructions =
+        "Insert exactly one `WHERE LIKE(body, '%logtype=%')` stage immediately before rex.";
+      storeSession({
+        request: {
+          ...request,
+          diagnostic: {
+            ...request.diagnostic,
+            ruleId: 'rex-scan-cost',
+            fixInstructions,
+          },
+        } as any,
+      });
+      mockValidate.mockReturnValue({ accepted: false, reason: 'unsafe-prefilter' });
+      const config = renderTestTool();
+
+      const result = await config.handler({
+        fixedQuery:
+          "source=logs | where match_phrase(body, 'logtype') " +
+          '| rex field=body "logtype=(?<logtype>.*)"',
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          ok: false,
+          reason: 'unsafe-prefilter',
+          requiredRewrite: fixInstructions,
+          message: expect.stringContaining('following requiredRewrite literally'),
+        })
+      );
+      expect(result.message).toContain('do not execute the query');
+      expect(queryString.setQuery).not.toHaveBeenCalled();
+    });
+
+    it('surfaces the performance-not-cleared reason so the model can try another candidate', async () => {
+      storeSession({
+        request: {
+          ...request,
+          diagnostic: {
+            message: 'Filter runs as a script',
+            ruleId: 'operation-pushed-as-script',
+            operation: 'filter',
+            outcome: 'filter:script',
+            targetText: 'status = 500',
+            targetRange: { startOffset: 20, endOffset: 32 },
+          },
+        } as any,
+        getLintContext: jest.fn(() => ({ http: {}, dataSourceId: 'ds-live' } as any)),
+      });
+      mockValidate.mockReturnValue({ accepted: true });
+      mockResolveExplain
+        .mockResolvedValueOnce({ status: 'ok', plan: { id: 'original' } })
+        .mockResolvedValueOnce({ status: 'ok', plan: { id: 'fixed' } });
+      // Outcome still present in the fixed plan -> not cleared.
+      mockHasExplainOutcome.mockReturnValue(true);
+      const config = renderTestTool();
+
+      const result = await config.handler({
+        fixedQuery: 'source=logs | where status = 200',
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({ ok: false, reason: 'performance-not-cleared' })
+      );
+      expect(queryString.setQuery).not.toHaveBeenCalled();
+    });
+
+    it('reports a missing active request rather than throwing', async () => {
+      const config = renderTestTool();
+
+      const result = await config.handler({ fixedQuery: 'source=logs' });
+
+      expect(result).toEqual(expect.objectContaining({ ok: false, reason: 'missing-request' }));
+    });
   });
 });

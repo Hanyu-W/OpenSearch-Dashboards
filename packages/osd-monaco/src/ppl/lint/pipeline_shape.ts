@@ -63,6 +63,19 @@ const COMMAND_RULE_NAMES = [
   'multisearchCommand',
 ];
 
+// A command nested below one of these nodes belongs to a distinct pipeline
+// branch. The boundary command itself remains in its parent's branch; only its
+// nested commands receive the boundary in their ancestry.
+const PIPELINE_BRANCH_RULE_NAMES = [
+  'subSearch',
+  'appendCommand',
+  'appendcolCommand',
+  'joinCommand',
+  'lookupCommand',
+  'unionDataset',
+  'multisearchCommand',
+];
+
 function buildIndexToCommandName(ruleNameToIndex: RuleNameToIndex): Map<number, string> {
   const map = new Map<number, string>();
   for (const name of COMMAND_RULE_NAMES) {
@@ -122,11 +135,20 @@ function collectCreatedFields(
   ruleNameToIndex: RuleNameToIndex,
   out: Set<string>
 ): void {
+  const commandIndices = new Set(
+    COMMAND_RULE_NAMES.map(ruleNameToIndex).filter((index) => index !== -1)
+  );
+
   // Walk descendants looking for an `AS` terminal followed by a name node.
   const stack: ParseTree[] = [stage.node];
   while (stack.length > 0) {
     const node = stack.pop()!;
     if (!isRuleNode(node)) {
+      continue;
+    }
+    // A nested command belongs to another pipeline stage. It is collected when
+    // that stage is visited and must not leak fields into its parent command.
+    if (node !== stage.node && commandIndices.has(node.ruleIndex)) {
       continue;
     }
     const children = node.children ?? [];
@@ -154,6 +176,9 @@ function collectCreatedFields(
     while (evalStack.length > 0) {
       const node = evalStack.pop()!;
       if (!isRuleNode(node)) {
+        continue;
+      }
+      if (node !== stage.node && commandIndices.has(node.ruleIndex)) {
         continue;
       }
       if (node.ruleIndex === evalClauseIdx) {
@@ -231,6 +256,16 @@ function collectCreatedFields(
   }
 }
 
+/** Collect only the fields produced by one pipeline stage. */
+export function collectCreatedFieldsForStage(
+  stage: PipelineStage,
+  ruleNameToIndex: RuleNameToIndex
+): Set<string> {
+  const fields = new Set<string>();
+  collectCreatedFields(stage, ruleNameToIndex, fields);
+  return fields;
+}
+
 /**
  * Pre-order DFS that visits parse-tree nodes in source order and collects the
  * pipeline command stages plus the set of field names created upstream.
@@ -259,10 +294,73 @@ export function buildPipelineShape(
   visit(tree);
 
   for (const stage of stages) {
-    collectCreatedFields(stage, ruleNameToIndex, createdFields);
+    for (const field of collectCreatedFieldsForStage(stage, ruleNameToIndex)) {
+      createdFields.add(field);
+    }
   }
 
   return { stages, createdFields };
+}
+
+function pipelineBranchOwner(
+  node: ParserRuleContext,
+  branchIndices: Set<number>
+): ParserRuleContext | undefined {
+  for (
+    let parent = node.parent as ParserRuleContext | null;
+    parent;
+    parent = parent.parent as ParserRuleContext | null
+  ) {
+    if (branchIndices.has(parent.ruleIndex)) {
+      return parent;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Map every stage to the ordered stages in its own pipeline branch. The nearest
+ * branch-boundary node is a unique branch identity, so this groups a flattened
+ * shape in one pass without rebuilding the parse-tree shape per stage.
+ */
+export function buildPipelineStageBranches(
+  stages: PipelineStage[],
+  ruleNameToIndex: RuleNameToIndex
+): Map<ParserRuleContext, PipelineStage[]> {
+  const branchIndices = new Set(
+    PIPELINE_BRANCH_RULE_NAMES.map(ruleNameToIndex).filter((index) => index !== -1)
+  );
+  const stagesByOwner = new Map<ParserRuleContext | undefined, PipelineStage[]>();
+  const ownerByStage = new Map<ParserRuleContext, ParserRuleContext | undefined>();
+
+  for (const stage of stages) {
+    const owner = pipelineBranchOwner(stage.node, branchIndices);
+    ownerByStage.set(stage.node, owner);
+    const branch = stagesByOwner.get(owner);
+    if (branch) {
+      branch.push(stage);
+    } else {
+      stagesByOwner.set(owner, [stage]);
+    }
+  }
+
+  return new Map(
+    stages.map((stage) => [stage.node, stagesByOwner.get(ownerByStage.get(stage.node)) ?? []])
+  );
+}
+
+/**
+ * Ordered stages that feed the same branch as `command`. This deliberately
+ * excludes commands nested in append/join/subsearch/union branches even though
+ * {@link buildPipelineShape} exposes a flattened whole-tree view.
+ */
+export function getPipelineStagesForCommand(
+  tree: ParserRuleContext,
+  command: ParserRuleContext,
+  ruleNameToIndex: RuleNameToIndex
+): PipelineStage[] {
+  const { stages } = buildPipelineShape(tree, ruleNameToIndex);
+  return buildPipelineStageBranches(stages, ruleNameToIndex).get(command) ?? [];
 }
 
 /**

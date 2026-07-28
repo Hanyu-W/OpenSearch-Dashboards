@@ -39,13 +39,13 @@ const SIGNALS: ScriptSignal[] = [
     outcome: 'filter:script',
     operation: 'filter',
     message:
-      'This filter may be slow because it does extra calculations. Compare the field directly instead.',
+      'OpenSearch evaluates this filter as a script for every candidate document instead of using a native index query.',
   },
   {
     outcome: 'sort:script',
     operation: 'sort',
     message:
-      'This sort may be slow because it does extra calculations. Sort by an existing field instead.',
+      'OpenSearch computes this sort value with a script for every candidate document instead of reading an indexed field.',
   },
 ];
 

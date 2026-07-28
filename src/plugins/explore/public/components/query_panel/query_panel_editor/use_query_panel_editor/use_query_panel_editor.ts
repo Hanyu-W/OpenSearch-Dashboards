@@ -52,15 +52,15 @@ import {
   LintFieldsCache,
   pplGrammarCache,
   shouldUseRuntimeGrammar,
-  calciteSettingsCache,
-  fetchVisibleIndices,
-  fetchDisabledObjectFields,
-  getAiAgentAvailableForDataSource,
+  isPPLLintEnabled,
+  loadPPLLintFields,
+  resolvePPLLintSettings,
   UI_SETTINGS,
 } from '../../../../../../data/public';
 import {
   APPLY_PPL_LINT_FIX_EXPLORE_TOOL_NAME,
   PPL_LINT_FIX_CONTEXT_ID_PREFIX,
+  PPL_LINT_FIX_EXPLORE_HOST,
   setActivePPLLintFixSession,
 } from '../../actions/ppl_lint_fix_session';
 
@@ -115,6 +115,7 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
   const { promptIsTyping, handleChangeForPromptIsTyping } = usePromptIsTyping();
   const promptModeIsAvailable = useSelector(selectPromptModeIsAvailable);
   const { services } = useOpenSearchDashboards<ExploreServices>();
+  const pplLintEnabled = isPPLLintEnabled(services.capabilities);
   const { keyboardShortcut } = services;
   const userQueryString = useSelector(selectQueryString);
   const [editorText, setEditorText] = useState<string>(userQueryString);
@@ -169,6 +170,7 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
   const onAskAiFix = useCallback(
     (request: AskPPLLintFixRequest) => {
       setActivePPLLintFixSession({
+        host: PPL_LINT_FIX_EXPLORE_HOST,
         request,
         getCurrentQuery: () => editorRef.current?.getValue() ?? editorTextRef.current,
         getLintContext: () => getLintContextRef.current(),
@@ -322,77 +324,36 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     };
 
     const loadFields = async () => {
-      if (!datasetId) {
-        // No dataset selected: drop any cached fields so field-aware rules
-        // self-suppress instead of running against the previous dataset's
-        // metadata, then push the cleared context.
-        lintFieldsRef.current = {};
-        syncLint();
-        return;
-      }
       try {
-        // `onlyCheckCache` is intentionally false: a `true` cache-only fetch
-        // returns undefined on a miss (for non-index-pattern datasets), which
-        // would throw on the field walk below.
-        const indexPattern = await dataViews.get(datasetId);
-        if (cancelled || !indexPattern) {
-          return;
-        }
-        const fields = new Set<string>();
-        const typeMap = new Map<string, string>();
-        for (const field of indexPattern.fields ?? []) {
-          if (!field?.name) {
-            continue;
-          }
-          fields.add(field.name);
-          const esType = field.esTypes?.[0];
-          if (esType) {
-            typeMap.set(field.name, esType);
-          }
-        }
-        // Fetch the visible-index list (for wildcard-source-zero-match)
-        // concurrently with the disabled-object-fields walk so both gate the
-        // same single-phase context update below.
-        // Probe per-source AI reachability only when chat is wired at all —
-        // otherwise the AI button is already hidden by the missing opener, so the
-        // probe would be a wasted call on every dataset switch. Fail-open when
-        // unprobed (undefined leaves the action shown).
-        const shouldProbeAi = Boolean(services.http && chatIsAvailable);
-        const [
-          disabledObjectFields,
-          visibleIndices,
-          aiAgentAvailableForSource,
-        ] = await Promise.all([
-          services.http
-            ? fetchDisabledObjectFields(services.http, indexPattern)
-            : Promise.resolve(undefined),
-          services.http ? fetchVisibleIndices(services.http, dsId) : Promise.resolve([]),
-          shouldProbeAi
-            ? getAiAgentAvailableForDataSource(services.http!, dsId, 5000)
-            : Promise.resolve(undefined),
-        ]);
+        const lintFields = await loadPPLLintFields({
+          enabled: pplLintEnabled,
+          datasetId,
+          dataSourceId: dsId,
+          // `onlyCheckCache` remains false: cache-only can return undefined for
+          // non-index-pattern datasets.
+          getIndexPattern: (id) => dataViews.get(id),
+          http: services.http,
+          probeAiAgent: chatIsAvailable,
+        });
         if (cancelled) {
           return;
         }
-        lintFieldsRef.current = {
-          datasetId,
-          fields,
-          typeMap,
-          disabledObjectFields,
-          visibleIndices,
-          aiAgentAvailableForSource,
-        };
+        lintFieldsRef.current = lintFields;
         // Single-phase update after the async load resolves.
         syncLint();
       } catch {
-        // On failure, leave fields unset so field-aware rules self-suppress.
+        if (!cancelled) {
+          lintFieldsRef.current = {};
+          syncLint();
+        }
       }
     };
 
     void loadFields();
 
-    if (services.http) {
-      calciteSettingsCache.resolve(services.http, dsId).then(() => {
+    const settingsRequest = resolvePPLLintSettings(pplLintEnabled, services.http, dsId);
+    if (settingsRequest) {
+      settingsRequest.then(() => {
         if (!cancelled) syncLint();
       });
     }
@@ -410,6 +371,7 @@ export const useQueryPanelEditor = (): UseQueryPanelEditorReturnType => {
     dataset?.dataSource?.version,
     dataViews,
     editorRef,
+    pplLintEnabled,
     services.http,
     services.uiSettings,
   ]);

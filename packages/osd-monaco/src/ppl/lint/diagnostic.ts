@@ -56,6 +56,13 @@ export interface DiagnosticAttribution {
   relatedRanges?: DiagnosticRange[];
 }
 
+export interface DiagnosticAiFix {
+  /** Whether this specific diagnostic instance has a validated automatic path. */
+  eligible: boolean;
+  /** Rule-specific constraints appended to the model's hidden fix context. */
+  instructions?: string;
+}
+
 /**
  * Per-instance facts a detector knows about *this* finding (the actual field,
  * its mapped type, the offending literal, candidate indices, ...). Surfaced in
@@ -81,6 +88,11 @@ export interface Diagnostic {
    * instance-specific detail worth surfacing.
    */
   hoverFacts?: DiagnosticHoverFacts;
+  /**
+   * Optional per-instance AI policy. Absence preserves the generic no-template
+   * fallback; an explicit false hides AI for this diagnostic only.
+   */
+  aiFix?: DiagnosticAiFix;
   /** Source attribution retained inside Dashboards only. */
   attribution?: DiagnosticAttribution;
   /**

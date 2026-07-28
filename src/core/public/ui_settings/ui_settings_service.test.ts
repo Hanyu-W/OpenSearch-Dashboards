@@ -85,6 +85,58 @@ describe('UiSettingsService', () => {
       expect(addLoadingCountSourceSpy).toHaveBeenCalledTimes(1);
       expect(client).toBeDefined();
     });
+
+    it('creates a cross-tab settings channel scoped to the server base path', () => {
+      const channel = {
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+        postMessage: jest.fn(),
+        close: jest.fn(),
+      };
+      const BroadcastChannelConstructor = jest.fn(() => channel);
+      const originalBroadcastChannel = window.BroadcastChannel;
+      Object.defineProperty(window, 'BroadcastChannel', {
+        configurable: true,
+        value: BroadcastChannelConstructor,
+      });
+
+      try {
+        const service = new UiSettingsService();
+        service.setup(defaultDeps);
+
+        expect(BroadcastChannelConstructor).toHaveBeenCalledWith(
+          'opensearch-dashboards-ui-settings:'
+        );
+
+        service.stop();
+        expect(channel.close).toHaveBeenCalledTimes(1);
+      } finally {
+        Object.defineProperty(window, 'BroadcastChannel', {
+          configurable: true,
+          value: originalBroadcastChannel,
+        });
+      }
+    });
+
+    it('still initializes when the browser rejects broadcast channel creation', () => {
+      const originalBroadcastChannel = window.BroadcastChannel;
+      Object.defineProperty(window, 'BroadcastChannel', {
+        configurable: true,
+        value: jest.fn(() => {
+          throw new Error('BroadcastChannel unavailable');
+        }),
+      });
+
+      try {
+        const service = new UiSettingsService();
+        expect(service.setup(defaultDeps)).toBeDefined();
+      } finally {
+        Object.defineProperty(window, 'BroadcastChannel', {
+          configurable: true,
+          value: originalBroadcastChannel,
+        });
+      }
+    });
   });
 
   describe('#start', () => {

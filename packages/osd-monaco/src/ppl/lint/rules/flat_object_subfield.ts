@@ -64,8 +64,8 @@ export const flatObjectSubfieldDetector: Detector = (tree, config, context, rule
 
       const isSubfield = dotIndex !== -1;
       const message = isSubfield
-        ? `Subfield "${path}" of flat_object field "${root}" cannot be queried in PPL; flat_object values are only retrievable at the document level, not addressable in a query.`
-        : `flat_object field "${root}" cannot be referenced in a PPL expression; its values are only retrievable at the document level.`;
+        ? `PPL cannot search "${path}" because it is stored inside the flat_object field "${root}".`
+        : `PPL cannot search flat_object field "${root}".`;
 
       diagnostics.push({
         ruleId: config.id,

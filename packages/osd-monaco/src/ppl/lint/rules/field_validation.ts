@@ -4,11 +4,17 @@
  */
 
 import type { ParserRuleContext, ParseTree } from 'antlr4ng';
-import { isRuleNode } from '../rule_index';
+import { isRuleNode, isTerminalNode } from '../rule_index';
 import { Diagnostic, DiagnosticRange } from '../diagnostic';
 import { findCompiledFieldSlotShapeMatches } from '../field_slot_shape_text';
 import { CatalogEntry, Detector, LintRunContext } from '../types';
-import { buildPipelineShape, collectAlternateSourceSubtrees } from '../pipeline_shape';
+import {
+  buildPipelineStageBranches,
+  buildPipelineShape,
+  collectAlternateSourceSubtrees,
+  collectCreatedFieldsForStage,
+  PipelineStage,
+} from '../pipeline_shape';
 import {
   findAllChildrenByRule,
   findAllDescendantsByRule,
@@ -41,7 +47,8 @@ const SHAPE_COMMAND_KEYWORD: Record<string, string> = {
 
 /**
  * Compute a small set of rule indices used to exclude non-field-reference
- * positions (table sources, eval LHS, etc.).
+ * positions. Created-field targets are handled separately so eval/rename
+ * source expressions are still validated.
  */
 function resolveExcludedAncestorIndices(ruleNameToIndex: RuleNameToIndex): Set<number> {
   const excluded = new Set<number>();
@@ -53,15 +60,6 @@ function resolveExcludedAncestorIndices(ruleNameToIndex: RuleNameToIndex): Set<n
     'sourceReference',
     'sideAlias',
     'joinCriteria',
-    'evalClause',
-    // The grammar rule is genuinely named `renameClasue` (sic) in both the
-    // simplified-compiled and runtime `.g4` sources, so that misspelled literal
-    // is the one that actually matches on both surfaces. The correctly-spelled
-    // `renameClause` resolves to -1 today and is kept only as forward defense:
-    // if a future grammar fixes the typo, exclusion of rename targets still
-    // holds. Listing both costs nothing — the absent one resolves to -1.
-    'renameClasue',
-    'renameClause',
   ]) {
     const idx = ruleNameToIndex(name);
     if (idx !== -1) {
@@ -84,13 +82,35 @@ function collectJoinAliases(
   ruleNameToIndex: RuleNameToIndex
 ): Set<string> {
   const aliases = new Set<string>();
-  const sideAliasNodes = findAllDescendantsByRule(tree, ruleNameToIndex, 'sideAlias');
-  for (const sideAlias of sideAliasNodes) {
-    for (const qn of findAllChildrenByRule(sideAlias, ruleNameToIndex, 'qualifiedName')) {
-      const text = qn.getText();
-      if (text) {
-        aliases.add(text);
+  const sideAliasIdx = ruleNameToIndex('sideAlias');
+  const joinCommandIdx = ruleNameToIndex('joinCommand');
+  if (sideAliasIdx === -1) {
+    return aliases;
+  }
+
+  const stack: ParseTree[] = [tree];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (!isRuleNode(node)) {
+      continue;
+    }
+    // A join nested in this join's alternate-source branch owns its aliases.
+    // It is another pipeline stage and must not make those aliases visible in
+    // the outer join or its downstream stages.
+    if (node !== tree && node.ruleIndex === joinCommandIdx) {
+      continue;
+    }
+    if (node.ruleIndex === sideAliasIdx) {
+      for (const qn of findAllChildrenByRule(node, ruleNameToIndex, 'qualifiedName')) {
+        const text = qn.getText();
+        if (text) {
+          aliases.add(text);
+        }
       }
+      continue;
+    }
+    for (const child of node.children ?? []) {
+      stack.push(child);
     }
   }
   return aliases;
@@ -116,6 +136,228 @@ function hasExcludedAncestor(node: ParserRuleContext, excludedIndices: Set<numbe
     current = current.parent;
   }
   return false;
+}
+
+interface FieldStageScope {
+  stage: PipelineStage;
+  knownFields: Set<string>;
+  evalClauseKnownFields: Map<ParserRuleContext, Set<string>>;
+  declaredFields: Set<string>;
+  joinAliases: Set<string>;
+}
+
+function findOwningStage(
+  node: ParserRuleContext,
+  scopes: Map<ParserRuleContext, FieldStageScope>
+): FieldStageScope | undefined {
+  for (
+    let current: ParserRuleContext | null = node;
+    current;
+    current = current.parent as ParserRuleContext | null
+  ) {
+    const scope = scopes.get(current);
+    if (scope) {
+      return scope;
+    }
+  }
+  return undefined;
+}
+
+function isDescendantOf(node: ParseTree, ancestor: ParseTree): boolean {
+  for (let current: ParseTree | null = node; current; current = current.parent) {
+    if (current === ancestor) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function spathParameterKind(
+  node: ParserRuleContext,
+  ruleNameToIndex: RuleNameToIndex
+): string | undefined {
+  const spathParameterIdx = ruleNameToIndex('spathParameter');
+  if (spathParameterIdx === -1) {
+    return undefined;
+  }
+  let parameter: ParserRuleContext | undefined;
+  for (
+    let current: ParserRuleContext | null = node;
+    current;
+    current = current.parent as ParserRuleContext | null
+  ) {
+    if (current.ruleIndex === spathParameterIdx) {
+      parameter = current;
+      break;
+    }
+  }
+  if (!parameter) {
+    return undefined;
+  }
+
+  const stack: ParseTree[] = [parameter];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (!isRuleNode(current)) {
+      const keyword = current.getText().toUpperCase();
+      if (keyword === 'INPUT' || keyword === 'OUTPUT' || keyword === 'PATH') {
+        return keyword;
+      }
+      continue;
+    }
+    const children = current.children ?? [];
+    for (let index = children.length - 1; index >= 0; index--) {
+      stack.push(children[index]);
+    }
+  }
+  return undefined;
+}
+
+function isCreatedFieldTarget(
+  node: ParserRuleContext,
+  name: string,
+  scope: FieldStageScope,
+  ruleNameToIndex: RuleNameToIndex
+): boolean {
+  if (!scope.declaredFields.has(name)) {
+    return false;
+  }
+
+  const fieldExprIdx = ruleNameToIndex('fieldExpression');
+  const evalClauseIdx = ruleNameToIndex('evalClause');
+  for (
+    let current: ParserRuleContext | null = node;
+    current && current !== scope.stage.node.parent;
+    current = current.parent as ParserRuleContext | null
+  ) {
+    if (current.ruleIndex === evalClauseIdx) {
+      const target = (current.children ?? []).find(
+        (child) => isRuleNode(child) && child.ruleIndex === fieldExprIdx
+      );
+      if (target && isDescendantOf(node, target)) {
+        return true;
+      }
+    }
+
+    const parent = current.parent;
+    if (isRuleNode(parent)) {
+      const siblings = parent.children ?? [];
+      const position = siblings.indexOf(current);
+      if (
+        position > 0 &&
+        isTerminalNode(siblings[position - 1]) &&
+        siblings[position - 1].getText().toLowerCase() === 'as'
+      ) {
+        return true;
+      }
+    }
+  }
+
+  const parameterKind = spathParameterKind(node, ruleNameToIndex);
+  return parameterKind === 'OUTPUT' || parameterKind === 'PATH';
+}
+
+function buildEvalClauseKnownFields(
+  stage: PipelineStage,
+  upstreamFields: Set<string>,
+  ruleNameToIndex: RuleNameToIndex
+): Map<ParserRuleContext, Set<string>> {
+  const knownByClause = new Map<ParserRuleContext, Set<string>>();
+  if (stage.command !== 'evalCommand') {
+    return knownByClause;
+  }
+
+  const fieldExprIdx = ruleNameToIndex('fieldExpression');
+  const clauses = findAllDescendantsByRule(stage.node, ruleNameToIndex, 'evalClause').sort(
+    (left, right) => (left.start?.start ?? -1) - (right.start?.start ?? -1)
+  );
+  const known = new Set(upstreamFields);
+
+  for (const clause of clauses) {
+    knownByClause.set(clause, new Set(known));
+    const target = (clause.children ?? []).find(
+      (child) => isRuleNode(child) && child.ruleIndex === fieldExprIdx
+    );
+    const name = target?.getText();
+    if (name) {
+      // Eval clauses execute left to right. A target is visible to later
+      // clauses in the same command, but not to its own right-hand side.
+      known.add(name);
+    }
+  }
+
+  return knownByClause;
+}
+
+function getKnownFieldsForNode(
+  node: ParserRuleContext,
+  scope: FieldStageScope | undefined,
+  fallback: Set<string>
+): Set<string> {
+  if (!scope) {
+    return fallback;
+  }
+  for (
+    let current: ParserRuleContext | null = node;
+    current && current !== scope.stage.node.parent;
+    current = current.parent as ParserRuleContext | null
+  ) {
+    const known = scope.evalClauseKnownFields.get(current);
+    if (known) {
+      return known;
+    }
+  }
+  return scope.knownFields;
+}
+
+function buildFieldStageScopes(
+  tree: ParserRuleContext,
+  fields: Set<string>,
+  ruleNameToIndex: RuleNameToIndex
+): Map<ParserRuleContext, FieldStageScope> {
+  const { stages } = buildPipelineShape(tree, ruleNameToIndex);
+  const createdByStage = new Map(
+    stages.map((stage) => [stage.node, collectCreatedFieldsForStage(stage, ruleNameToIndex)])
+  );
+  const aliasesByStage = new Map(
+    stages.map((stage) => [
+      stage.node,
+      stage.command === 'joinCommand'
+        ? collectJoinAliases(stage.node, ruleNameToIndex)
+        : new Set<string>(),
+    ])
+  );
+  const branchesByStage = buildPipelineStageBranches(stages, ruleNameToIndex);
+  const scopes = new Map<ParserRuleContext, FieldStageScope>();
+
+  for (const stage of stages) {
+    const branch = branchesByStage.get(stage.node) ?? [];
+    const position = branch.findIndex((candidate) => candidate.node === stage.node);
+    const knownFields = new Set(fields);
+    const joinAliases = new Set<string>();
+
+    for (const upstream of branch.slice(0, position)) {
+      for (const field of createdByStage.get(upstream.node) ?? []) {
+        knownFields.add(field);
+      }
+      for (const alias of aliasesByStage.get(upstream.node) ?? []) {
+        joinAliases.add(alias);
+      }
+    }
+    // Join aliases are valid in the join's own ON clause as well as downstream.
+    for (const alias of aliasesByStage.get(stage.node) ?? []) {
+      joinAliases.add(alias);
+    }
+
+    scopes.set(stage.node, {
+      stage,
+      knownFields,
+      evalClauseKnownFields: buildEvalClauseKnownFields(stage, knownFields, ruleNameToIndex),
+      declaredFields: createdByStage.get(stage.node) ?? new Set<string>(),
+      joinAliases,
+    });
+  }
+  return scopes;
 }
 
 function offsetAt(sourceText: string, line: number, column: number): number {
@@ -234,11 +476,9 @@ function detectUnknownFields(
     return []; // R22.3 self-suppress
   }
 
-  const { createdFields } = buildPipelineShape(tree, ruleNameToIndex);
-  const known = new Set<string>([...fields, ...createdFields]);
+  const stageScopes = buildFieldStageScopes(tree, fields, ruleNameToIndex);
   const excludedIndices = resolveExcludedAncestorIndices(ruleNameToIndex);
   const alternateSourceRoots = collectAlternateSourceSubtrees(tree, ruleNameToIndex);
-  const joinAliases = collectJoinAliases(tree, ruleNameToIndex);
   const fieldExprIdx = ruleNameToIndex('fieldExpression');
   if (fieldExprIdx === -1) {
     return [];
@@ -265,10 +505,12 @@ function detectUnknownFields(
       // matches the unquoted `age` in the field set.
       const name = raw.split('.').map(unquoteIdent).join('.');
       const prefix = name.includes('.') ? name.split('.')[0] : null;
+      const scope = findOwningStage(node, stageScopes);
+      const known = getKnownFieldsForNode(node, scope, fields);
       // Soft skip: alias-qualified refs (`l.response` where `l` is a declared
       // join alias). Still descend into children — alias-qualified refs appear
       // in downstream pipeline stages outside the alternate-source regions.
-      if (prefix !== null && joinAliases.has(prefix)) {
+      if (prefix !== null && scope?.joinAliases.has(prefix)) {
         // Push children reversed so they pop (LIFO) in source order — the first
         // duplicate of a field is then flagged, not the last (B6).
         const aliasChildren = node.children ?? [];
@@ -284,6 +526,7 @@ function detectUnknownFields(
         name &&
         !isCompiledSourceKeywordExpression(node, name, context) &&
         !hasExcludedAncestor(node, excludedIndices) &&
+        !(scope && isCreatedFieldTarget(node, name, scope, ruleNameToIndex)) &&
         !known.has(name) &&
         !known.has(leaf) &&
         !seen.has(name)
